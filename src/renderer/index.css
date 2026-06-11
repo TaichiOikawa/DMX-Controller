@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0a0a0a;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  user-select: none;
+}
+
+/*
+ * 縦フェーダー。input[type=range] を -rotate-90 で縦化しているため、
+ * トラック/つまみの見た目だけここで整える。
+ */
+.fader-vertical {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #0284c7 0%,
+    #0284c7 var(--pct, 0%),
+    #404040 var(--pct, 0%),
+    #404040 100%
+  );
+}
+
+.fader-vertical::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 26px;
+  border-radius: 4px;
+  background: #e5e5e5;
+  border: 1px solid #737373;
+  cursor: pointer;
+}

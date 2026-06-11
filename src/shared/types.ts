@@ -50,19 +50,28 @@ export interface ProjectSettings {
 export interface Show {
   id: string;
   name: string;
-  groups: Group[];
+  /**
+   * マスター順序リスト。単一の GO ボタンで先頭から順送りに再生する。
+   * 各エントリは CUE（単一 look）か GROUP（子 CUE を束ねた入れ子）。
+   */
+  sequence: SequenceEntry[];
   /** Project フォルダからの相対パス */
   audio?: { filePath: string };
   timeline?: Timeline;
 }
 
-// ===== Group（並列プレイバック / キューリスト） =====
+/** マスター列のエントリ。CUE か GROUP の判別共用体。 */
+export type SequenceEntry =
+  | { kind: 'cue'; cue: Cue }
+  | { kind: 'group'; group: Group };
+
+// ===== Group（マスター列に入れ子で並ぶ子 CUE 列） =====
 export interface Group {
   id: string;
   name?: string;
-  /** 順序付き CUE 列 */
+  /** 順序付き 子 CUE 列 */
   cues: Cue[];
-  /** グループ内ループ */
+  /** GROUP 内ループ（末尾 GO で子先頭へ戻る） */
   loop: boolean;
 }
 
@@ -110,22 +119,40 @@ export interface TimelinePoint {
 }
 
 // ===== エンジン実行時状態（§8・非永続） =====
-export interface GroupRuntime {
-  currentIndex: number;
-  /** 512: これまでの CUE で確定した値 */
+/** 進行中フェード。 */
+export interface FadeState {
+  from: number[];
+  to: number[];
+  startMs: number;
+  durMs: number;
+  /** フェード開始前のディレイ（ms）。 */
+  delayMs: number;
+}
+
+/**
+ * 読込中 Show の単一プレイヘッド。
+ * マスター列を1本の GO で順送りするため、再生状態は1つだけ。
+ */
+export interface ShowRuntime {
+  /** マスター列 index。未 GO は -1。 */
+  mainIndex: number;
+  /** GROUP 内の子 cue index。CUE エントリでは 0。 */
+  subIndex: number;
+  /** 512: 現在表示値（これまでの CUE で確定した値）。 */
   tracked: number[];
-  /** 進行中フェード（無ければ null） */
-  fade: {
-    from: number[];
-    to: number[];
-    startMs: number;
-    durMs: number;
-  } | null;
+  /** 進行中フェード（無ければ null）。 */
+  fade: FadeState | null;
+  /**
+   * 512: この Show が制御する ch（全 cue= 子含む の values キーの和集合）。
+   * 非永続。loadShow 時と編集時に再計算する（§6 層3 の制御判定に使う）。
+   */
+  controlled: boolean[];
 }
 
 export interface EngineRuntime {
   activeShowId: string | null;
-  groups: Record<string, GroupRuntime>;
+  /** 読込中 Show の再生状態（未読込は null）。 */
+  show: ShowRuntime | null;
   /** 512 */
   captured: boolean[];
   /** 512: 現在のフェーダー位置 */
@@ -147,10 +174,13 @@ export function defaultArtnetSettings(): ArtnetSettings {
   };
 }
 
+/** 現在の永続化フォーマットのバージョン。 */
+export const PROJECT_VERSION = 1;
+
 /** 新規 Project の初期値。 */
 export function createDefaultProject(): Project {
   return {
-    version: 1,
+    version: PROJECT_VERSION,
     name: 'Untitled',
     settings: {
       universeCount: 1,
@@ -160,5 +190,45 @@ export function createDefaultProject(): Project {
     faders: new Array(UNIVERSE_SIZE).fill(0),
     actions: [],
     shows: [],
+  };
+}
+
+/** Node / ブラウザ双方で使える UUID 生成。 */
+export function genId(): string {
+  // Electron(renderer/main) も Node 20+ も globalThis.crypto.randomUUID を持つ。
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  // フォールバック（テスト環境など）。
+  return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+/** 新規 Show（空のマスター列）。 */
+export function createShow(name = 'Show 1'): Show {
+  return { id: genId(), name, sequence: [] };
+}
+
+/** 新規 Group（空の子 CUE 列）。 */
+export function createGroup(name = 'Group'): Group {
+  return { id: genId(), name, cues: [], loop: false };
+}
+
+/** CUE をマスター列エントリに包む。 */
+export function createCueEntry(cue: Cue): SequenceEntry {
+  return { kind: 'cue', cue };
+}
+
+/** 新規 GROUP エントリ。 */
+export function createGroupEntry(name = 'Group'): SequenceEntry {
+  return { kind: 'group', group: createGroup(name) };
+}
+
+/** 新規 ShowRuntime（未 GO・tracked 全 0・制御無し）。 */
+export function createShowRuntime(): ShowRuntime {
+  return {
+    mainIndex: -1,
+    subIndex: 0,
+    tracked: new Array(UNIVERSE_SIZE).fill(0),
+    fade: null,
+    controlled: new Array(UNIVERSE_SIZE).fill(false),
   };
 }

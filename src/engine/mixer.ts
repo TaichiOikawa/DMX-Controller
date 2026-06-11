@@ -58,11 +58,30 @@ export function resolveFrame(ctx: MixContext, out: number[]): void {
   }
 }
 
-/** EngineRuntime から MixContext を組み立てる（今回はフェーダー＋キャプチャのみ）。 */
+/**
+ * EngineRuntime から MixContext を組み立てる。
+ * 層3（show）を単一プレイヘッド `rt.show` から構築する。
+ * 層1（Action）は後続マイルストーン6で `rt.activeActions` から組む。
+ *
+ * 「制御中」= Show が GO 済み（mainIndex >= 0）かつ `controlled[ch]`。
+ * 並列再生が無いので HTP の最大値計算は不要（単一ソース）。
+ */
 export function contextFromRuntime(rt: EngineRuntime): MixContext {
+  const show = rt.show;
+  const active = show !== null && show.mainIndex >= 0;
+
+  const anyGroupControls = active
+    ? (ch: number): boolean => show!.controlled[ch]
+    : undefined;
+
+  const htpOverGroups = active
+    ? (ch: number): number => show!.tracked[ch]
+    : undefined;
+
   return {
     faderLive: rt.faderLive,
     captured: rt.captured,
-    // 層1・層3 は後続マイルストーンで runtime.groups / activeActions から組む。
+    anyGroupControls,
+    htpOverGroups,
   };
 }

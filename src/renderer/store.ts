@@ -1,32 +1,44 @@
 /**
  * renderer 側 UI 状態（Zustand）。
  *
- * エンジンが「単一の真実」なので、ここはあくまで UI ミラー:
- *   - faders: ユーザーが操作したフェーダー位置（楽観的に即時反映）
- *   - output: エンジンから受け取った実出力（可視化用）
+ * エンジンが「単一の真実」なので、ここは UI ミラー:
+ *   - faders: フェーダー位置（楽観的に即時反映 + エンジンへ送信）
+ *   - output: エンジンの実出力（可視化用）
+ *   - project: Show/Group/Cue 構造（編集対象、エンジンから受信）
+ *   - groups: 各グループの再生状態（currentIndex 等、エンジンから受信）
  *   - artnet / measuredHz: 設定と診断
- *
- * フェーダー操作は store を更新しつつ window.dmx.setFader でエンジンへ送る。
  */
 
 import { create } from 'zustand';
-import { UNIVERSE_SIZE, type ArtnetSettings, defaultArtnetSettings } from '../shared/types';
+import {
+  UNIVERSE_SIZE,
+  type ArtnetSettings,
+  type Project,
+  defaultArtnetSettings,
+} from '../shared/types';
+import type { EngineStateSnapshot, PlaybackStatus } from '../shared/ipc';
 
 interface DmxState {
-  /** UI 上のフェーダー位置（0-255）。 */
   faders: number[];
-  /** エンジン由来の実出力（0-255）。 */
   output: number[];
   artnet: ArtnetSettings;
   measuredHz: number;
-  /** 表示中のバンク（ページ）番号。 */
   bank: number;
+
+  project: Project | null;
+  /** 読込中 Show の単一プレイヘッド状態（未読込は null）。 */
+  playback: PlaybackStatus | null;
+  activeShowId: string | null;
+  /** 編集対象として選択中の Show（ドロップダウン用）。 */
+  selectedShowId: string | null;
 
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
   setArtnet: (settings: ArtnetSettings) => void;
-  setMeasuredHz: (hz: number) => void;
   setBank: (bank: number) => void;
+  setProject: (project: Project) => void;
+  setEngineState: (state: EngineStateSnapshot) => void;
+  selectShow: (showId: string) => void;
 }
 
 export const FADERS_PER_BANK = 32;
@@ -39,11 +51,15 @@ export const useDmxStore = create<DmxState>((set) => ({
   measuredHz: 0,
   bank: 0,
 
+  project: null,
+  playback: null,
+  activeShowId: null,
+  selectedShowId: null,
+
   setFader: (ch, value) =>
     set((s) => {
       const faders = s.faders.slice();
       faders[ch] = value;
-      // エンジンへ意図を送る（§3: UI は意図のみを IPC で送る）。
       window.dmx.setFader(ch, value);
       return { faders };
     }),
@@ -56,6 +72,30 @@ export const useDmxStore = create<DmxState>((set) => ({
       return { artnet: settings };
     }),
 
-  setMeasuredHz: (hz) => set({ measuredHz: hz }),
   setBank: (bank) => set({ bank }),
+
+  setProject: (project) =>
+    set((s) => {
+      // 選択中 Show が消えていたら先頭へ寄せる。
+      const stillExists = project.shows.some((sh) => sh.id === s.selectedShowId);
+      const selectedShowId = stillExists
+        ? s.selectedShowId
+        : (project.shows[0]?.id ?? null);
+      return {
+        project,
+        // Project にはフェーダー基準値が含まれる（読込時に反映）。
+        faders: project.faders.slice(),
+        artnet: project.settings.artnet,
+        selectedShowId,
+      };
+    }),
+
+  setEngineState: (state) =>
+    set({
+      measuredHz: state.measuredHz,
+      playback: state.playback,
+      activeShowId: state.activeShowId,
+    }),
+
+  selectShow: (showId) => set({ selectedShowId: showId }),
 }));

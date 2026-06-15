@@ -1,7 +1,9 @@
 /**
  * 単一フェーダー = 1 DMX チャンネル（§5.1, 1:1）。
- * 縦スライダー + ch 番号 + 数値表示/直接入力。
- * フェーダー位置（手動）と実出力（エンジン由来）を区別して表示する。
+ * 縦スライダー + ch 番号 + 数値表示/直接入力 + クリア(X)。
+ *
+ * 触ると「キャプチャ中（CUE 記録対象・show上書き §6.1）」になりハイライト。
+ * 下部の X でキャプチャ解除（値も 0 に戻し show/0 へ復帰 §6.2）。
  */
 
 import { useState } from 'react';
@@ -13,10 +15,14 @@ interface FaderProps {
   value: number;
   /** エンジンの実出力 0-255（キャプチャ/HTP で位置と異なりうる） */
   output: number;
+  /** キャプチャ中か（ハイライト） */
+  captured: boolean;
   onChange: (value: number) => void;
+  /** X 押下: キャプチャ解除＋値クリア */
+  onClear: () => void;
 }
 
-export function Fader({ ch, value, output, onChange }: FaderProps) {
+export function Fader({ ch, value, output, captured, onChange, onClear }: FaderProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -31,11 +37,20 @@ export function Fader({ ch, value, output, onChange }: FaderProps) {
   };
 
   return (
-    <div className="flex w-12 shrink-0 flex-col items-center gap-1">
-      <div className="text-[10px] font-mono text-neutral-500">{ch + 1}</div>
+    <div
+      className={`flex w-12 shrink-0 flex-col items-center gap-1 rounded-md py-1 ring-1 transition-colors ${
+        captured ? 'bg-amber-500/10 ring-amber-500/70' : 'ring-transparent'
+      }`}
+    >
+      <div
+        className={`w-8 rounded text-center text-[10px] font-mono ${
+          captured ? 'bg-amber-500 font-bold text-neutral-900' : 'text-neutral-500'
+        }`}
+      >
+        {ch + 1}
+      </div>
 
       <div className="relative h-44 w-8">
-        {/* 実出力インジケータ（背面の細バー） */}
         <div className="absolute inset-y-0 right-0 w-1 rounded bg-neutral-800">
           <div
             className={`absolute bottom-0 w-full rounded ${diverged ? 'bg-amber-400' : 'bg-emerald-500'}`}
@@ -43,7 +58,6 @@ export function Fader({ ch, value, output, onChange }: FaderProps) {
           />
         </div>
 
-        {/* 縦スライダー（回転で縦化） */}
         <input
           type="range"
           min={0}
@@ -79,6 +93,19 @@ export function Fader({ ch, value, output, onChange }: FaderProps) {
           {value}
         </button>
       )}
+
+      <button
+        onClick={onClear}
+        disabled={!captured}
+        className={`flex h-5 w-5 items-center justify-center rounded text-xs ${
+          captured
+            ? 'bg-neutral-800 text-amber-300 hover:bg-red-900/60 hover:text-red-200'
+            : 'text-neutral-700'
+        }`}
+        title={captured ? 'キャプチャ解除（値を 0 に）' : '未キャプチャ'}
+      >
+        ✕
+      </button>
     </div>
   );
 }

@@ -148,16 +148,16 @@ describe('master-sequence GO', () => {
   });
 });
 
-describe('fader vs show composition (§6, no capture yet)', () => {
-  it('show-controlled ch ignores the fader; uncontrolled ch shows it', () => {
+describe('fader vs show composition (§6)', () => {
+  it('touching a show-controlled ch captures and overrides; uncontrolled ch shows the fader', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('1', { 0: 50 }))]));
     engine.loadShow('show1');
     engine.go();
-    engine.setFader(0, 200);
-    engine.setFader(10, 200);
+    engine.setFader(0, 200); // captures -> overrides cue (§6.1)
+    engine.setFader(10, 200); // uncontrolled -> fader passes (layer 4)
     engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(50);
+    expect(engine.getOutput()[0]).toBe(200);
     expect(engine.getOutput()[10]).toBe(200);
   });
 

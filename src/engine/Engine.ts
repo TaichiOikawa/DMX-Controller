@@ -12,11 +12,13 @@
 
 import {
   UNIVERSE_SIZE,
+  createAction,
   createDefaultProject,
   createCueEntry,
   createGroupEntry,
   createShowRuntime,
   genId,
+  type ActionRuntime,
   type ArtnetSettings,
   type Cue,
   type EngineRuntime,
@@ -38,7 +40,10 @@ import {
   startFade,
   type Position,
 } from './playback';
+import { advanceAction, createActionRuntime } from './action';
+import { pointsCrossed } from './timeline';
 import type {
+  ActionPatch,
   CaptureCueOptions,
   CuePatch,
   EngineStateSnapshot,
@@ -74,6 +79,9 @@ export class Engine {
 
   private tickTimestamps: number[] = [];
   private measuredHz = 0;
+
+  /** Timeline: 直近に受け取った playhead（ms）。跨ぎ判定の基準。 */
+  private lastPlayheadMs = 0;
 
   constructor(opts: EngineOptions) {
     this.send = opts.send;
@@ -141,11 +149,36 @@ export class Engine {
 
   /**
    * フェーダー値を設定する（§5.1, 1:1）。
-   * TODO(マイルストーン6): show 制御下の ch なら captured=true にする（§6.1）。
+   * 触った ch はプログラマー＝キャプチャ（§6.1）に入る（captured=true）。
+   * show 制御下なら層2が層3(show)を上書きし、非制御なら層4と同値で無害。
    */
   setFader(ch: number, value: number): void {
     if (ch < 0 || ch >= UNIVERSE_SIZE) return;
     this.runtime.faderLive[ch] = clamp255(value);
+    this.runtime.captured[ch] = true;
+  }
+
+  /**
+   * キャプチャ解除（§6.2 リリース）。指定（省略で全 captured）の ch を
+   * captured=false かつ faderLive=0 にする。
+   * show 制御下 ch は層3(cue値)へ戻り、非制御 ch は 0 にクリアされる。
+   */
+  releaseCapture(channels?: number[]): void {
+    const chs = channels ?? this.capturedChannels();
+    for (const ch of chs) {
+      if (ch < 0 || ch >= UNIVERSE_SIZE) continue;
+      this.runtime.captured[ch] = false;
+      this.runtime.faderLive[ch] = 0;
+    }
+    this.emitState();
+  }
+
+  private capturedChannels(): number[] {
+    const out: number[] = [];
+    for (let ch = 0; ch < UNIVERSE_SIZE; ch++) {
+      if (this.runtime.captured[ch]) out.push(ch);
+    }
+    return out;
   }
 
   updateArtnetSettings(settings: ArtnetSettings): void {
@@ -220,6 +253,11 @@ export class Engine {
     startFade(rt, target, now, cue.fadeInMs, cue.delayMs ?? 0);
     rt.mainIndex = pos.main;
     rt.subIndex = pos.sub;
+    // §6.2: 新 cue が操作対象に含む ch のキャプチャを解除（cue が引き継ぐ）。
+    for (const k of Object.keys(cue.values)) {
+      const ch = Number(k);
+      if (ch >= 0 && ch < UNIVERSE_SIZE) this.runtime.captured[ch] = false;
+    }
   }
 
   // ===== コマンド: オーサリング =====
@@ -311,11 +349,128 @@ export class Engine {
     this.afterStructureChange(found.show.id);
   }
 
+  // ===== コマンド: Action（§5.6） =====
+
+  /** Action 押下: ランタイムを起動（既にアクティブなら再起動）。 */
+  actionDown(actionId: string): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    if (!action || action.steps.length === 0) return;
+    this.runtime.activeActions = this.runtime.activeActions.filter(
+      (r) => r.actionId !== actionId,
+    );
+    this.runtime.activeActions.push(createActionRuntime(action));
+    this.emitState();
+  }
+
+  /** Action 解放: hold 系は解除。press-once は自動解除に任せる。 */
+  actionUp(actionId: string): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    if (!action) return;
+    if (action.mode === 'press-once') return; // 自動解除
+    this.runtime.activeActions = this.runtime.activeActions.filter(
+      (r) => r.actionId !== actionId,
+    );
+    this.emitState();
+  }
+
+  // ===== コマンド: Action オーサリング =====
+
+  addAction(name?: string): void {
+    const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
+    // 現在のフェーダー(captured)を最初の step として取り込む。
+    const values = this.faderValuesFor(this.capturedChannels());
+    action.steps.push({ values, fadeInMs: 0, holdMs: 500 });
+    this.project.actions.push(action);
+    this.notifyProject();
+  }
+
+  updateAction(actionId: string, patch: ActionPatch): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    if (!action) return;
+    if (patch.name !== undefined) action.name = patch.name;
+    if (patch.mode !== undefined) action.mode = patch.mode;
+    this.notifyProject();
+  }
+
+  deleteAction(actionId: string): void {
+    this.project.actions = this.project.actions.filter((a) => a.id !== actionId);
+    this.runtime.activeActions = this.runtime.activeActions.filter(
+      (r) => r.actionId !== actionId,
+    );
+    this.notifyProject();
+    this.emitState();
+  }
+
+  /** 現在のフェーダー(captured)を新しい step として追加（チェイス用）。 */
+  addActionStep(actionId: string, fadeInMs = 0, holdMs = 500): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    if (!action) return;
+    const values = this.faderValuesFor(this.capturedChannels());
+    action.steps.push({ values, fadeInMs: Math.max(0, fadeInMs), holdMs: Math.max(0, holdMs) });
+    this.notifyProject();
+  }
+
+  deleteActionStep(actionId: string, stepIndex: number): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    if (!action || stepIndex < 0 || stepIndex >= action.steps.length) return;
+    action.steps.splice(stepIndex, 1);
+    this.notifyProject();
+  }
+
+  private faderValuesFor(channels: number[]): Record<number, number> {
+    const values: Record<number, number> = {};
+    for (const ch of channels) {
+      if (ch >= 0 && ch < UNIVERSE_SIZE) values[ch] = this.runtime.faderLive[ch];
+    }
+    return values;
+  }
+
+  // ===== コマンド: Timeline（§5.5・内部タイムコード） =====
+
+  /** レンダラの再生位置（ms）。跨いだポイントで GO を発火。 */
+  reportAudioPlayhead(ms: number): void {
+    const timeline = this.activeShow?.timeline;
+    if (timeline && this.runtime.show) {
+      const crossed = pointsCrossed(timeline.points, this.lastPlayheadMs, ms);
+      for (let i = 0; i < crossed.length; i++) this.go();
+    }
+    this.lastPlayheadMs = ms;
+  }
+
+  /** シーク。跨ぎ基準をリセット（シーク位置からは発火しない）。 */
+  timelineSeek(ms: number): void {
+    this.lastPlayheadMs = ms;
+  }
+
+  /** 停止。基準を先頭へ。 */
+  timelineStop(): void {
+    this.lastPlayheadMs = 0;
+  }
+
+  addTimelinePoint(showId: string, timecodeMs: number): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    if (!show.timeline) show.timeline = { points: [] };
+    show.timeline.points.push({ timecodeMs: Math.max(0, Math.round(timecodeMs)), type: 'go' });
+    show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
+    this.notifyProject();
+  }
+
+  deleteTimelinePoint(showId: string, index: number): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show?.timeline) return;
+    if (index < 0 || index >= show.timeline.points.length) return;
+    show.timeline.points.splice(index, 1);
+    this.notifyProject();
+  }
+
   // ===== 内部ヘルパ =====
 
   private cueFromFaders(opts?: CaptureCueOptions): Cue {
-    const includeZero = opts?.includeZero ?? false;
-    const channels = opts?.channels ?? Array.from({ length: UNIVERSE_SIZE }, (_, i) => i);
+    // 既定はプログラマー（captured 中の ch）を保存。明示指定があればそれを優先。
+    const explicit = opts?.channels;
+    const channels = explicit ?? this.capturedChannels();
+    const includeZero = opts?.includeZero ?? explicit === undefined; // captured は 0 でも保存
     const values: Record<number, number> = {};
     for (const ch of channels) {
       if (ch < 0 || ch >= UNIVERSE_SIZE) continue;
@@ -398,6 +553,7 @@ export class Engine {
       captured: this.runtime.captured.slice(),
       artnet: { ...this.artnet },
       measuredHz: this.measuredHz,
+      activeActionIds: this.runtime.activeActions.map((r) => r.actionId),
       playback:
         show && this.activeShow
           ? {
@@ -445,6 +601,7 @@ export class Engine {
 
   tick(now: number): void {
     if (this.runtime.show) applyFade(this.runtime.show, now);
+    this.advanceActions(now);
 
     const ctx = contextFromRuntime(this.runtime);
     resolveFrame(ctx, this.runtime.output);
@@ -458,6 +615,22 @@ export class Engine {
     if (this.frameListeners.size > 0) {
       const frame = this.runtime.output;
       for (const cb of this.frameListeners) cb(frame);
+    }
+  }
+
+  /** アクティブ Action を進め、完了したものを除去する。 */
+  private advanceActions(now: number): void {
+    if (this.runtime.activeActions.length === 0) return;
+    const remaining: ActionRuntime[] = [];
+    for (const rt of this.runtime.activeActions) {
+      const action = this.project.actions.find((a) => a.id === rt.actionId);
+      if (!action) continue; // 削除済み
+      const done = advanceAction(action, rt, now);
+      if (!done) remaining.push(rt);
+    }
+    if (remaining.length !== this.runtime.activeActions.length) {
+      this.runtime.activeActions = remaining;
+      this.emitState();
     }
   }
 

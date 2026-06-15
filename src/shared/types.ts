@@ -149,6 +149,26 @@ export interface ShowRuntime {
   controlled: boolean[];
 }
 
+/**
+ * Action 実行時状態（§5.6・非永続）。最優先オーバーライド層（mixer 層1）。
+ * 各アクティブ Action が自前の step 進行とフェードを持つ。
+ */
+export interface ActionRuntime {
+  actionId: string;
+  /** 再生中の step index。 */
+  stepIndex: number;
+  /** 現 step のフェード開始時刻（ms）。 */
+  stepStartMs: number;
+  /** 512: このアクションの現在出力値（フェード適用後）。 */
+  values: number[];
+  /** 進行中フェード（無ければ null）。 */
+  fade: FadeState | null;
+  /** 512: このアクションが制御する ch（全 step の和集合＝footprint）。 */
+  controlled: boolean[];
+  /** hold 系: 押下中か。離されたら解除。 */
+  held: boolean;
+}
+
 export interface EngineRuntime {
   activeShowId: string | null;
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -157,8 +177,8 @@ export interface EngineRuntime {
   captured: boolean[];
   /** 512: 現在のフェーダー位置 */
   faderLive: number[];
-  /** 押下中の ActionButton id */
-  activeActions: string[];
+  /** アクティブな Action（最優先層）。 */
+  activeActions: ActionRuntime[];
   /** 512: 直近の計算済みフレーム */
   output: number[];
 }
@@ -231,4 +251,9 @@ export function createShowRuntime(): ShowRuntime {
     fade: null,
     controlled: new Array(UNIVERSE_SIZE).fill(false),
   };
+}
+
+/** 新規 ActionButton（1 step、既定 press-once）。 */
+export function createAction(name = 'Action', mode: ActionMode = 'press-once'): ActionButton {
+  return { id: genId(), name, mode, steps: [] };
 }

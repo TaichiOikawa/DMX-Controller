@@ -15,6 +15,7 @@ import { Engine } from '../engine/Engine';
 import {
   Cmd,
   Evt,
+  type ActionPatch,
   type CaptureCueOptions,
   type CuePatch,
   type SetFaderPayload,
@@ -139,6 +140,37 @@ export class EngineHost {
     );
     ipcMain.on(Cmd.moveCueInGroup, (_e, groupId: string, cueId: string, toIndex: number) =>
       this.engine.moveCueInGroup(groupId, cueId, toIndex),
+    );
+
+    // --- キャプチャ / リリース ---
+    ipcMain.on(Cmd.releaseCapture, (_e, channels?: number[]) =>
+      this.engine.releaseCapture(channels),
+    );
+
+    // --- Action ---
+    ipcMain.on(Cmd.actionDown, (_e, id: string) => this.engine.actionDown(id));
+    ipcMain.on(Cmd.actionUp, (_e, id: string) => this.engine.actionUp(id));
+    ipcMain.on(Cmd.addAction, (_e, name?: string) => this.engine.addAction(name));
+    ipcMain.on(Cmd.updateAction, (_e, id: string, patch: ActionPatch) =>
+      this.engine.updateAction(id, patch),
+    );
+    ipcMain.on(Cmd.deleteAction, (_e, id: string) => this.engine.deleteAction(id));
+    ipcMain.on(Cmd.addActionStep, (_e, id: string, fadeInMs?: number, holdMs?: number) =>
+      this.engine.addActionStep(id, fadeInMs, holdMs),
+    );
+    ipcMain.on(Cmd.deleteActionStep, (_e, id: string, stepIndex: number) =>
+      this.engine.deleteActionStep(id, stepIndex),
+    );
+
+    // --- Timeline ---
+    ipcMain.on(Cmd.reportAudioPlayhead, (_e, ms: number) => this.engine.reportAudioPlayhead(ms));
+    ipcMain.on(Cmd.timelineSeek, (_e, ms: number) => this.engine.timelineSeek(ms));
+    ipcMain.on(Cmd.timelineStop, () => this.engine.timelineStop());
+    ipcMain.on(Cmd.addTimelinePoint, (_e, showId: string, ms: number) =>
+      this.engine.addTimelinePoint(showId, ms),
+    );
+    ipcMain.on(Cmd.deleteTimelinePoint, (_e, showId: string, index: number) =>
+      this.engine.deleteTimelinePoint(showId, index),
     );
 
     // --- 永続化 ---

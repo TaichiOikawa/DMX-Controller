@@ -14,7 +14,7 @@
  * 予約（後続）: releaseCapture / action* / timeline* / reportAudioPlayhead
  */
 
-import type { ArtnetSettings, Cue, Project } from './types';
+import type { ActionMode, ArtnetSettings, Cue, Project } from './types';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
@@ -41,20 +41,29 @@ export const Cmd = {
   moveEntry: 'cmd:moveEntry',
   moveCueInGroup: 'cmd:moveCueInGroup',
 
+  // --- キャプチャ / リリース（§6） ---
+  releaseCapture: 'cmd:releaseCapture',
+
+  // --- Action（§5.6） ---
+  actionDown: 'cmd:actionDown',
+  actionUp: 'cmd:actionUp',
+  addAction: 'cmd:addAction',
+  updateAction: 'cmd:updateAction',
+  deleteAction: 'cmd:deleteAction',
+  addActionStep: 'cmd:addActionStep',
+  deleteActionStep: 'cmd:deleteActionStep',
+
+  // --- Timeline（§5.5・内部タイムコード） ---
+  reportAudioPlayhead: 'cmd:reportAudioPlayhead',
+  timelineSeek: 'cmd:timelineSeek',
+  timelineStop: 'cmd:timelineStop',
+  addTimelinePoint: 'cmd:addTimelinePoint',
+  deleteTimelinePoint: 'cmd:deleteTimelinePoint',
+
   // --- 永続化 ---
   newProject: 'cmd:newProject',
   saveProject: 'cmd:saveProject',
   loadProject: 'cmd:loadProject',
-
-  // --- 予約（後続マイルストーン） ---
-  releaseCapture: 'cmd:releaseCapture',
-  actionDown: 'cmd:actionDown',
-  actionUp: 'cmd:actionUp',
-  timelinePlay: 'cmd:timelinePlay',
-  timelinePause: 'cmd:timelinePause',
-  timelineStop: 'cmd:timelineStop',
-  timelineSeek: 'cmd:timelineSeek',
-  reportAudioPlayhead: 'cmd:reportAudioPlayhead',
 } as const;
 
 /** Engine → UI（イベント）チャンネル名。 */
@@ -97,6 +106,12 @@ export interface CuePatch {
   delayMs?: number;
 }
 
+/** updateAction で変更可能なフィールド。 */
+export interface ActionPatch {
+  name?: string;
+  mode?: ActionMode;
+}
+
 /** 単一プレイヘッドの再生状態（可視化用）。 */
 export interface PlaybackStatus {
   /** マスター列 index（-1=未開始）。 */
@@ -117,6 +132,8 @@ export interface EngineStateSnapshot {
   artnet: ArtnetSettings;
   /** 実際の送出レート計測値（Hz）。診断用。 */
   measuredHz: number;
+  /** アクティブな Action の id。 */
+  activeActionIds: string[];
   /** 読込中 Show の再生状態（未読込は null）。 */
   playback: PlaybackStatus | null;
 }
@@ -148,6 +165,25 @@ export interface DmxBridge {
   deleteCueFromGroup(groupId: string, cueId: string): void;
   moveEntry(showId: string, entryId: string, toIndex: number): void;
   moveCueInGroup(groupId: string, cueId: string, toIndex: number): void;
+
+  // キャプチャ / リリース（§6）
+  releaseCapture(channels?: number[]): void;
+
+  // Action（§5.6）
+  actionDown(actionId: string): void;
+  actionUp(actionId: string): void;
+  addAction(name?: string): void;
+  updateAction(actionId: string, patch: ActionPatch): void;
+  deleteAction(actionId: string): void;
+  addActionStep(actionId: string, fadeInMs?: number, holdMs?: number): void;
+  deleteActionStep(actionId: string, stepIndex: number): void;
+
+  // Timeline（§5.5）
+  reportAudioPlayhead(ms: number): void;
+  timelineSeek(ms: number): void;
+  timelineStop(): void;
+  addTimelinePoint(showId: string, timecodeMs: number): void;
+  deleteTimelinePoint(showId: string, index: number): void;
 
   // 永続化（main が結果を project イベントで返す）
   newProject(): void;

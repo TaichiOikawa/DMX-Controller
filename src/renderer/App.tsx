@@ -7,6 +7,8 @@ import { useEffect } from 'react';
 import { SettingsBar } from './components/SettingsBar';
 import { ProjectBar } from './components/ProjectBar';
 import { PlaybackPanel } from './components/PlaybackPanel';
+import { ActionPanel } from './components/ActionPanel';
+import { TimelineBar } from './components/TimelineBar';
 import { FaderBank } from './components/FaderBank';
 import { OutputMeter } from './components/OutputMeter';
 import { useDmxStore } from './store';
@@ -34,11 +36,13 @@ export default function App() {
     <div className="flex h-screen flex-col gap-2 bg-neutral-950 p-2 text-neutral-100">
       <SettingsBar />
       <ProjectBar />
-      {/* 上段: 再生パネル（並列グループ） */}
+      <TimelineBar />
+      {/* 再生パネル（マスター列） */}
       <div className="min-h-0 flex-[2]">
         <PlaybackPanel />
       </div>
-      {/* 下段: フェーダーバンク */}
+      <ActionPanel />
+      {/* フェーダーバンク */}
       <div className="min-h-0 flex-[3]">
         <FaderBank />
       </div>

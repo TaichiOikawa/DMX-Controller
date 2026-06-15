@@ -9,6 +9,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   Cmd,
   Evt,
+  type ActionPatch,
   type CaptureCueOptions,
   type CuePatch,
   type DmxBridge,
@@ -79,6 +80,51 @@ const api: DmxBridge = {
   },
   moveCueInGroup(groupId, cueId, toIndex) {
     ipcRenderer.send(Cmd.moveCueInGroup, groupId, cueId, toIndex);
+  },
+
+  // キャプチャ / リリース
+  releaseCapture(channels?: number[]) {
+    ipcRenderer.send(Cmd.releaseCapture, channels);
+  },
+
+  // Action
+  actionDown(actionId) {
+    ipcRenderer.send(Cmd.actionDown, actionId);
+  },
+  actionUp(actionId) {
+    ipcRenderer.send(Cmd.actionUp, actionId);
+  },
+  addAction(name) {
+    ipcRenderer.send(Cmd.addAction, name);
+  },
+  updateAction(actionId, patch: ActionPatch) {
+    ipcRenderer.send(Cmd.updateAction, actionId, patch);
+  },
+  deleteAction(actionId) {
+    ipcRenderer.send(Cmd.deleteAction, actionId);
+  },
+  addActionStep(actionId, fadeInMs, holdMs) {
+    ipcRenderer.send(Cmd.addActionStep, actionId, fadeInMs, holdMs);
+  },
+  deleteActionStep(actionId, stepIndex) {
+    ipcRenderer.send(Cmd.deleteActionStep, actionId, stepIndex);
+  },
+
+  // Timeline
+  reportAudioPlayhead(ms) {
+    ipcRenderer.send(Cmd.reportAudioPlayhead, ms);
+  },
+  timelineSeek(ms) {
+    ipcRenderer.send(Cmd.timelineSeek, ms);
+  },
+  timelineStop() {
+    ipcRenderer.send(Cmd.timelineStop);
+  },
+  addTimelinePoint(showId, timecodeMs) {
+    ipcRenderer.send(Cmd.addTimelinePoint, showId, timecodeMs);
+  },
+  deleteTimelinePoint(showId, index) {
+    ipcRenderer.send(Cmd.deleteTimelinePoint, showId, index);
   },
 
   // 永続化

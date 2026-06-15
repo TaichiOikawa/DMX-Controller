@@ -169,6 +169,13 @@ export interface ActionRuntime {
   held: boolean;
 }
 
+/**
+ * 操作モード。
+ * - 'edit': show 制御下 ch を触ると現在 CUE を直接編集（capture しない）。編集機能 有効。
+ * - 'show': 作成系の編集を全ブロック。show 制御下 ch を触るとプログラマー（capture）。
+ */
+export type EngineMode = 'edit' | 'show';
+
 export interface EngineRuntime {
   activeShowId: string | null;
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -179,6 +186,8 @@ export interface EngineRuntime {
   faderLive: number[];
   /** アクティブな Action（最優先層）。 */
   activeActions: ActionRuntime[];
+  /** 操作モード（非永続・既定 'edit'）。 */
+  mode: EngineMode;
   /** 512: 直近の計算済みフレーム */
   output: number[];
 }

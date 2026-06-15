@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import {
   UNIVERSE_SIZE,
   type ArtnetSettings,
+  type EngineMode,
   type Project,
   defaultArtnetSettings,
 } from '../shared/types';
@@ -39,6 +40,8 @@ interface DmxState {
   selectedShowId: string | null;
   activeActionIds: string[];
   transport: TransportState;
+  /** 操作モード（'edit' / 'show'）。 */
+  mode: EngineMode;
 
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
@@ -47,6 +50,7 @@ interface DmxState {
   setProject: (project: Project) => void;
   setEngineState: (state: EngineStateSnapshot) => void;
   selectShow: (showId: string) => void;
+  setMode: (mode: EngineMode) => void;
 
   /** キャプチャ解除（その ch を 0 に戻し、CUE/0 へ復帰）。 */
   releaseChannel: (ch: number) => void;
@@ -88,12 +92,16 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   selectedShowId: null,
   activeActionIds: [],
   transport: { playing: false, playheadMs: 0, durationMs: DEFAULT_DURATION_MS },
+  mode: 'edit',
 
   setFader: (ch, value) =>
     set((s) => {
       const faders = s.faders.slice();
       faders[ch] = value;
       window.dmx.setFader(ch, value);
+      // Show モードのみ楽観的にキャプチャ表示。Edit は制御下 ch を capture しないため
+      // 楽観更新せず、engineState の captured で反映させる。
+      if (s.mode !== 'show') return { faders };
       let captured = s.captured;
       if (!captured[ch]) {
         captured = captured.slice();
@@ -137,9 +145,16 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       activeShowId: state.activeShowId,
       activeActionIds: state.activeActionIds,
       captured: state.captured,
+      mode: state.mode,
     }),
 
   selectShow: (showId) => set({ selectedShowId: showId }),
+
+  setMode: (mode) =>
+    set(() => {
+      window.dmx.setMode(mode);
+      return { mode };
+    }),
 
   releaseChannel: (ch) =>
     set((s) => {

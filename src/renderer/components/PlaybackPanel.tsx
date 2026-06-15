@@ -12,6 +12,7 @@ export function PlaybackPanel() {
   const project = useDmxStore((s) => s.project);
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const playback = useDmxStore((s) => s.playback);
+  const editable = useDmxStore((s) => s.mode === 'edit');
 
   const activeShow = project?.shows.find((s) => s.id === activeShowId) ?? null;
 
@@ -44,14 +45,16 @@ export function PlaybackPanel() {
         <span className="text-sm text-neutral-400">{activeShow.name}</span>
         <button
           onClick={() => window.dmx.recordCue(showId)}
-          className="ml-auto rounded bg-neutral-800 px-3 py-1.5 text-xs text-amber-300 hover:bg-neutral-700"
-          title="現在のフェーダー（非ゼロ）から CUE をマスター列末尾に記録"
+          disabled={!editable}
+          className="ml-auto rounded bg-neutral-800 px-3 py-1.5 text-xs text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
+          title="現在のキャプチャから CUE をマスター列末尾に記録"
         >
           ● Record CUE
         </button>
         <button
           onClick={() => window.dmx.addGroupEntry(showId)}
-          className="rounded bg-neutral-800 px-3 py-1.5 text-xs text-sky-300 hover:bg-neutral-700"
+          disabled={!editable}
+          className="rounded bg-neutral-800 px-3 py-1.5 text-xs text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
         >
           ＋ GROUP
         </button>
@@ -99,6 +102,7 @@ interface EntryRowProps {
 }
 
 function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: EntryRowProps) {
+  const editable = useDmxStore((s) => s.mode === 'edit');
   const moveUp = () => window.dmx.moveEntry(showId, entryId(entry), index - 1);
   const moveDown = () => window.dmx.moveEntry(showId, entryId(entry), index + 1);
   const del = () => window.dmx.deleteEntry(showId, entryId(entry));
@@ -112,9 +116,10 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
           cue={entry.cue}
           current={current}
           fading={current && fading}
+          editable={editable}
           onClick={() => window.dmx.goTo(index, 0)}
-          onMoveUp={index > 0 ? moveUp : undefined}
-          onMoveDown={index < lastIndex ? moveDown : undefined}
+          onMoveUp={editable && index > 0 ? moveUp : undefined}
+          onMoveDown={editable && index < lastIndex ? moveDown : undefined}
           onDelete={del}
         />
       </li>
@@ -131,7 +136,8 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
         <span className="text-xs font-semibold text-sky-300">▣ {g.name ?? 'Group'}</span>
         <button
           onClick={() => window.dmx.setGroupLoop(g.id, !g.loop)}
-          className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${
+          disabled={!editable}
+          className={`rounded px-1.5 py-0.5 text-[10px] font-mono disabled:opacity-50 ${
             g.loop ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-500'
           }`}
           title="GROUP 内ループ"
@@ -140,15 +146,20 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
         </button>
         <span className="text-[10px] text-neutral-600">{g.cues.length} CUE</span>
         <div className="ml-auto flex items-center gap-0.5">
-          <button
-            onClick={() => window.dmx.recordCue(showId, { targetGroupId: g.id })}
-            className="rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
-            title="現在のフェーダーから、この GROUP に子 CUE を追加"
-          >
-            ＋CUE
-          </button>
-          <MoveButtons onUp={index > 0 ? moveUp : undefined} onDown={index < lastIndex ? moveDown : undefined} />
-          <DeleteButton onClick={del} title="GROUP 削除" />
+          {editable && (
+            <button
+              onClick={() => window.dmx.recordCue(showId, { targetGroupId: g.id })}
+              className="rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
+              title="現在のキャプチャから、この GROUP に子 CUE を追加"
+            >
+              ＋CUE
+            </button>
+          )}
+          <MoveButtons
+            onUp={editable && index > 0 ? moveUp : undefined}
+            onDown={editable && index < lastIndex ? moveDown : undefined}
+          />
+          {editable && <DeleteButton onClick={del} title="GROUP 削除" />}
         </div>
       </div>
 
@@ -164,10 +175,13 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
                   cue={cue}
                   current={current}
                   fading={current && fading}
+                  editable={editable}
                   onClick={() => window.dmx.goTo(index, j)}
-                  onMoveUp={j > 0 ? () => window.dmx.moveCueInGroup(g.id, cue.id, j - 1) : undefined}
+                  onMoveUp={
+                    editable && j > 0 ? () => window.dmx.moveCueInGroup(g.id, cue.id, j - 1) : undefined
+                  }
                   onMoveDown={
-                    j < g.cues.length - 1
+                    editable && j < g.cues.length - 1
                       ? () => window.dmx.moveCueInGroup(g.id, cue.id, j + 1)
                       : undefined
                   }
@@ -187,13 +201,14 @@ interface CueRowProps {
   cue: Cue;
   current: boolean;
   fading: boolean;
+  editable: boolean;
   onClick: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   onDelete: () => void;
 }
 
-function CueRow({ no, cue, current, fading, onClick, onMoveUp, onMoveDown, onDelete }: CueRowProps) {
+function CueRow({ no, cue, current, fading, editable, onClick, onMoveUp, onMoveDown, onDelete }: CueRowProps) {
   const channelCount = Object.keys(cue.values).length;
   return (
     <div
@@ -211,16 +226,16 @@ function CueRow({ no, cue, current, fading, onClick, onMoveUp, onMoveDown, onDel
         {cue.name ?? 'Cue'}
         <span className="ml-1 text-[10px] text-neutral-500">{channelCount}ch</span>
       </span>
-      <FadeField cueId={cue.id} fadeInMs={cue.fadeInMs} />
+      <FadeField cueId={cue.id} fadeInMs={cue.fadeInMs} editable={editable} />
       <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
         <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
-        <DeleteButton onClick={onDelete} title="CUE 削除" />
+        {editable && <DeleteButton onClick={onDelete} title="CUE 削除" />}
       </div>
     </div>
   );
 }
 
-function FadeField({ cueId, fadeInMs }: { cueId: string; fadeInMs: number }) {
+function FadeField({ cueId, fadeInMs, editable }: { cueId: string; fadeInMs: number; editable: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -229,6 +244,10 @@ function FadeField({ cueId, fadeInMs }: { cueId: string; fadeInMs: number }) {
     if (Number.isFinite(n)) window.dmx.updateCue(cueId, { fadeInMs: n });
     setEditing(false);
   };
+
+  if (!editable) {
+    return <span className="px-1 font-mono text-[11px] text-neutral-500">{fadeInMs}ms</span>;
+  }
 
   return editing ? (
     <input

@@ -14,7 +14,7 @@
  * 予約（後続）: releaseCapture / action* / timeline* / reportAudioPlayhead
  */
 
-import type { ActionMode, ArtnetSettings, Cue, Project } from './types';
+import type { ActionMode, ArtnetSettings, Cue, EngineMode, Project } from './types';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
@@ -23,6 +23,7 @@ export const Cmd = {
   updateArtnetSettings: 'cmd:updateArtnetSettings',
   getEngineState: 'cmd:getEngineState',
   getProject: 'cmd:getProject',
+  setMode: 'cmd:setMode',
 
   // --- 再生 ---
   loadShow: 'cmd:loadShow',
@@ -132,6 +133,8 @@ export interface EngineStateSnapshot {
   artnet: ArtnetSettings;
   /** 実際の送出レート計測値（Hz）。診断用。 */
   measuredHz: number;
+  /** 操作モード（'edit' / 'show'）。 */
+  mode: EngineMode;
   /** アクティブな Action の id。 */
   activeActionIds: string[];
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -148,6 +151,7 @@ export interface DmxBridge {
   updateArtnetSettings(settings: ArtnetSettings): void;
   getEngineState(): Promise<EngineStateSnapshot>;
   getProject(): Promise<Project>;
+  setMode(mode: EngineMode): void;
 
   // 再生
   loadShow(showId: string): void;

@@ -24,6 +24,7 @@ export function TimelineBar() {
   const pause = useDmxStore((s) => s.transportPause);
   const stop = useDmxStore((s) => s.transportStop);
   const seek = useDmxStore((s) => s.transportSeek);
+  const editable = useDmxStore((s) => s.mode === 'edit');
 
   const show = project?.shows.find((s) => s.id === activeShowId) ?? null;
   const points = show?.timeline?.points ?? [];
@@ -78,7 +79,7 @@ export function TimelineBar() {
 
       <button
         onClick={() => activeShowId && window.dmx.addTimelinePoint(activeShowId, transport.playheadMs)}
-        disabled={!loaded}
+        disabled={!loaded || !editable}
         className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
         title="現在位置に GO ポイントを追加"
       >
@@ -95,15 +96,17 @@ export function TimelineBar() {
             title="クリックでシーク"
           >
             {fmt(p.timecodeMs)}
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                if (activeShowId) window.dmx.deleteTimelinePoint(activeShowId, i);
-              }}
-              className="text-neutral-600 group-hover:text-red-300"
-            >
-              ✕
-            </span>
+            {editable && (
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (activeShowId) window.dmx.deleteTimelinePoint(activeShowId, i);
+                }}
+                className="text-neutral-600 group-hover:text-red-300"
+              >
+                ✕
+              </span>
+            )}
           </button>
         ))}
       </div>

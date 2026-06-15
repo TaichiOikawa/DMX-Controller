@@ -38,6 +38,9 @@ const api: DmxBridge = {
   getProject() {
     return ipcRenderer.invoke(Cmd.getProject) as Promise<Project>;
   },
+  setMode(mode) {
+    ipcRenderer.send(Cmd.setMode, mode);
+  },
 
   // 再生
   loadShow(showId) {

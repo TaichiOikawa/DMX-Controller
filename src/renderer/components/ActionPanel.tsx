@@ -20,6 +20,7 @@ export function ActionPanel() {
   const project = useDmxStore((s) => s.project);
   const activeActionIds = useDmxStore((s) => s.activeActionIds);
   const capturedCount = useDmxStore((s) => s.captured.reduce((n, b) => (b ? n + 1 : n), 0));
+  const editable = useDmxStore((s) => s.mode === 'edit');
 
   const actions = project?.actions ?? [];
 
@@ -29,7 +30,7 @@ export function ActionPanel() {
         <span className="text-[11px] font-semibold text-sky-400">Action</span>
         <button
           onClick={() => window.dmx.addAction()}
-          disabled={capturedCount === 0}
+          disabled={!editable || capturedCount === 0}
           className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
           title="キャプチャ中のフェーダーから Action を作成"
         >
@@ -44,7 +45,12 @@ export function ActionPanel() {
           </div>
         ) : (
           actions.map((a) => (
-            <ActionCard key={a.id} action={a} active={activeActionIds.includes(a.id)} />
+            <ActionCard
+              key={a.id}
+              action={a}
+              active={activeActionIds.includes(a.id)}
+              editable={editable}
+            />
           ))
         )}
       </div>
@@ -52,7 +58,15 @@ export function ActionPanel() {
   );
 }
 
-function ActionCard({ action, active }: { action: ActionButton; active: boolean }) {
+function ActionCard({
+  action,
+  active,
+  editable,
+}: {
+  action: ActionButton;
+  active: boolean;
+  editable: boolean;
+}) {
   const hold = action.mode !== 'press-once';
 
   const triggerProps = hold
@@ -77,37 +91,47 @@ function ActionCard({ action, active }: { action: ActionButton; active: boolean 
         {action.name ?? 'Action'}
       </button>
 
-      <div className="flex items-center gap-1">
-        <select
-          value={action.mode}
-          onChange={(e) => window.dmx.updateAction(action.id, { mode: e.target.value as ActionMode })}
-          className="flex-1 rounded bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-200 outline-none"
-        >
-          {(Object.keys(MODE_LABEL) as ActionMode[]).map((m) => (
-            <option key={m} value={m}>
-              {MODE_LABEL[m]}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => window.dmx.deleteAction(action.id)}
-          className="rounded px-1 text-[11px] text-neutral-500 hover:bg-red-900/50 hover:text-red-300"
-          title="Action 削除"
-        >
-          ✕
-        </button>
-      </div>
+      {editable ? (
+        <>
+          <div className="flex items-center gap-1">
+            <select
+              value={action.mode}
+              onChange={(e) =>
+                window.dmx.updateAction(action.id, { mode: e.target.value as ActionMode })
+              }
+              className="flex-1 rounded bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-200 outline-none"
+            >
+              {(Object.keys(MODE_LABEL) as ActionMode[]).map((m) => (
+                <option key={m} value={m}>
+                  {MODE_LABEL[m]}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => window.dmx.deleteAction(action.id)}
+              className="rounded px-1 text-[11px] text-neutral-500 hover:bg-red-900/50 hover:text-red-300"
+              title="Action 削除"
+            >
+              ✕
+            </button>
+          </div>
 
-      <div className="flex items-center justify-between text-[10px] text-neutral-500">
-        <span>{action.steps.length} step</span>
-        <button
-          onClick={() => window.dmx.addActionStep(action.id)}
-          className="rounded px-1 text-sky-300 hover:bg-neutral-700"
-          title="現在のキャプチャを step として追加（チェイス）"
-        >
-          ＋Step
-        </button>
-      </div>
+          <div className="flex items-center justify-between text-[10px] text-neutral-500">
+            <span>{action.steps.length} step</span>
+            <button
+              onClick={() => window.dmx.addActionStep(action.id)}
+              className="rounded px-1 text-sky-300 hover:bg-neutral-700"
+              title="現在のキャプチャを step として追加（チェイス）"
+            >
+              ＋Step
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="text-center text-[10px] text-neutral-500">
+          {MODE_LABEL[action.mode]} · {action.steps.length} step
+        </div>
+      )}
     </div>
   );
 }

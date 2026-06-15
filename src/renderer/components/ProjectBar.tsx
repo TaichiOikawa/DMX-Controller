@@ -11,11 +11,14 @@ export function ProjectBar() {
   const selectedShowId = useDmxStore((s) => s.selectedShowId);
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const selectShow = useDmxStore((s) => s.selectShow);
+  const mode = useDmxStore((s) => s.mode);
+  const setMode = useDmxStore((s) => s.setMode);
   const [busy, setBusy] = useState(false);
 
   const shows = project?.shows ?? [];
   const isLoaded = activeShowId !== null;
   const canLoad = selectedShowId !== null && selectedShowId !== activeShowId;
+  const editable = mode === 'edit';
 
   const save = async () => {
     setBusy(true);
@@ -33,10 +36,35 @@ export function ProjectBar() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg bg-neutral-900/60 px-3 py-2 ring-1 ring-neutral-800">
+      {/* モードトグル */}
+      <div className="flex overflow-hidden rounded ring-1 ring-neutral-700">
+        <button
+          onClick={() => setMode('edit')}
+          className={`px-3 py-1 text-xs font-bold ${
+            editable ? 'bg-sky-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+          }`}
+          title="編集モード: フェーダーで CUE を直接編集"
+        >
+          EDIT
+        </button>
+        <button
+          onClick={() => setMode('show')}
+          className={`px-3 py-1 text-xs font-bold ${
+            !editable ? 'bg-amber-600 text-neutral-900' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+          }`}
+          title="本番モード: 編集ロック・フェーダーは一時上書き"
+        >
+          🔒 SHOW
+        </button>
+      </div>
+
+      <div className="mx-1 h-5 w-px bg-neutral-700" />
+
       <span className="text-sm font-semibold text-sky-400">Project</span>
       <button
         onClick={() => window.dmx.newProject()}
-        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+        disabled={!editable}
+        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
       >
         新規
       </button>
@@ -73,7 +101,8 @@ export function ProjectBar() {
       </select>
       <button
         onClick={() => window.dmx.newShow()}
-        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-sky-300 hover:bg-neutral-700"
+        disabled={!editable}
+        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
       >
         ＋ Show
       </button>

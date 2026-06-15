@@ -30,6 +30,7 @@ describe('capture / release (§6.1/6.2)', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
     engine.loadShow('show1');
+    engine.setMode('show'); // capture-on-touch は Show モードの挙動
     engine.go();
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(200);
@@ -43,6 +44,7 @@ describe('capture / release (§6.1/6.2)', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
     engine.loadShow('show1');
+    engine.setMode('show');
     engine.go();
     engine.setFader(0, 50);
     engine.tick(0);
@@ -59,6 +61,7 @@ describe('capture / release (§6.1/6.2)', () => {
       projectWithSequence([cueEntry(cue('c0', { 0: 100 })), cueEntry(cue('c1', { 0: 200 }))]),
     );
     engine.loadShow('show1');
+    engine.setMode('show');
     engine.go();
     engine.setFader(0, 50);
     engine.tick(0);

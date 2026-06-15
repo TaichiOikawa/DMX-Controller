@@ -21,6 +21,7 @@ import {
   type ActionRuntime,
   type ArtnetSettings,
   type Cue,
+  type EngineMode,
   type EngineRuntime,
   type Group,
   type Project,
@@ -83,6 +84,9 @@ export class Engine {
   /** Timeline: 直近に受け取った playhead（ms）。跨ぎ判定の基準。 */
   private lastPlayheadMs = 0;
 
+  /** Edit ドラッグ中の Project 通知を間引く trailing throttle タイマー。 */
+  private projectNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(opts: EngineOptions) {
     this.send = opts.send;
     this.nowFn = opts.nowFn ?? (() => Date.now());
@@ -95,6 +99,7 @@ export class Engine {
       captured: new Array(UNIVERSE_SIZE).fill(false),
       faderLive: this.project.faders.slice(),
       activeActions: [],
+      mode: 'edit',
       output: new Array(UNIVERSE_SIZE).fill(0),
     };
 
@@ -136,6 +141,7 @@ export class Engine {
   }
 
   newProject(): void {
+    if (!this.editable) return;
     this.loadProject(createDefaultProject());
   }
 
@@ -147,15 +153,52 @@ export class Engine {
 
   // ===== コマンド: フェーダー / 設定 =====
 
+  /** 操作モードを切り替える（'edit' / 'show'）。 */
+  setMode(mode: EngineMode): void {
+    this.runtime.mode = mode;
+    this.emitState();
+  }
+
+  /** 作成系コマンドが許可されるか（Show モードはロック）。 */
+  private get editable(): boolean {
+    return this.runtime.mode === 'edit';
+  }
+
   /**
    * フェーダー値を設定する（§5.1, 1:1）。
-   * 触った ch はプログラマー＝キャプチャ（§6.1）に入る（captured=true）。
-   * show 制御下なら層2が層3(show)を上書きし、非制御なら層4と同値で無害。
+   * - Edit モード × show 制御下 ch: 現在 CUE を直接編集（capture しない）。
+   * - それ以外（Show モード / Edit の非制御 ch）: プログラマー＝キャプチャ（§6.1）。
    */
   setFader(ch: number, value: number): void {
     if (ch < 0 || ch >= UNIVERSE_SIZE) return;
-    this.runtime.faderLive[ch] = clamp255(value);
+    const v = clamp255(value);
+    this.runtime.faderLive[ch] = v;
+
+    const show = this.runtime.show;
+    const controlled = show !== null && show.mainIndex >= 0 && show.controlled[ch];
+    if (this.runtime.mode === 'edit' && controlled) {
+      this.editCurrentCue(ch, v);
+      this.runtime.captured[ch] = false;
+      return;
+    }
     this.runtime.captured[ch] = true;
+  }
+
+  /**
+   * Edit モード: 現在の再生位置の CUE にこの ch を直接書き込む（Update 相当）。
+   * cue.values を更新（永続）し、tracked を即時反映する。
+   */
+  private editCurrentCue(ch: number, v: number): void {
+    const show = this.activeShow;
+    const rt = this.runtime.show;
+    if (!show || !rt) return;
+    const cue = cueAt(show.sequence, { main: rt.mainIndex, sub: rt.subIndex });
+    if (!cue) return;
+    cue.values[ch] = v; // 現在 CUE に追加/上書き
+    rt.tracked[ch] = v; // ライブ反映
+    if (rt.fade) rt.fade.to[ch] = v; // フェード中なら着地点も更新
+    this.scheduleProjectNotify();
+    this.emitState();
   }
 
   /**
@@ -263,6 +306,7 @@ export class Engine {
   // ===== コマンド: オーサリング =====
 
   newShow(name?: string): void {
+    if (!this.editable) return;
     const show = { id: genId(), name: name ?? `Show ${this.project.shows.length + 1}`, sequence: [] };
     this.project.shows.push(show);
     this.notifyProject();
@@ -270,6 +314,7 @@ export class Engine {
 
   /** 現在のフェーダーから CUE を作成。targetGroupId 指定で GROUP の子へ、無ければマスター列末尾へ。 */
   recordCue(showId: string, opts?: CaptureCueOptions): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
 
@@ -287,6 +332,7 @@ export class Engine {
 
   /** 空の GROUP エントリをマスター列末尾に追加。 */
   addGroupEntry(showId: string, name?: string): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     show.sequence.push(createGroupEntry(name ?? `Group ${show.sequence.length + 1}`));
@@ -294,6 +340,7 @@ export class Engine {
   }
 
   setGroupLoop(groupId: string, loop: boolean): void {
+    if (!this.editable) return;
     const found = this.findGroup(groupId);
     if (!found) return;
     found.group.loop = loop;
@@ -301,6 +348,7 @@ export class Engine {
   }
 
   updateCue(cueId: string, patch: CuePatch): void {
+    if (!this.editable) return;
     const cue = this.findCue(cueId);
     if (!cue) return;
     if (patch.name !== undefined) cue.name = patch.name;
@@ -311,6 +359,7 @@ export class Engine {
 
   /** マスター列のエントリ（CUE / GROUP）を id で削除。 */
   deleteEntry(showId: string, entryId: string): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     const idx = show.sequence.findIndex((e) =>
@@ -322,6 +371,7 @@ export class Engine {
   }
 
   deleteCueFromGroup(groupId: string, cueId: string): void {
+    if (!this.editable) return;
     const found = this.findGroup(groupId);
     if (!found) return;
     const idx = found.group.cues.findIndex((c) => c.id === cueId);
@@ -332,6 +382,7 @@ export class Engine {
 
   /** マスター列のエントリを並べ替え。 */
   moveEntry(showId: string, entryId: string, toIndex: number): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     moveById(
@@ -343,6 +394,7 @@ export class Engine {
   }
 
   moveCueInGroup(groupId: string, cueId: string, toIndex: number): void {
+    if (!this.editable) return;
     const found = this.findGroup(groupId);
     if (!found) return;
     moveById(found.group.cues, (c) => c.id === cueId, toIndex);
@@ -376,6 +428,7 @@ export class Engine {
   // ===== コマンド: Action オーサリング =====
 
   addAction(name?: string): void {
+    if (!this.editable) return;
     const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
     // 現在のフェーダー(captured)を最初の step として取り込む。
     const values = this.faderValuesFor(this.capturedChannels());
@@ -385,6 +438,7 @@ export class Engine {
   }
 
   updateAction(actionId: string, patch: ActionPatch): void {
+    if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
     if (patch.name !== undefined) action.name = patch.name;
@@ -393,6 +447,7 @@ export class Engine {
   }
 
   deleteAction(actionId: string): void {
+    if (!this.editable) return;
     this.project.actions = this.project.actions.filter((a) => a.id !== actionId);
     this.runtime.activeActions = this.runtime.activeActions.filter(
       (r) => r.actionId !== actionId,
@@ -403,6 +458,7 @@ export class Engine {
 
   /** 現在のフェーダー(captured)を新しい step として追加（チェイス用）。 */
   addActionStep(actionId: string, fadeInMs = 0, holdMs = 500): void {
+    if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
     const values = this.faderValuesFor(this.capturedChannels());
@@ -411,6 +467,7 @@ export class Engine {
   }
 
   deleteActionStep(actionId: string, stepIndex: number): void {
+    if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action || stepIndex < 0 || stepIndex >= action.steps.length) return;
     action.steps.splice(stepIndex, 1);
@@ -448,6 +505,7 @@ export class Engine {
   }
 
   addTimelinePoint(showId: string, timecodeMs: number): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     if (!show.timeline) show.timeline = { points: [] };
@@ -457,6 +515,7 @@ export class Engine {
   }
 
   deleteTimelinePoint(showId: string, index: number): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show?.timeline) return;
     if (index < 0 || index >= show.timeline.points.length) return;
@@ -553,6 +612,7 @@ export class Engine {
       captured: this.runtime.captured.slice(),
       artnet: { ...this.artnet },
       measuredHz: this.measuredHz,
+      mode: this.runtime.mode,
       activeActionIds: this.runtime.activeActions.map((r) => r.actionId),
       playback:
         show && this.activeShow
@@ -595,6 +655,15 @@ export class Engine {
     if (this.projectListeners.size === 0) return;
     const project = this.getProject();
     for (const cb of this.projectListeners) cb(project);
+  }
+
+  /** Edit ドラッグ中の連続編集を間引いて Project 通知する（trailing, ~120ms）。 */
+  private scheduleProjectNotify(): void {
+    if (this.projectNotifyTimer !== null) return;
+    this.projectNotifyTimer = setTimeout(() => {
+      this.projectNotifyTimer = null;
+      this.notifyProject();
+    }, 120);
   }
 
   // ===== 出力ループ =====

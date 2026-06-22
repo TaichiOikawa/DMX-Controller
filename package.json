@@ -16,6 +16,7 @@
   "dependencies": {
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "wavesurfer.js": "^7.12.8",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

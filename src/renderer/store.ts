@@ -64,6 +64,12 @@ interface DmxState {
   transportSeek: (ms: number) => void;
   /** 内部クロックからの前進（私用）。 */
   advancePlayhead: (deltaMs: number) => void;
+  /** 音声 Blob URL を再生用 <audio> として読込（クロック源になる）。 */
+  loadAudio: (url: string) => void;
+  /** 音声を解除（内部クロックへ戻す）。 */
+  unloadAudio: () => void;
+  /** 絶対位置で playhead を反映しエンジンへ報告（音声クロックから・私用）。 */
+  reportPlayhead: (absMs: number) => void;
 }
 
 export const FADERS_PER_BANK = 32;
@@ -176,19 +182,35 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPlay: () =>
     set((s) => {
-      startClock();
+      if (audioEl) {
+        void audioEl.play().catch(() => {});
+        startAudioRaf();
+      } else {
+        startClock();
+      }
       return { transport: { ...s.transport, playing: true } };
     }),
 
   transportPause: () =>
     set((s) => {
-      stopClock();
+      if (audioEl) {
+        audioEl.pause();
+        stopAudioRaf();
+      } else {
+        stopClock();
+      }
       return { transport: { ...s.transport, playing: false } };
     }),
 
   transportStop: () =>
     set((s) => {
-      stopClock();
+      if (audioEl) {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+        stopAudioRaf();
+      } else {
+        stopClock();
+      }
       window.dmx.timelineStop();
       return { transport: { ...s.transport, playing: false, playheadMs: 0 } };
     }),
@@ -196,6 +218,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   transportSeek: (ms) =>
     set((s) => {
       const playheadMs = Math.max(0, Math.min(s.transport.durationMs, ms));
+      if (audioEl) audioEl.currentTime = playheadMs / 1000;
       window.dmx.timelineSeek(playheadMs);
       return { transport: { ...s.transport, playheadMs } };
     }),
@@ -213,11 +236,53 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     window.dmx.reportAudioPlayhead(next);
     set({ transport: { ...s.transport, playheadMs: next } });
   },
+
+  loadAudio: (url) => {
+    if (audioEl) audioEl.pause();
+    stopAudioRaf();
+    const el = new Audio(url);
+    audioEl = el;
+    el.addEventListener('loadedmetadata', () => {
+      const ms = Math.round(el.duration * 1000);
+      if (Number.isFinite(ms) && ms > 0) {
+        set((s) => ({ transport: { ...s.transport, durationMs: Math.max(s.transport.durationMs, ms) } }));
+      }
+    });
+    el.addEventListener('ended', () => {
+      stopAudioRaf();
+      set((s) => ({ transport: { ...s.transport, playing: false } }));
+    });
+  },
+
+  unloadAudio: () => {
+    if (audioEl) {
+      audioEl.pause();
+      audioEl = null;
+    }
+    stopAudioRaf();
+  },
+
+  reportPlayhead: (absMs) => {
+    const s = get();
+    const dur = s.transport.durationMs;
+    if (absMs >= dur) {
+      if (audioEl) audioEl.pause();
+      stopAudioRaf();
+      window.dmx.reportAudioPlayhead(dur);
+      set({ transport: { ...s.transport, playheadMs: dur, playing: false } });
+      return;
+    }
+    window.dmx.reportAudioPlayhead(absMs);
+    set({ transport: { ...s.transport, playheadMs: absMs } });
+  },
 }));
 
 // ===== Timeline 内部クロック（~33ms） =====
+// 音声が読み込まれている場合は <audio> をクロック源にし、無い場合は setInterval で進める。
 let clockHandle: ReturnType<typeof setInterval> | null = null;
 let lastTickAt = 0;
+let audioEl: HTMLAudioElement | null = null;
+let audioRaf: number | null = null;
 
 function startClock(): void {
   if (clockHandle !== null) return;
@@ -234,5 +299,21 @@ function stopClock(): void {
   if (clockHandle !== null) {
     clearInterval(clockHandle);
     clockHandle = null;
+  }
+}
+
+function startAudioRaf(): void {
+  if (audioRaf !== null) return;
+  const tick = (): void => {
+    if (audioEl) useDmxStore.getState().reportPlayhead(audioEl.currentTime * 1000);
+    audioRaf = requestAnimationFrame(tick);
+  };
+  audioRaf = requestAnimationFrame(tick);
+}
+
+function stopAudioRaf(): void {
+  if (audioRaf !== null) {
+    cancelAnimationFrame(audioRaf);
+    audioRaf = null;
   }
 }

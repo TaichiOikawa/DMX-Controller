@@ -79,6 +79,8 @@ export interface Group {
 export interface Cue {
   id: string;
   name?: string;
+  /** この CUE に対応する歌詞・メモ（CUEポイントの目印）。 */
+  lyrics?: string;
   /** 操作対象 ch のみ: chIndex(0-511) -> 値(0-255) */
   values: Record<number, number>;
   /** フェード時間 */

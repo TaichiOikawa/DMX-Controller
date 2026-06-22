@@ -36,6 +36,11 @@ const PROJECT_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ];
 
+const AUDIO_FILTERS = [
+  { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
 type SaveLoadResult = { ok: boolean; path?: string; error?: string };
 
 export class EngineHost {
@@ -173,6 +178,12 @@ export class EngineHost {
     ipcMain.on(Cmd.deleteTimelinePoint, (_e, showId: string, index: number) =>
       this.engine.deleteTimelinePoint(showId, index),
     );
+    ipcMain.on(Cmd.updateTimelinePoint, (_e, showId: string, index: number, ms: number) =>
+      this.engine.updateTimelinePoint(showId, index, ms),
+    );
+    ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
+    ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
+    ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
 
     // --- 永続化 ---
     ipcMain.on(Cmd.newProject, () => this.engine.newProject());
@@ -206,6 +217,32 @@ export class EngineHost {
       const text = await fs.readFile(res.filePaths[0], 'utf-8');
       this.engine.loadProject(deserializeProject(text));
       return { ok: true, path: res.filePaths[0] };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  /** 音声ファイルをダイアログで選び、Show に絶対パスを設定する。 */
+  private async pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }> {
+    const res = await dialog.showOpenDialog({
+      title: '音声ファイルを選択',
+      properties: ['openFile'],
+      filters: AUDIO_FILTERS,
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: false };
+    this.engine.setShowAudio(showId, res.filePaths[0]);
+    return { ok: true, path: res.filePaths[0] };
+  }
+
+  /** 音声ファイルのバイト列を読み出す。renderer 側で Blob URL 化する。 */
+  private async readAudioFile(
+    filePath: string,
+  ): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }> {
+    try {
+      const buf = await fs.readFile(filePath);
+      // Node Buffer の該当領域を ArrayBuffer として返す（IPC で構造化複製される）。
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      return { ok: true, data: ab };
     } catch (e) {
       return { ok: false, error: String(e) };
     }

@@ -84,6 +84,20 @@ describe('capture / release (§6.1/6.2)', () => {
   });
 });
 
+describe('updateCue name / lyrics', () => {
+  it('updateCue sets name and lyrics on the cue', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
+    engine.updateCue('c1', { name: 'サビ赤', lyrics: '君の名を呼ぶ' });
+    const entry = engine.getProject().shows[0].sequence[0];
+    expect(entry.kind).toBe('cue');
+    if (entry.kind === 'cue') {
+      expect(entry.cue.name).toBe('サビ赤');
+      expect(entry.cue.lyrics).toBe('君の名を呼ぶ');
+    }
+  });
+});
+
 function actionButton(mode: ActionButton['mode'], values: Record<number, number>, holdMs = 1000): ActionButton {
   return { id: 'act', name: 'A', mode, steps: [{ values, fadeInMs: 0, holdMs }] };
 }
@@ -148,6 +162,34 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
     engine.reportAudioPlayhead(2500); // cross point 1 -> GO -> cue1
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(20);
+  });
+
+  it('updateTimelinePoint moves a point and keeps points sorted', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
+    p.shows[0].timeline = {
+      points: [
+        { timecodeMs: 1000, type: 'go' },
+        { timecodeMs: 2000, type: 'go' },
+      ],
+    };
+    engine.loadProject(p);
+
+    // 先頭(1000)を 3000 へ移動 -> 並べ替えで [2000, 3000] になる。
+    engine.updateTimelinePoint('show1', 0, 3000);
+    const pts = engine.getProject().shows[0].timeline!.points;
+    expect(pts.map((x) => x.timecodeMs)).toEqual([2000, 3000]);
+  });
+
+  it('setShowAudio / clearShowAudio set and remove the audio path', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+
+    engine.setShowAudio('show1', '/abs/path/song.mp3');
+    expect(engine.getProject().shows[0].audio?.filePath).toBe('/abs/path/song.mp3');
+
+    engine.clearShowAudio('show1');
+    expect(engine.getProject().shows[0].audio).toBeUndefined();
   });
 
   it('seek backward does not re-fire', () => {

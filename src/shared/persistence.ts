@@ -153,6 +153,7 @@ function normalizeCue(raw: Record<string, unknown>): Cue {
   const cue: Cue = {
     id: str(raw.id, fallbackId()),
     name: typeof raw.name === 'string' ? raw.name : undefined,
+    lyrics: typeof raw.lyrics === 'string' ? raw.lyrics : undefined,
     values: normalizeValues(raw.values),
     fadeInMs: Math.max(0, num(raw.fadeInMs, 0)),
   };

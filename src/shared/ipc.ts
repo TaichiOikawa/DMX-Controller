@@ -60,6 +60,10 @@ export const Cmd = {
   timelineStop: 'cmd:timelineStop',
   addTimelinePoint: 'cmd:addTimelinePoint',
   deleteTimelinePoint: 'cmd:deleteTimelinePoint',
+  updateTimelinePoint: 'cmd:updateTimelinePoint',
+  pickShowAudio: 'cmd:pickShowAudio',
+  clearShowAudio: 'cmd:clearShowAudio',
+  readAudioFile: 'cmd:readAudioFile',
 
   // --- 永続化 ---
   newProject: 'cmd:newProject',
@@ -103,6 +107,7 @@ export interface CaptureCueOptions {
 /** updateCue で変更可能なフィールド。 */
 export interface CuePatch {
   name?: string;
+  lyrics?: string;
   fadeInMs?: number;
   delayMs?: number;
 }
@@ -188,6 +193,13 @@ export interface DmxBridge {
   timelineStop(): void;
   addTimelinePoint(showId: string, timecodeMs: number): void;
   deleteTimelinePoint(showId: string, index: number): void;
+  updateTimelinePoint(showId: string, index: number, timecodeMs: number): void;
+  /** 音声ファイルをダイアログで選び、Show に絶対パスを設定。 */
+  pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }>;
+  /** Show の音声を解除。 */
+  clearShowAudio(showId: string): void;
+  /** 音声ファイルのバイト列を読み出す（Blob URL 化して再生/波形に使う）。 */
+  readAudioFile(filePath: string): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }>;
 
   // 永続化（main が結果を project イベントで返す）
   newProject(): void;

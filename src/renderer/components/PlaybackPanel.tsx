@@ -210,10 +210,11 @@ interface CueRowProps {
 
 function CueRow({ no, cue, current, fading, editable, onClick, onMoveUp, onMoveDown, onDelete }: CueRowProps) {
   const channelCount = Object.keys(cue.values).length;
+  const showLyric = editable || (cue.lyrics?.trim().length ?? 0) > 0;
   return (
     <div
       onClick={onClick}
-      className={`flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-xs ${
+      className={`flex cursor-pointer flex-col gap-0.5 rounded px-2 py-1 text-xs ${
         current
           ? fading
             ? 'bg-amber-700/40 ring-1 ring-amber-500'
@@ -221,17 +222,109 @@ function CueRow({ no, cue, current, fading, editable, onClick, onMoveUp, onMoveD
           : 'bg-neutral-800/40 hover:bg-neutral-800'
       }`}
     >
-      <span className="w-8 text-right font-mono text-neutral-500">{no}</span>
-      <span className="flex-1 truncate text-neutral-200">
-        {cue.name ?? 'Cue'}
-        <span className="ml-1 text-[10px] text-neutral-500">{channelCount}ch</span>
-      </span>
-      <FadeField cueId={cue.id} fadeInMs={cue.fadeInMs} editable={editable} />
-      <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
-        <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
-        {editable && <DeleteButton onClick={onDelete} title="CUE 削除" />}
+      <div className="flex items-center gap-1.5">
+        <span className="w-8 text-right font-mono text-neutral-500">{no}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <NameField cueId={cue.id} name={cue.name} editable={editable} />
+          <span className="shrink-0 text-[10px] text-neutral-500">{channelCount}ch</span>
+        </div>
+        <FadeField cueId={cue.id} fadeInMs={cue.fadeInMs} editable={editable} />
+        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
+          <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
+          {editable && <DeleteButton onClick={onDelete} title="CUE 削除" />}
+        </div>
       </div>
+      {showLyric && (
+        <div className="flex items-center gap-1 pl-9">
+          <span className="shrink-0 text-[11px] text-neutral-600">♪</span>
+          <LyricField cueId={cue.id} lyrics={cue.lyrics} editable={editable} />
+        </div>
+      )}
     </div>
+  );
+}
+
+function NameField({ cueId, name, editable }: { cueId: string; name?: string; editable: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    window.dmx.updateCue(cueId, { name: draft.trim() });
+    setEditing(false);
+  };
+
+  if (!editable) {
+    return <span className="truncate text-neutral-200">{name?.trim() ? name : 'Cue'}</span>;
+  }
+
+  return editing ? (
+    <input
+      autoFocus
+      value={draft}
+      placeholder="CUE 名"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') setEditing(false);
+      }}
+      className="min-w-0 flex-1 rounded bg-neutral-900 px-1 text-neutral-100 outline-none ring-1 ring-sky-500"
+    />
+  ) : (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setDraft(name ?? '');
+        setEditing(true);
+      }}
+      className="min-w-0 truncate rounded px-1 text-left text-neutral-200 hover:bg-neutral-700"
+      title="CUE 名を編集"
+    >
+      {name?.trim() ? name : <span className="text-neutral-500">名前なし</span>}
+    </button>
+  );
+}
+
+function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: string; editable: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    window.dmx.updateCue(cueId, { lyrics: draft });
+    setEditing(false);
+  };
+
+  if (!editable) {
+    return <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-400">{lyrics}</span>;
+  }
+
+  return editing ? (
+    <input
+      autoFocus
+      value={draft}
+      placeholder="歌詞を入力"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') setEditing(false);
+      }}
+      className="min-w-0 flex-1 rounded bg-neutral-900 px-1 text-[11px] text-neutral-100 outline-none ring-1 ring-sky-500"
+    />
+  ) : (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setDraft(lyrics ?? '');
+        setEditing(true);
+      }}
+      className="min-w-0 flex-1 truncate rounded px-1 text-left text-[11px] text-neutral-400 hover:bg-neutral-700"
+      title="歌詞を編集"
+    >
+      {lyrics?.trim() ? lyrics : <span className="text-neutral-600">歌詞を入力</span>}
+    </button>
   );
 }
 

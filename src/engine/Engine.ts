@@ -352,6 +352,7 @@ export class Engine {
     const cue = this.findCue(cueId);
     if (!cue) return;
     if (patch.name !== undefined) cue.name = patch.name;
+    if (patch.lyrics !== undefined) cue.lyrics = patch.lyrics;
     if (patch.fadeInMs !== undefined) cue.fadeInMs = Math.max(0, patch.fadeInMs);
     if (patch.delayMs !== undefined) cue.delayMs = Math.max(0, patch.delayMs);
     this.notifyProject();
@@ -520,6 +521,33 @@ export class Engine {
     if (!show?.timeline) return;
     if (index < 0 || index >= show.timeline.points.length) return;
     show.timeline.points.splice(index, 1);
+    this.notifyProject();
+  }
+
+  /** GO ポイントの時刻を更新（ドラッグ移動）。更新後に昇順ソート。 */
+  updateTimelinePoint(showId: string, index: number, timecodeMs: number): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show?.timeline) return;
+    if (index < 0 || index >= show.timeline.points.length) return;
+    show.timeline.points[index].timecodeMs = Math.max(0, Math.round(timecodeMs));
+    show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
+    this.notifyProject();
+  }
+
+  /** Show に音声ファイル（絶対パス）を設定。 */
+  setShowAudio(showId: string, filePath: string): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    show.audio = { filePath };
+    this.notifyProject();
+  }
+
+  /** Show の音声を解除。 */
+  clearShowAudio(showId: string): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    delete show.audio;
     this.notifyProject();
   }
 

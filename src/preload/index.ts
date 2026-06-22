@@ -129,6 +129,18 @@ const api: DmxBridge = {
   deleteTimelinePoint(showId, index) {
     ipcRenderer.send(Cmd.deleteTimelinePoint, showId, index);
   },
+  updateTimelinePoint(showId, index, timecodeMs) {
+    ipcRenderer.send(Cmd.updateTimelinePoint, showId, index, timecodeMs);
+  },
+  pickShowAudio(showId) {
+    return ipcRenderer.invoke(Cmd.pickShowAudio, showId) as ReturnType<DmxBridge['pickShowAudio']>;
+  },
+  clearShowAudio(showId) {
+    ipcRenderer.send(Cmd.clearShowAudio, showId);
+  },
+  readAudioFile(filePath) {
+    return ipcRenderer.invoke(Cmd.readAudioFile, filePath) as ReturnType<DmxBridge['readAudioFile']>;
+  },
 
   // 永続化
   newProject() {

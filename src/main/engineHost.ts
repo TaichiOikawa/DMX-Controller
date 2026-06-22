@@ -173,6 +173,10 @@ export class EngineHost {
       this.engine.goTo(mainIndex, subIndex),
     );
 
+    // --- Undo / Redo ---
+    ipcMain.on(Cmd.undo, () => this.engine.undo());
+    ipcMain.on(Cmd.redo, () => this.engine.redo());
+
     // --- オーサリング ---
     ipcMain.on(Cmd.newShow, (_e, name?: string) => this.engine.newShow(name));
     ipcMain.on(Cmd.recordCue, (_e, showId: string, opts?: CaptureCueOptions) =>

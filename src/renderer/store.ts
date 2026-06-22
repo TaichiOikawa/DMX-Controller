@@ -50,6 +50,9 @@ interface DmxState {
   dirty: boolean;
   /** 現在ひも付くプロジェクトファイルのパス（未保存の新規は null）。 */
   projectPath: string | null;
+  /** Undo / Redo 可能か。 */
+  canUndo: boolean;
+  canRedo: boolean;
 
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
@@ -114,6 +117,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   blackout: false,
   dirty: false,
   projectPath: null,
+  canUndo: false,
+  canRedo: false,
 
   setFader: (ch, value) =>
     set((s) => {
@@ -169,6 +174,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       mode: state.mode,
       masterLevel: state.masterLevel,
       blackout: state.blackout,
+      canUndo: state.canUndo,
+      canRedo: state.canRedo,
     }),
 
   selectShow: (showId) => set({ selectedShowId: showId }),

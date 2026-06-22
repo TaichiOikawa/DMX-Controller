@@ -84,6 +84,58 @@ describe('capture / release (§6.1/6.2)', () => {
   });
 });
 
+describe('undo / redo', () => {
+  it('reverts and reapplies a recordCue', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    expect(engine.getState().canUndo).toBe(false);
+
+    engine.setFader(0, 100);
+    engine.recordCue('show1');
+    expect(engine.getProject().shows[0].sequence).toHaveLength(1);
+    expect(engine.getState().canUndo).toBe(true);
+
+    engine.undo();
+    expect(engine.getProject().shows[0].sequence).toHaveLength(0);
+    expect(engine.getState().canRedo).toBe(true);
+
+    engine.redo();
+    expect(engine.getProject().shows[0].sequence).toHaveLength(1);
+  });
+
+  it('reverts a cue rename', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
+    engine.updateCue('c1', { name: 'before' });
+    engine.updateCue('c1', { name: 'after' });
+
+    engine.undo();
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.name).toBe('before');
+  });
+
+  it('is blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setFader(0, 100);
+    engine.recordCue('show1');
+    engine.setMode('show');
+    engine.undo();
+    expect(engine.getProject().shows[0].sequence).toHaveLength(1); // 変化なし
+  });
+
+  it('clears history when a project is loaded', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setFader(0, 100);
+    engine.recordCue('show1');
+    expect(engine.getState().canUndo).toBe(true);
+
+    engine.loadProject(projectWithSequence([]));
+    expect(engine.getState().canUndo).toBe(false);
+  });
+});
+
 describe('updateCue name / lyrics', () => {
   it('updateCue sets name and lyrics on the cue', () => {
     const { engine } = makeEngine();

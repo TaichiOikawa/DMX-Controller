@@ -65,6 +65,12 @@ const api: DmxBridge = {
   goTo(mainIndex, subIndex) {
     ipcRenderer.send(Cmd.goTo, mainIndex, subIndex);
   },
+  undo() {
+    ipcRenderer.send(Cmd.undo);
+  },
+  redo() {
+    ipcRenderer.send(Cmd.redo);
+  },
 
   // オーサリング
   newShow(name) {

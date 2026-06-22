@@ -34,6 +34,10 @@ export const Cmd = {
   goBack: 'cmd:goBack',
   goTo: 'cmd:goTo',
 
+  // --- Undo / Redo ---
+  undo: 'cmd:undo',
+  redo: 'cmd:redo',
+
   // --- オーサリング（Show / マスター列 / GROUP / Cue 編集） ---
   newShow: 'cmd:newShow',
   recordCue: 'cmd:recordCue',
@@ -157,6 +161,10 @@ export interface EngineStateSnapshot {
   masterLevel: number;
   /** ブラックアウト中か。 */
   blackout: boolean;
+  /** Undo 可能か。 */
+  canUndo: boolean;
+  /** Redo 可能か。 */
+  canRedo: boolean;
   /** アクティブな Action の id。 */
   activeActionIds: string[];
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -183,6 +191,8 @@ export interface DmxBridge {
   go(): void;
   goBack(): void;
   goTo(mainIndex: number, subIndex: number): void;
+  undo(): void;
+  redo(): void;
 
   // オーサリング
   newShow(name?: string): void;

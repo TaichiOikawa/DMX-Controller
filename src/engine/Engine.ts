@@ -44,6 +44,7 @@ import {
 } from './playback';
 import { advanceAction, createActionRuntime } from './action';
 import { pointsCrossed } from './timeline';
+import { deserializeProject, serializeProject } from '../shared/persistence';
 import type {
   ActionPatch,
   CaptureCueOptions,
@@ -87,6 +88,13 @@ export class Engine {
 
   /** Edit ドラッグ中の Project 通知を間引く trailing throttle タイマー。 */
   private projectNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Undo / Redo 履歴（直列化した Project 文字列）。 */
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+  /** 連続するフェーダー編集を1バーストに束ねるための直近スナップショット時刻。 */
+  private lastCoalesceAt = -Infinity;
+  private static readonly MAX_HISTORY = 100;
 
   constructor(opts: EngineOptions) {
     this.send = opts.send;
@@ -139,6 +147,10 @@ export class Engine {
     this.runtime.faderLive = project.faders.slice();
     this.applyArtnet(project.settings.artnet);
     this.unloadShow();
+    // 別ドキュメントを開いた／新規にしたら Undo 履歴はリセットする。
+    this.undoStack = [];
+    this.redoStack = [];
+    this.lastCoalesceAt = -Infinity;
     this.notifyProject();
     this.emitState();
   }
@@ -152,6 +164,63 @@ export class Engine {
     this.project.faders = this.runtime.faderLive.slice();
     this.project.settings.artnet = { ...this.artnet };
     return this.project;
+  }
+
+  // ===== Undo / Redo =====
+
+  /** 現在状態を undo スタックへ積む（redo は破棄）。discrete コマンドの直前に呼ぶ。 */
+  private snapshot(): void {
+    this.undoStack.push(serializeProject(this.getProject()));
+    if (this.undoStack.length > Engine.MAX_HISTORY) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  /** discrete な編集の直前スナップショット。フェーダー連続編集と分離する。 */
+  private pushUndo(): void {
+    this.snapshot();
+    this.lastCoalesceAt = -Infinity; // 次のフェーダー編集は新しいバーストとして扱う
+  }
+
+  /** フェーダー連続編集用。windowMs 内の連続編集は1スナップショットに束ねる。 */
+  private pushUndoCoalesced(windowMs: number): void {
+    const now = this.nowFn();
+    const sameBurst = now - this.lastCoalesceAt < windowMs;
+    this.lastCoalesceAt = now;
+    if (sameBurst) return;
+    this.snapshot();
+  }
+
+  undo(): void {
+    if (!this.editable || this.undoStack.length === 0) return;
+    this.redoStack.push(serializeProject(this.getProject()));
+    this.restoreProject(this.undoStack.pop() as string);
+  }
+
+  redo(): void {
+    if (!this.editable || this.redoStack.length === 0) return;
+    this.undoStack.push(serializeProject(this.getProject()));
+    this.restoreProject(this.redoStack.pop() as string);
+  }
+
+  /** 履歴から復元した Project を反映し、再生ランタイムを貼り直す。 */
+  private restoreProject(json: string): void {
+    this.project = deserializeProject(json);
+    this.runtime.faderLive = this.project.faders.slice();
+    this.applyArtnet(this.project.settings.artnet);
+    const showId = this.runtime.activeShowId;
+    if (showId) {
+      this.activeShow = this.project.shows.find((s) => s.id === showId) ?? null;
+      if (this.activeShow && this.runtime.show) {
+        this.runtime.show.controlled = footprintOf(flattenCues(this.activeShow.sequence));
+        this.clampPlayhead();
+      } else if (!this.activeShow) {
+        this.runtime.show = null;
+        this.runtime.activeShowId = null;
+      }
+    }
+    this.lastCoalesceAt = -Infinity;
+    this.notifyProject();
+    this.emitState();
   }
 
   // ===== コマンド: フェーダー / 設定 =====
@@ -209,6 +278,7 @@ export class Engine {
     if (!show || !rt) return;
     const cue = cueAt(show.sequence, { main: rt.mainIndex, sub: rt.subIndex });
     if (!cue) return;
+    this.pushUndoCoalesced(500); // フェーダー連続編集は1バーストに束ねる
     cue.values[ch] = v; // 現在 CUE に追加/上書き
     rt.tracked[ch] = v; // ライブ反映
     if (rt.fade) rt.fade.to[ch] = v; // フェード中なら着地点も更新
@@ -335,6 +405,7 @@ export class Engine {
 
   newShow(name?: string): void {
     if (!this.editable) return;
+    this.pushUndo();
     const show = { id: genId(), name: name ?? `Show ${this.project.shows.length + 1}`, sequence: [] };
     this.project.shows.push(show);
     this.notifyProject();
@@ -345,6 +416,7 @@ export class Engine {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
+    this.pushUndo();
 
     const cue = this.cueFromFaders(opts);
     const targetGroupId = opts?.targetGroupId;
@@ -363,6 +435,7 @@ export class Engine {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
+    this.pushUndo();
     show.sequence.push(createGroupEntry(name ?? `Group ${show.sequence.length + 1}`));
     this.afterStructureChange(showId);
   }
@@ -371,6 +444,7 @@ export class Engine {
     if (!this.editable) return;
     const found = this.findGroup(groupId);
     if (!found) return;
+    this.pushUndo();
     found.group.loop = loop;
     this.notifyProject();
   }
@@ -379,6 +453,7 @@ export class Engine {
     if (!this.editable) return;
     const cue = this.findCue(cueId);
     if (!cue) return;
+    this.pushUndo();
     if (patch.name !== undefined) cue.name = patch.name;
     if (patch.lyrics !== undefined) cue.lyrics = patch.lyrics;
     if (patch.fadeInMs !== undefined) cue.fadeInMs = Math.max(0, patch.fadeInMs);
@@ -395,6 +470,7 @@ export class Engine {
       e.kind === 'cue' ? e.cue.id === entryId : e.group.id === entryId,
     );
     if (idx < 0) return;
+    this.pushUndo();
     show.sequence.splice(idx, 1);
     this.afterStructureChange(showId);
   }
@@ -405,6 +481,7 @@ export class Engine {
     if (!found) return;
     const idx = found.group.cues.findIndex((c) => c.id === cueId);
     if (idx < 0) return;
+    this.pushUndo();
     found.group.cues.splice(idx, 1);
     this.afterStructureChange(found.show.id);
   }
@@ -414,6 +491,7 @@ export class Engine {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
+    this.pushUndo();
     moveById(
       show.sequence,
       (e) => (e.kind === 'cue' ? e.cue.id : e.group.id) === entryId,
@@ -426,6 +504,7 @@ export class Engine {
     if (!this.editable) return;
     const found = this.findGroup(groupId);
     if (!found) return;
+    this.pushUndo();
     moveById(found.group.cues, (c) => c.id === cueId, toIndex);
     this.afterStructureChange(found.show.id);
   }
@@ -458,6 +537,7 @@ export class Engine {
 
   addAction(name?: string): void {
     if (!this.editable) return;
+    this.pushUndo();
     const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
     // 現在のフェーダー(captured)を最初の step として取り込む。
     const values = this.faderValuesFor(this.capturedChannels());
@@ -470,6 +550,7 @@ export class Engine {
     if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
+    this.pushUndo();
     if (patch.name !== undefined) action.name = patch.name;
     if (patch.mode !== undefined) action.mode = patch.mode;
     this.notifyProject();
@@ -477,6 +558,7 @@ export class Engine {
 
   deleteAction(actionId: string): void {
     if (!this.editable) return;
+    this.pushUndo();
     this.project.actions = this.project.actions.filter((a) => a.id !== actionId);
     this.runtime.activeActions = this.runtime.activeActions.filter(
       (r) => r.actionId !== actionId,
@@ -490,6 +572,7 @@ export class Engine {
     if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
+    this.pushUndo();
     const values = this.faderValuesFor(this.capturedChannels());
     action.steps.push({ values, fadeInMs: Math.max(0, fadeInMs), holdMs: Math.max(0, holdMs) });
     this.notifyProject();
@@ -499,6 +582,7 @@ export class Engine {
     if (!this.editable) return;
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action || stepIndex < 0 || stepIndex >= action.steps.length) return;
+    this.pushUndo();
     action.steps.splice(stepIndex, 1);
     this.notifyProject();
   }
@@ -537,6 +621,7 @@ export class Engine {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
+    this.pushUndo();
     if (!show.timeline) show.timeline = { points: [] };
     show.timeline.points.push({ timecodeMs: Math.max(0, Math.round(timecodeMs)), type: 'go' });
     show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
@@ -548,6 +633,7 @@ export class Engine {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show?.timeline) return;
     if (index < 0 || index >= show.timeline.points.length) return;
+    this.pushUndo();
     show.timeline.points.splice(index, 1);
     this.notifyProject();
   }
@@ -558,6 +644,7 @@ export class Engine {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show?.timeline) return;
     if (index < 0 || index >= show.timeline.points.length) return;
+    this.pushUndo();
     show.timeline.points[index].timecodeMs = Math.max(0, Math.round(timecodeMs));
     show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
     this.notifyProject();
@@ -671,6 +758,8 @@ export class Engine {
       mode: this.runtime.mode,
       masterLevel: this.runtime.masterLevel,
       blackout: this.runtime.blackout,
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
       activeActionIds: this.runtime.activeActions.map((r) => r.actionId),
       playback:
         show && this.activeShow

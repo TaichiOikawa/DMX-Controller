@@ -50,8 +50,20 @@ export default function App() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target)) return; // 入力欄ではネイティブ動作（テキスト編集の Undo 等）に任せる
+      // Undo / Redo（Ctrl/Cmd 修飾）
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          window.dmx.undo();
+        } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          window.dmx.redo();
+        }
+        return;
+      }
+      if (e.repeat || e.altKey) return;
       if (e.code === 'Space' || e.code === 'ArrowRight') {
         e.preventDefault();
         window.dmx.go();

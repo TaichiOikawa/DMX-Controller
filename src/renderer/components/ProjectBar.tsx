@@ -15,6 +15,8 @@ export function ProjectBar() {
   const setMode = useDmxStore((s) => s.setMode);
   const dirty = useDmxStore((s) => s.dirty);
   const projectPath = useDmxStore((s) => s.projectPath);
+  const canUndo = useDmxStore((s) => s.canUndo);
+  const canRedo = useDmxStore((s) => s.canRedo);
   const [busy, setBusy] = useState(false);
 
   const fileName = projectPath ? projectPath.replace(/^.*[\\/]/, '') : '未保存';
@@ -94,6 +96,25 @@ export function ProjectBar() {
         <span className="max-w-[16ch] truncate">{fileName}</span>
         {dirty && <span>(未保存)</span>}
       </span>
+
+      <div className="mx-1 h-5 w-px bg-neutral-700" />
+
+      <button
+        onClick={() => window.dmx.undo()}
+        disabled={!editable || !canUndo}
+        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        title="元に戻す（Ctrl+Z）"
+      >
+        ↶ 元に戻す
+      </button>
+      <button
+        onClick={() => window.dmx.redo()}
+        disabled={!editable || !canRedo}
+        className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        title="やり直し（Ctrl+Shift+Z / Ctrl+Y）"
+      >
+        ↷ やり直し
+      </button>
 
       <div className="mx-1 h-5 w-px bg-neutral-700" />
 

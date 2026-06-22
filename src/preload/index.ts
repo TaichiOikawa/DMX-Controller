@@ -65,6 +65,9 @@ const api: DmxBridge = {
   goTo(mainIndex, subIndex) {
     ipcRenderer.send(Cmd.goTo, mainIndex, subIndex);
   },
+  holdFade() {
+    ipcRenderer.send(Cmd.holdFade);
+  },
   undo() {
     ipcRenderer.send(Cmd.undo);
   },

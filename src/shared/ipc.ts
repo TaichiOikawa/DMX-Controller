@@ -33,6 +33,7 @@ export const Cmd = {
   go: 'cmd:go',
   goBack: 'cmd:goBack',
   goTo: 'cmd:goTo',
+  holdFade: 'cmd:holdFade',
 
   // --- Undo / Redo ---
   undo: 'cmd:undo',
@@ -143,6 +144,10 @@ export interface PlaybackStatus {
   subIndex: number;
   /** フェード進行中か。 */
   fading: boolean;
+  /** 進行中フェードの進捗 0..1（フェード無しは 1）。 */
+  fadeProgress: number;
+  /** 進行中フェードの残り時間（ms）。 */
+  fadeRemainingMs: number;
   /** マスター列のエントリ数。 */
   entryCount: number;
 }
@@ -191,6 +196,7 @@ export interface DmxBridge {
   go(): void;
   goBack(): void;
   goTo(mainIndex: number, subIndex: number): void;
+  holdFade(): void;
   undo(): void;
   redo(): void;
 

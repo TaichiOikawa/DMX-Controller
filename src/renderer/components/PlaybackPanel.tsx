@@ -30,6 +30,8 @@ export function PlaybackPanel() {
   const curMain = playback?.mainIndex ?? -1;
   const curSub = playback?.subIndex ?? 0;
   const fading = playback?.fading ?? false;
+  const fadeProgress = playback?.fadeProgress ?? 1;
+  const fadeRemainingMs = playback?.fadeRemainingMs ?? 0;
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -48,6 +50,14 @@ export function PlaybackPanel() {
           title="マスター列を次へ（Space/→）"
         >
           GO ▶
+        </button>
+        <button
+          onClick={() => window.dmx.holdFade()}
+          disabled={!fading}
+          className="rounded bg-amber-700 px-4 py-2 text-base font-bold text-white shadow hover:bg-amber-600 disabled:opacity-30"
+          title="進行中のフェードを現在値で停止（HOLD）"
+        >
+          ⏸ HOLD
         </button>
         <span className="text-[10px] text-neutral-600">Space/→: GO ／ ←/Backspace: 戻る</span>
         <span className="ml-1 text-sm text-neutral-400">{activeShow.name}</span>
@@ -86,6 +96,8 @@ export function PlaybackPanel() {
                 curMain={curMain}
                 curSub={curSub}
                 fading={fading}
+                fadeProgress={fadeProgress}
+                fadeRemainingMs={fadeRemainingMs}
               />
             ))}
           </ul>
@@ -107,9 +119,21 @@ interface EntryRowProps {
   curMain: number;
   curSub: number;
   fading: boolean;
+  fadeProgress: number;
+  fadeRemainingMs: number;
 }
 
-function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: EntryRowProps) {
+function EntryRow({
+  showId,
+  entry,
+  index,
+  lastIndex,
+  curMain,
+  curSub,
+  fading,
+  fadeProgress,
+  fadeRemainingMs,
+}: EntryRowProps) {
   const editable = useDmxStore((s) => s.mode === 'edit');
   const moveUp = () => window.dmx.moveEntry(showId, entryId(entry), index - 1);
   const moveDown = () => window.dmx.moveEntry(showId, entryId(entry), index + 1);
@@ -124,6 +148,8 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
           cue={entry.cue}
           current={current}
           fading={current && fading}
+          fadeProgress={fadeProgress}
+          fadeRemainingMs={fadeRemainingMs}
           editable={editable}
           onClick={() => window.dmx.goTo(index, 0)}
           onMoveUp={editable && index > 0 ? moveUp : undefined}
@@ -183,6 +209,8 @@ function EntryRow({ showId, entry, index, lastIndex, curMain, curSub, fading }: 
                   cue={cue}
                   current={current}
                   fading={current && fading}
+                  fadeProgress={fadeProgress}
+                  fadeRemainingMs={fadeRemainingMs}
                   editable={editable}
                   onClick={() => window.dmx.goTo(index, j)}
                   onMoveUp={
@@ -209,6 +237,8 @@ interface CueRowProps {
   cue: Cue;
   current: boolean;
   fading: boolean;
+  fadeProgress: number;
+  fadeRemainingMs: number;
   editable: boolean;
   onClick: () => void;
   onMoveUp?: () => void;
@@ -216,7 +246,19 @@ interface CueRowProps {
   onDelete: () => void;
 }
 
-function CueRow({ no, cue, current, fading, editable, onClick, onMoveUp, onMoveDown, onDelete }: CueRowProps) {
+function CueRow({
+  no,
+  cue,
+  current,
+  fading,
+  fadeProgress,
+  fadeRemainingMs,
+  editable,
+  onClick,
+  onMoveUp,
+  onMoveDown,
+  onDelete,
+}: CueRowProps) {
   const channelCount = Object.keys(cue.values).length;
   const showLyric = editable || (cue.lyrics?.trim().length ?? 0) > 0;
   return (
@@ -246,6 +288,19 @@ function CueRow({ no, cue, current, fading, editable, onClick, onMoveUp, onMoveD
         <div className="flex items-center gap-1 pl-9">
           <span className="shrink-0 text-[11px] text-neutral-600">♪</span>
           <LyricField cueId={cue.id} lyrics={cue.lyrics} editable={editable} />
+        </div>
+      )}
+      {fading && (
+        <div className="flex items-center gap-2 pl-9" onClick={(e) => e.stopPropagation()}>
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-neutral-700">
+            <div
+              className="h-full bg-amber-400 transition-[width] duration-200 ease-linear"
+              style={{ width: `${Math.round(fadeProgress * 100)}%` }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-[10px] text-amber-300">
+            {(fadeRemainingMs / 1000).toFixed(1)}s
+          </span>
         </div>
       )}
     </div>

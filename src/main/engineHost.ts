@@ -172,6 +172,7 @@ export class EngineHost {
     ipcMain.on(Cmd.goTo, (_e, mainIndex: number, subIndex: number) =>
       this.engine.goTo(mainIndex, subIndex),
     );
+    ipcMain.on(Cmd.holdFade, () => this.engine.holdFade());
 
     // --- Undo / Redo ---
     ipcMain.on(Cmd.undo, () => this.engine.undo());

@@ -84,6 +84,27 @@ describe('capture / release (§6.1/6.2)', () => {
   });
 });
 
+describe('holdFade', () => {
+  it('freezes the running fade at its current value', () => {
+    const { engine, clock } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }, 1000))]));
+    engine.loadShow('show1');
+
+    clock.now = 0;
+    engine.go(); // 0 -> 200 over 1000ms
+    engine.tick(0);
+    clock.now = 500;
+    engine.tick(500);
+    expect(engine.getOutput()[0]).toBe(100); // halfway
+
+    engine.holdFade();
+    clock.now = 2000;
+    engine.tick(2000);
+    expect(engine.getOutput()[0]).toBe(100); // held, did not complete to 200
+    expect(engine.getState().playback?.fading).toBe(false);
+  });
+});
+
 describe('undo / redo', () => {
   it('reverts and reapplies a recordCue', () => {
     const { engine } = makeEngine();

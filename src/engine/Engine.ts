@@ -32,6 +32,7 @@ import { Clock } from './clock';
 import { contextFromRuntime, resolveFrame } from './mixer';
 import {
   applyFade,
+  clamp01,
   computeTarget,
   cueAt,
   currentTarget,
@@ -359,6 +360,14 @@ export class Engine {
     );
     if (!pos) return;
     this.playPosition(pos, this.nowFn());
+    this.emitState();
+  }
+
+  /** 進行中フェードを現在値で確定（停止）する（HOLD）。 */
+  holdFade(): void {
+    const rt = this.runtime.show;
+    if (!rt || !rt.fade) return;
+    rt.fade = null; // tracked は直近 tick の補間値で確定する
     this.emitState();
   }
 
@@ -767,10 +776,23 @@ export class Engine {
               mainIndex: show.mainIndex,
               subIndex: show.subIndex,
               fading: !!show.fade,
+              ...this.fadeStatus(),
               entryCount: this.activeShow.sequence.length,
             }
           : null,
     };
+  }
+
+  /** 進行中フェードの進捗(0..1)と残り時間(ms)。フェード無しは {1, 0}。 */
+  private fadeStatus(): { fadeProgress: number; fadeRemainingMs: number } {
+    const fade = this.runtime.show?.fade;
+    if (!fade) return { fadeProgress: 1, fadeRemainingMs: 0 };
+    const now = this.nowFn();
+    const sinceStart = now - fade.startMs;
+    const elapsed = sinceStart - fade.delayMs;
+    const progress = fade.durMs <= 0 ? (elapsed >= 0 ? 1 : 0) : clamp01(elapsed / fade.durMs);
+    const remaining = Math.max(0, fade.delayMs + fade.durMs - sinceStart);
+    return { fadeProgress: progress, fadeRemainingMs: remaining };
   }
 
   getOutput(): number[] {

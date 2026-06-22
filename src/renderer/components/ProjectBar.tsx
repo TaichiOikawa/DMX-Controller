@@ -34,10 +34,16 @@ export function ProjectBar() {
   };
 
   const load = async () => {
+    if (dirty && !window.confirm('未保存の変更があります。プロジェクトを開きますか？')) return;
     setBusy(true);
     const r = await window.dmx.loadProject();
     setBusy(false);
     if (r.error) alert(`読込に失敗しました: ${r.error}`);
+  };
+
+  const newProject = () => {
+    if (dirty && !window.confirm('未保存の変更があります。新規プロジェクトを作成しますか？')) return;
+    window.dmx.newProject();
   };
 
   return (
@@ -68,7 +74,7 @@ export function ProjectBar() {
 
       <span className="text-sm font-semibold text-sky-400">Project</span>
       <button
-        onClick={() => window.dmx.newProject()}
+        onClick={newProject}
         disabled={!editable}
         className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
       >

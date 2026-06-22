@@ -108,7 +108,10 @@ function ActionCard({
               ))}
             </select>
             <button
-              onClick={() => window.dmx.deleteAction(action.id)}
+              onClick={() => {
+                if (window.confirm(`Action「${action.name ?? 'Action'}」を削除しますか？`))
+                  window.dmx.deleteAction(action.id);
+              }}
               className="rounded px-1 text-[11px] text-neutral-500 hover:bg-red-900/50 hover:text-red-300"
               title="Action 削除"
             >

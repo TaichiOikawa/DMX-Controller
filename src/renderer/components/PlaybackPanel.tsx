@@ -137,7 +137,13 @@ function EntryRow({
   const editable = useDmxStore((s) => s.mode === 'edit');
   const moveUp = () => window.dmx.moveEntry(showId, entryId(entry), index - 1);
   const moveDown = () => window.dmx.moveEntry(showId, entryId(entry), index + 1);
-  const del = () => window.dmx.deleteEntry(showId, entryId(entry));
+  const del = () => {
+    const msg =
+      entry.kind === 'cue'
+        ? `CUE「${entry.cue.name?.trim() || 'Cue'}」を削除しますか？`
+        : `GROUP「${entry.group.name ?? 'Group'}」を削除しますか？\n（中の子 CUE もすべて削除されます）`;
+    if (window.confirm(msg)) window.dmx.deleteEntry(showId, entryId(entry));
+  };
 
   if (entry.kind === 'cue') {
     const current = curMain === index;
@@ -232,7 +238,10 @@ function EntryRow({
                       ? () => window.dmx.moveCueInGroup(g.id, cue.id, j + 1)
                       : undefined
                   }
-                  onDelete={() => window.dmx.deleteCueFromGroup(g.id, cue.id)}
+                  onDelete={() => {
+                    if (window.confirm(`CUE「${cue.name?.trim() || 'Cue'}」を削除しますか？`))
+                      window.dmx.deleteCueFromGroup(g.id, cue.id);
+                  }}
                   onDuplicate={() => window.dmx.duplicateCueInGroup(g.id, cue.id)}
                   onInsertBelow={() =>
                     window.dmx.recordCue(showId, { targetGroupId: g.id, atIndex: j + 1 })

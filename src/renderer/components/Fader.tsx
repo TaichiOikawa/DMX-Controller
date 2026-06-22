@@ -7,6 +7,7 @@
  */
 
 import { useState } from 'react';
+import { InlineText } from './InlineText';
 
 interface FaderProps {
   /** 0-511 のチャンネル番号 */
@@ -17,12 +18,28 @@ interface FaderProps {
   output: number;
   /** キャプチャ中か（ハイライト） */
   captured: boolean;
+  /** ch ラベル（任意）。 */
+  label?: string;
+  /** ラベル編集可（EDIT モード）。 */
+  editable: boolean;
   onChange: (value: number) => void;
   /** X 押下: キャプチャ解除＋値クリア */
   onClear: () => void;
+  /** ラベル変更（空文字で削除）。 */
+  onLabelChange: (label: string) => void;
 }
 
-export function Fader({ ch, value, output, captured, onChange, onClear }: FaderProps) {
+export function Fader({
+  ch,
+  value,
+  output,
+  captured,
+  label,
+  editable,
+  onChange,
+  onClear,
+  onLabelChange,
+}: FaderProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -48,6 +65,18 @@ export function Fader({ ch, value, output, captured, onChange, onClear }: FaderP
         }`}
       >
         {ch + 1}
+      </div>
+
+      {/* ch ラベル（高さ固定でフェーダーの縦位置を揃える） */}
+      <div className="flex h-3 w-11 items-center justify-center">
+        <InlineText
+          value={label ?? ''}
+          placeholder="＋名前"
+          editable={editable}
+          onCommit={onLabelChange}
+          className="block w-11 truncate px-0.5 text-center text-[9px] text-neutral-400"
+          title={label ? `CH${ch + 1}: ${label}` : `CH${ch + 1} のラベルを編集`}
+        />
       </div>
 
       <div className="relative h-44 w-8">

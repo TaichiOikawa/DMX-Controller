@@ -40,7 +40,7 @@ export function migrateProject(raw: unknown): Project {
 
   // 将来: const version = num(raw.version, 0); if (version < N) { ...移行... }
 
-  return {
+  const project: Project = {
     version: PROJECT_VERSION,
     name: str(raw.name, def.name),
     settings: normalizeSettings(raw.settings),
@@ -48,6 +48,28 @@ export function migrateProject(raw: unknown): Project {
     actions: normalizeActions(raw.actions),
     shows: normalizeShows(raw.shows),
   };
+  const channelLabels = normalizeLabels(raw.channelLabels, UNIVERSE_SIZE);
+  if (channelLabels) project.channelLabels = channelLabels;
+  const bankLabels = normalizeLabels(raw.bankLabels, UNIVERSE_SIZE / 32);
+  if (bankLabels) project.bankLabels = bankLabels;
+  return project;
+}
+
+/** index->文字列のラベル辞書を正規化する。範囲外/空は捨て、空なら undefined。 */
+function normalizeLabels(raw: unknown, count: number): Record<number, string> | undefined {
+  if (!isObject(raw)) return undefined;
+  const out: Record<number, string> = {};
+  let any = false;
+  for (const [k, v] of Object.entries(raw)) {
+    const i = Number(k);
+    if (!Number.isInteger(i) || i < 0 || i >= count) continue;
+    if (typeof v !== 'string') continue;
+    const t = v.trim();
+    if (!t) continue;
+    out[i] = t;
+    any = true;
+  }
+  return any ? out : undefined;
 }
 
 function normalizeSettings(raw: unknown): Project['settings'] {

@@ -316,6 +316,30 @@ export class Engine {
     this.emitState();
   }
 
+  /** ch ラベルを設定（空文字で削除）。 */
+  setChannelLabel(ch: number, label: string): void {
+    if (!this.editable) return;
+    if (ch < 0 || ch >= UNIVERSE_SIZE) return;
+    this.pushUndo();
+    this.project.channelLabels ??= {};
+    const t = label.trim();
+    if (t) this.project.channelLabels[ch] = t;
+    else delete this.project.channelLabels[ch];
+    this.notifyProject();
+  }
+
+  /** バンク(ページ)ラベルを設定（空文字で削除）。 */
+  setBankLabel(bank: number, label: string): void {
+    if (!this.editable) return;
+    if (bank < 0) return;
+    this.pushUndo();
+    this.project.bankLabels ??= {};
+    const t = label.trim();
+    if (t) this.project.bankLabels[bank] = t;
+    else delete this.project.bankLabels[bank];
+    this.notifyProject();
+  }
+
   private applyArtnet(settings: ArtnetSettings): void {
     const rateChanged = settings.refreshRateHz !== this.artnet.refreshRateHz;
     this.artnet = { ...settings };

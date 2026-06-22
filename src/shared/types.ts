@@ -23,6 +23,10 @@ export interface Project {
   settings: ProjectSettings;
   /** 512 / 0-255。ベースレイヤーの保存値 */
   faders: number[];
+  /** ch ラベル: chIndex(0-511) -> 名前。未設定 ch は省略（疎）。 */
+  channelLabels?: Record<number, string>;
+  /** バンク(ページ)ラベル: bankIndex(0-15) -> 名前。 */
+  bankLabels?: Record<number, string>;
   actions: ActionButton[];
   shows: Show[];
 }

@@ -26,6 +26,8 @@ export const Cmd = {
   setMode: 'cmd:setMode',
   setMasterLevel: 'cmd:setMasterLevel',
   setBlackout: 'cmd:setBlackout',
+  setChannelLabel: 'cmd:setChannelLabel',
+  setBankLabel: 'cmd:setBankLabel',
 
   // --- 再生 ---
   loadShow: 'cmd:loadShow',
@@ -194,6 +196,8 @@ export interface DmxBridge {
   setMode(mode: EngineMode): void;
   setMasterLevel(level: number): void;
   setBlackout(on: boolean): void;
+  setChannelLabel(ch: number, label: string): void;
+  setBankLabel(bank: number, label: string): void;
 
   // 再生
   loadShow(showId: string): void;

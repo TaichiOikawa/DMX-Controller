@@ -4,6 +4,7 @@
  */
 
 import { Fader } from './Fader';
+import { InlineText } from './InlineText';
 import { BANK_COUNT, FADERS_PER_BANK, useDmxStore } from '../store';
 
 export function FaderBank() {
@@ -15,6 +16,9 @@ export function FaderBank() {
   const setFader = useDmxStore((s) => s.setFader);
   const releaseChannel = useDmxStore((s) => s.releaseChannel);
   const releaseAll = useDmxStore((s) => s.releaseAll);
+  const editable = useDmxStore((s) => s.mode === 'edit');
+  const channelLabels = useDmxStore((s) => s.project?.channelLabels);
+  const bankLabels = useDmxStore((s) => s.project?.bankLabels);
 
   const start = bank * FADERS_PER_BANK;
   const channels = Array.from({ length: FADERS_PER_BANK }, (_, i) => start + i);
@@ -28,6 +32,7 @@ export function FaderBank() {
           const from = b * FADERS_PER_BANK + 1;
           const to = (b + 1) * FADERS_PER_BANK;
           const active = b === bank;
+          const name = bankLabels?.[b];
           const hasCaptured = captured
             .slice(b * FADERS_PER_BANK, (b + 1) * FADERS_PER_BANK)
             .some(Boolean);
@@ -35,20 +40,34 @@ export function FaderBank() {
             <button
               key={b}
               onClick={() => setBank(b)}
-              className={`relative rounded px-2 py-1 text-[11px] font-mono transition-colors ${
+              className={`relative max-w-[8rem] truncate rounded px-2 py-1 text-[11px] font-mono transition-colors ${
                 active
                   ? 'bg-sky-600 text-white'
                   : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
               }`}
-              title={`CH ${from}–${to}`}
+              title={name ? `${name}（CH ${from}–${to}）` : `CH ${from}–${to}`}
             >
-              {from}-{to}
+              {name ?? `${from}-${to}`}
               {hasCaptured && (
                 <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
               )}
             </button>
           );
         })}
+
+        {editable && (
+          <div className="flex items-center gap-1 text-[11px] text-neutral-500">
+            <span>ページ名:</span>
+            <InlineText
+              value={bankLabels?.[bank] ?? ''}
+              placeholder="（無名）"
+              editable
+              onCommit={(v) => window.dmx.setBankLabel(bank, v)}
+              className="min-w-[6rem] px-1 text-left text-[11px] text-neutral-200"
+              title="現在のバンク(ページ)名を編集"
+            />
+          </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] text-neutral-400">
@@ -74,8 +93,11 @@ export function FaderBank() {
             value={faders[ch]}
             output={output[ch]}
             captured={captured[ch]}
+            label={channelLabels?.[ch]}
+            editable={editable}
             onChange={(v) => setFader(ch, v)}
             onClear={() => releaseChannel(ch)}
+            onLabelChange={(label) => window.dmx.setChannelLabel(ch, label)}
           />
         ))}
       </div>

@@ -48,6 +48,12 @@ const api: DmxBridge = {
   setBlackout(on) {
     ipcRenderer.send(Cmd.setBlackout, on);
   },
+  setChannelLabel(ch, label) {
+    ipcRenderer.send(Cmd.setChannelLabel, ch, label);
+  },
+  setBankLabel(bank, label) {
+    ipcRenderer.send(Cmd.setBankLabel, bank, label);
+  },
 
   // 再生
   loadShow(showId) {

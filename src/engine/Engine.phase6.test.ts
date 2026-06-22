@@ -84,6 +84,33 @@ describe('capture / release (§6.1/6.2)', () => {
   });
 });
 
+describe('channel / bank labels', () => {
+  it('sets, clears, and undoes a channel label', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+
+    engine.setChannelLabel(0, 'Front R');
+    expect(engine.getProject().channelLabels).toEqual({ 0: 'Front R' });
+
+    engine.setBankLabel(2, 'バック列');
+    expect(engine.getProject().bankLabels).toEqual({ 2: 'バック列' });
+
+    engine.setChannelLabel(0, ''); // 空で削除
+    expect(engine.getProject().channelLabels).toEqual({});
+
+    engine.undo(); // 削除を取り消す
+    expect(engine.getProject().channelLabels).toEqual({ 0: 'Front R' });
+  });
+
+  it('is blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setMode('show');
+    engine.setChannelLabel(0, 'nope');
+    expect(engine.getProject().channelLabels).toBeUndefined();
+  });
+});
+
 describe('holdFade', () => {
   it('freezes the running fade at its current value', () => {
     const { engine, clock } = makeEngine();

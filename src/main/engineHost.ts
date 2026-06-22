@@ -163,6 +163,12 @@ export class EngineHost {
     ipcMain.on(Cmd.setMode, (_e, mode: 'edit' | 'show') => this.engine.setMode(mode));
     ipcMain.on(Cmd.setMasterLevel, (_e, level: number) => this.engine.setMasterLevel(level));
     ipcMain.on(Cmd.setBlackout, (_e, on: boolean) => this.engine.setBlackout(on));
+    ipcMain.on(Cmd.setChannelLabel, (_e, ch: number, label: string) =>
+      this.engine.setChannelLabel(ch, label),
+    );
+    ipcMain.on(Cmd.setBankLabel, (_e, bank: number, label: string) =>
+      this.engine.setBankLabel(bank, label),
+    );
 
     // --- 再生 ---
     ipcMain.on(Cmd.loadShow, (_e, showId: string) => this.engine.loadShow(showId));

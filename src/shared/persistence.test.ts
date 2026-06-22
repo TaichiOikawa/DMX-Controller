@@ -33,6 +33,15 @@ describe('serialize/deserialize round-trip', () => {
     const restored = deserializeProject(serializeProject(p));
     expect(restored).toEqual(p);
   });
+
+  it('preserves channel and bank labels', () => {
+    const p = createDefaultProject();
+    p.channelLabels = { 0: 'Front R', 5: 'Back Wash' };
+    p.bankLabels = { 0: 'フロント列' };
+    const restored = deserializeProject(serializeProject(p));
+    expect(restored.channelLabels).toEqual({ 0: 'Front R', 5: 'Back Wash' });
+    expect(restored.bankLabels).toEqual({ 0: 'フロント列' });
+  });
 });
 
 describe('migrateProject (tolerant loading)', () => {
@@ -85,6 +94,15 @@ describe('migrateProject (tolerant loading)', () => {
       expect(entry.cue.values[512]).toBeUndefined();
       expect(entry.cue.fadeInMs).toBe(0);
     }
+  });
+
+  it('drops out-of-range and empty labels', () => {
+    const p = migrateProject({
+      channelLabels: { 0: 'ok', 512: 'oob', 3: '  ', 7: 42 },
+      bankLabels: { 0: 'page', 99: 'oob' },
+    });
+    expect(p.channelLabels).toEqual({ 0: 'ok' });
+    expect(p.bankLabels).toEqual({ 0: 'page' });
   });
 
   it('drops malformed sequence entries', () => {

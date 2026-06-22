@@ -7,6 +7,7 @@ import {
   flattenCues,
   footprintOf,
   nextPosition,
+  prevPosition,
   startFade,
 } from './playback';
 import {
@@ -103,6 +104,38 @@ describe('nextPosition (master-sequence walk)', () => {
   it('skips empty groups', () => {
     const withEmpty = [cueEntry(cue('1', {})), groupEntry('empty', []), cueEntry(cue('3', {}))];
     expect(nextPosition(withEmpty, 0, 0)).toEqual({ main: 2, sub: 0 });
+  });
+});
+
+describe('prevPosition (GO BACK)', () => {
+  const seq = [
+    cueEntry(cue('1', {})),
+    cueEntry(cue('2', {})),
+    groupEntry('g', [cue('4a', {}), cue('4b', {})]),
+    cueEntry(cue('5', {})),
+  ];
+
+  it('returns null when not started', () => {
+    expect(prevPosition(seq, -1, 0)).toBeNull();
+  });
+  it('returns null at the first entry (no-op before start)', () => {
+    expect(prevPosition(seq, 0, 0)).toBeNull();
+  });
+  it('steps back cue -> cue', () => {
+    expect(prevPosition(seq, 1, 0)).toEqual({ main: 0, sub: 0 });
+  });
+  it('steps back within a group', () => {
+    expect(prevPosition(seq, 2, 1)).toEqual({ main: 2, sub: 0 });
+  });
+  it('enters the previous group at its last child', () => {
+    expect(prevPosition(seq, 3, 0)).toEqual({ main: 2, sub: 1 });
+  });
+  it('exits a group from its first child to the previous entry', () => {
+    expect(prevPosition(seq, 2, 0)).toEqual({ main: 1, sub: 0 });
+  });
+  it('skips empty groups going back', () => {
+    const withEmpty = [cueEntry(cue('1', {})), groupEntry('empty', []), cueEntry(cue('3', {}))];
+    expect(prevPosition(withEmpty, 2, 0)).toEqual({ main: 0, sub: 0 });
   });
 });
 

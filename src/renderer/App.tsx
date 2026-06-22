@@ -36,6 +36,30 @@ export default function App() {
     };
   }, [setOutput, setProject, setEngineState]);
 
+  // グローバルキーボード操作（本番オペ）：Space/→ で GO、Backspace/← で 1つ戻る。
+  // テキスト入力中（input/textarea/select/編集可能要素）は誤爆を避けて無効化する。
+  useEffect(() => {
+    const isTyping = (el: EventTarget | null): boolean => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTyping(e.target)) return;
+      if (e.code === 'Space' || e.code === 'ArrowRight') {
+        e.preventDefault();
+        window.dmx.go();
+      } else if (e.code === 'Backspace' || e.code === 'ArrowLeft') {
+        e.preventDefault();
+        window.dmx.goBack();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="flex h-screen flex-col gap-2 bg-neutral-950 p-2 text-neutral-100">
       <SettingsBar />

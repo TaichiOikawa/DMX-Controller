@@ -91,6 +91,37 @@ function firstPlayable(seq: readonly SequenceEntry[], from: number): Position | 
   return null;
 }
 
+/** `from` 以前で最後に再生可能なエントリ位置（GROUP は末尾の子・空 GROUP はスキップ）。 */
+function lastPlayable(seq: readonly SequenceEntry[], from: number): Position | null {
+  for (let m = Math.min(from, seq.length - 1); m >= 0; m--) {
+    const e = seq[m];
+    if (e.kind === 'cue') return { main: m, sub: 0 };
+    if (e.kind === 'group' && e.group.cues.length > 0) {
+      return { main: m, sub: e.group.cues.length - 1 };
+    }
+    // 空 GROUP はスキップ
+  }
+  return null;
+}
+
+/**
+ * GO BACK の前位置を計算する。先頭より前は null（no-op）。
+ *   - 未開始(main<0): null
+ *   - GROUP 内で子が残る(sub>0): sub-1
+ *   - GROUP 先頭 / CUE: 直前の再生可能エントリ（GROUP は末尾の子）
+ */
+export function prevPosition(
+  seq: readonly SequenceEntry[],
+  main: number,
+  sub: number,
+): Position | null {
+  if (main < 0) return null;
+
+  const entry = seq[main];
+  if (entry?.kind === 'group' && sub > 0) return { main, sub: sub - 1 };
+  return lastPlayable(seq, main - 1);
+}
+
 /**
  * GO の次位置を計算する。末尾に達したら null（no-op）。
  *   - 未開始(main<0): 最初の再生可能エントリ

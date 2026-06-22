@@ -38,6 +38,7 @@ import {
   flattenCues,
   footprintOf,
   nextPosition,
+  prevPosition,
   startFade,
   type Position,
 } from './playback';
@@ -268,6 +269,19 @@ export class Engine {
   go(): void {
     if (!this.activeShow || !this.runtime.show) return;
     const pos = nextPosition(
+      this.activeShow.sequence,
+      this.runtime.show.mainIndex,
+      this.runtime.show.subIndex,
+    );
+    if (!pos) return;
+    this.playPosition(pos, this.nowFn());
+    this.emitState();
+  }
+
+  /** マスター列を1つ前へ戻す（GO BACK）。先頭より前は no-op。 */
+  goBack(): void {
+    if (!this.activeShow || !this.runtime.show) return;
+    const pos = prevPosition(
       this.activeShow.sequence,
       this.runtime.show.mainIndex,
       this.runtime.show.subIndex,

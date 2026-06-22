@@ -29,6 +29,7 @@ export const Cmd = {
   loadShow: 'cmd:loadShow',
   unloadShow: 'cmd:unloadShow',
   go: 'cmd:go',
+  goBack: 'cmd:goBack',
   goTo: 'cmd:goTo',
 
   // --- オーサリング（Show / マスター列 / GROUP / Cue 編集） ---
@@ -162,6 +163,7 @@ export interface DmxBridge {
   loadShow(showId: string): void;
   unloadShow(): void;
   go(): void;
+  goBack(): void;
   goTo(mainIndex: number, subIndex: number): void;
 
   // オーサリング

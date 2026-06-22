@@ -117,6 +117,7 @@ export class EngineHost {
     ipcMain.on(Cmd.loadShow, (_e, showId: string) => this.engine.loadShow(showId));
     ipcMain.on(Cmd.unloadShow, () => this.engine.unloadShow());
     ipcMain.on(Cmd.go, () => this.engine.go());
+    ipcMain.on(Cmd.goBack, () => this.engine.goBack());
     ipcMain.on(Cmd.goTo, (_e, mainIndex: number, subIndex: number) =>
       this.engine.goTo(mainIndex, subIndex),
     );

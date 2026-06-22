@@ -36,13 +36,21 @@ export function PlaybackPanel() {
       {/* グローバル操作 */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => window.dmx.goBack()}
+          className="rounded bg-neutral-700 px-4 py-2 text-base font-bold text-neutral-100 shadow hover:bg-neutral-600"
+          title="マスター列を1つ戻す（←/Backspace）"
+        >
+          ◀ BACK
+        </button>
+        <button
           onClick={() => window.dmx.go()}
           className="rounded bg-emerald-600 px-8 py-2 text-base font-bold text-white shadow hover:bg-emerald-500"
-          title="マスター列を次へ"
+          title="マスター列を次へ（Space/→）"
         >
-          GO
+          GO ▶
         </button>
-        <span className="text-sm text-neutral-400">{activeShow.name}</span>
+        <span className="text-[10px] text-neutral-600">Space/→: GO ／ ←/Backspace: 戻る</span>
+        <span className="ml-1 text-sm text-neutral-400">{activeShow.name}</span>
         <button
           onClick={() => window.dmx.recordCue(showId)}
           disabled={!editable}

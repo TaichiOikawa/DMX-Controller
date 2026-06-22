@@ -147,36 +147,41 @@ export function nextPosition(
   return firstPlayable(seq, main + 1);
 }
 
+/** delay 経過後の経過時間 elapsed から進捗 t を求める（dur<=0 は即スナップ）。 */
+function fadeT(elapsed: number, durMs: number): number {
+  if (elapsed < 0) return 0; // delay 中（厳密に開始前）
+  if (durMs <= 0) return 1; // 即スナップ（delay 経過後）
+  return clamp01(elapsed / durMs);
+}
+
 /**
  * 進行中フェードを `now` 時点まで進め、`rt.tracked` を更新する。
- * delay 中は from 保持、durMs<=0 は delay 後に即スナップ、完了で fade=null。
+ * 上昇(値が増える)ch は durMs、下降(値が減る)ch は durOutMs を使う。
+ * delay 中は from 保持、dur<=0 は delay 後に即スナップ、両方向完了で fade=null。
  */
 export function applyFade(rt: ShowRuntime, now: number): void {
   const fade = rt.fade;
   if (!fade) return;
 
+  const durOut = fade.durOutMs ?? fade.durMs;
   const elapsed = now - fade.startMs - fade.delayMs;
-  let t: number;
-  if (elapsed < 0) {
-    t = 0; // delay 中（厳密に開始前）
-  } else if (fade.durMs <= 0) {
-    t = 1; // 即スナップ（delay 経過後）
-  } else {
-    t = clamp01(elapsed / fade.durMs);
-  }
+  const tIn = fadeT(elapsed, fade.durMs);
+  const tOut = fadeT(elapsed, durOut);
 
   const { from, to } = fade;
   const tracked = rt.tracked;
   for (let ch = 0; ch < UNIVERSE_SIZE; ch++) {
+    const t = to[ch] >= from[ch] ? tIn : tOut;
     tracked[ch] = t >= 1 ? to[ch] : lerp(from[ch], to[ch], t);
   }
 
-  if (t >= 1) rt.fade = null; // 確定（tracked は to に一致済み）
+  if (tIn >= 1 && tOut >= 1) rt.fade = null; // 両方向確定
 }
 
 /**
  * フェードを開始する。tracked（現在表示値）から target へ。
  * tracked は変更せず fade を設定するのみ（次 tick の applyFade で進む）。
+ * durOutMs 省略時は durMs と同じ（対称フェード）。
  */
 export function startFade(
   rt: ShowRuntime,
@@ -184,12 +189,14 @@ export function startFade(
   now: number,
   durMs: number,
   delayMs: number,
+  durOutMs?: number,
 ): void {
   rt.fade = {
     from: rt.tracked.slice(),
     to: target,
     startMs: now,
     durMs: Math.max(0, durMs),
+    durOutMs: Math.max(0, durOutMs ?? durMs),
     delayMs: Math.max(0, delayMs),
   };
 }

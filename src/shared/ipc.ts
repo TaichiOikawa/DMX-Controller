@@ -127,6 +127,7 @@ export interface CuePatch {
   name?: string;
   lyrics?: string;
   fadeInMs?: number;
+  fadeOutMs?: number;
   delayMs?: number;
 }
 

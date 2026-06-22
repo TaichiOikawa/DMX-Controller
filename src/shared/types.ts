@@ -83,8 +83,10 @@ export interface Cue {
   lyrics?: string;
   /** 操作対象 ch のみ: chIndex(0-511) -> 値(0-255) */
   values: Record<number, number>;
-  /** フェード時間 */
+  /** フェードイン時間（値が上がる ch）。 */
   fadeInMs: number;
+  /** フェードアウト時間（値が下がる ch）。省略時は fadeInMs と同じ。 */
+  fadeOutMs?: number;
   /** フェード前のディレイ */
   delayMs?: number;
 }
@@ -126,7 +128,10 @@ export interface FadeState {
   from: number[];
   to: number[];
   startMs: number;
+  /** 上昇(値が増える)方向のフェード時間（ms）。 */
   durMs: number;
+  /** 下降(値が減る)方向のフェード時間（ms）。省略時は durMs と同じ。 */
+  durOutMs?: number;
   /** フェード開始前のディレイ（ms）。 */
   delayMs: number;
 }

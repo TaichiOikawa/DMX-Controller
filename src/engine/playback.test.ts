@@ -152,6 +152,26 @@ describe('applyFade', () => {
     expect(rt.fade).toBeNull();
   });
 
+  it('uses durMs for rising channels and durOutMs for falling channels', () => {
+    const rt = createShowRuntime();
+    rt.tracked[0] = 0; // 上昇する ch
+    rt.tracked[1] = 200; // 下降する ch
+    const target = new Array(UNIVERSE_SIZE).fill(0);
+    target[0] = 200; // up
+    target[1] = 0; // down
+    // In=100ms, Out=400ms
+    startFade(rt, target, 0, 100, 0, 400);
+
+    applyFade(rt, 100);
+    expect(rt.tracked[0]).toBe(200); // 上昇は In=100ms で完了
+    expect(rt.tracked[1]).toBe(150); // 下降は Out=400ms の 25%（200->150）
+    expect(rt.fade).not.toBeNull(); // 下降がまだなので継続
+
+    applyFade(rt, 400);
+    expect(rt.tracked[1]).toBe(0); // 下降完了
+    expect(rt.fade).toBeNull();
+  });
+
   it('snaps instantly when fadeInMs is 0', () => {
     const rt = createShowRuntime();
     const target = new Array(UNIVERSE_SIZE).fill(0);

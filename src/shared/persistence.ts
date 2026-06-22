@@ -157,6 +157,7 @@ function normalizeCue(raw: Record<string, unknown>): Cue {
     values: normalizeValues(raw.values),
     fadeInMs: Math.max(0, num(raw.fadeInMs, 0)),
   };
+  if (raw.fadeOutMs !== undefined) cue.fadeOutMs = Math.max(0, num(raw.fadeOutMs, 0));
   if (raw.delayMs !== undefined) cue.delayMs = Math.max(0, num(raw.delayMs, 0));
   return cue;
 }

@@ -400,7 +400,7 @@ export class Engine {
     const cue = cueAt(show.sequence, pos);
     if (!cue) return;
     const target = computeTarget(currentTarget(rt), cue);
-    startFade(rt, target, now, cue.fadeInMs, cue.delayMs ?? 0);
+    startFade(rt, target, now, cue.fadeInMs, cue.delayMs ?? 0, cue.fadeOutMs ?? cue.fadeInMs);
     rt.mainIndex = pos.main;
     rt.subIndex = pos.sub;
     // §6.2: 新 cue が操作対象に含む ch のキャプチャを解除（cue が引き継ぐ）。
@@ -466,6 +466,7 @@ export class Engine {
     if (patch.name !== undefined) cue.name = patch.name;
     if (patch.lyrics !== undefined) cue.lyrics = patch.lyrics;
     if (patch.fadeInMs !== undefined) cue.fadeInMs = Math.max(0, patch.fadeInMs);
+    if (patch.fadeOutMs !== undefined) cue.fadeOutMs = Math.max(0, patch.fadeOutMs);
     if (patch.delayMs !== undefined) cue.delayMs = Math.max(0, patch.delayMs);
     this.notifyProject();
   }
@@ -788,10 +789,11 @@ export class Engine {
     const fade = this.runtime.show?.fade;
     if (!fade) return { fadeProgress: 1, fadeRemainingMs: 0 };
     const now = this.nowFn();
+    const total = Math.max(fade.durMs, fade.durOutMs ?? fade.durMs);
     const sinceStart = now - fade.startMs;
     const elapsed = sinceStart - fade.delayMs;
-    const progress = fade.durMs <= 0 ? (elapsed >= 0 ? 1 : 0) : clamp01(elapsed / fade.durMs);
-    const remaining = Math.max(0, fade.delayMs + fade.durMs - sinceStart);
+    const progress = total <= 0 ? (elapsed >= 0 ? 1 : 0) : clamp01(elapsed / total);
+    const remaining = Math.max(0, fade.delayMs + total - sinceStart);
     return { fadeProgress: progress, fadeRemainingMs: remaining };
   }
 

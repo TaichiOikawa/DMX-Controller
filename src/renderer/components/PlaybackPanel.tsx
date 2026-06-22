@@ -278,7 +278,7 @@ function CueRow({
           <NameField cueId={cue.id} name={cue.name} editable={editable} />
           <span className="shrink-0 text-[10px] text-neutral-500">{channelCount}ch</span>
         </div>
-        <FadeField cueId={cue.id} fadeInMs={cue.fadeInMs} editable={editable} />
+        <FadeFields cue={cue} editable={editable} />
         <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
           <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
           {editable && <DeleteButton onClick={onDelete} title="CUE 削除" />}
@@ -391,18 +391,75 @@ function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: strin
   );
 }
 
-function FadeField({ cueId, fadeInMs, editable }: { cueId: string; fadeInMs: number; editable: boolean }) {
+/** CUE のフェード/ディレイ時間（In / Out / Delay）をまとめて編集する。 */
+function FadeFields({ cue, editable }: { cue: Cue; editable: boolean }) {
+  return (
+    <div onClick={(e) => e.stopPropagation()} className="flex shrink-0 items-center gap-0.5">
+      <MsField
+        label="In"
+        value={cue.fadeInMs}
+        editable={editable}
+        title="フェードイン時間 (ms)"
+        onCommit={(ms) => window.dmx.updateCue(cue.id, { fadeInMs: ms })}
+      />
+      <MsField
+        label="Out"
+        value={cue.fadeOutMs}
+        fallback={cue.fadeInMs}
+        editable={editable}
+        title="フェードアウト時間 (ms・未設定なら In と同じ)"
+        onCommit={(ms) => window.dmx.updateCue(cue.id, { fadeOutMs: ms })}
+      />
+      <MsField
+        label="Dly"
+        value={cue.delayMs}
+        fallback={0}
+        editable={editable}
+        title="ディレイ時間 (ms)"
+        onCommit={(ms) => window.dmx.updateCue(cue.id, { delayMs: ms })}
+      />
+    </div>
+  );
+}
+
+/**
+ * ms 値をインライン編集する小フィールド。
+ * value が未設定のとき: 編集モードでは fallback を淡色で表示、本番表示では非表示。
+ */
+function MsField({
+  label,
+  value,
+  fallback,
+  editable,
+  title,
+  onCommit,
+}: {
+  label: string;
+  value: number | undefined;
+  fallback?: number;
+  editable: boolean;
+  title: string;
+  onCommit: (ms: number) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const shown = value ?? fallback ?? 0;
+  const isDefault = value === undefined;
 
   const commit = () => {
     const n = Math.max(0, Math.round(Number(draft)));
-    if (Number.isFinite(n)) window.dmx.updateCue(cueId, { fadeInMs: n });
+    if (Number.isFinite(n)) onCommit(n);
     setEditing(false);
   };
 
   if (!editable) {
-    return <span className="px-1 font-mono text-[11px] text-neutral-500">{fadeInMs}ms</span>;
+    if (isDefault) return null; // 既定（In と同じ / 0）の項目は本番表示で省略
+    return (
+      <span className="px-0.5 font-mono text-[10px] text-neutral-500" title={title}>
+        {label}
+        {shown}
+      </span>
+    );
   }
 
   return editing ? (
@@ -416,19 +473,22 @@ function FadeField({ cueId, fadeInMs, editable }: { cueId: string; fadeInMs: num
         if (e.key === 'Enter') commit();
         if (e.key === 'Escape') setEditing(false);
       }}
-      className="w-14 rounded bg-neutral-900 text-center font-mono text-[11px] text-neutral-100 outline-none ring-1 ring-sky-500"
+      className="w-12 rounded bg-neutral-900 text-center font-mono text-[10px] text-neutral-100 outline-none ring-1 ring-sky-500"
     />
   ) : (
     <button
       onClick={(e) => {
         e.stopPropagation();
-        setDraft(String(fadeInMs));
+        setDraft(String(shown));
         setEditing(true);
       }}
-      className="rounded px-1 font-mono text-[11px] text-neutral-400 hover:bg-neutral-700"
-      title="フェード時間 (ms)"
+      className={`rounded px-1 font-mono text-[10px] hover:bg-neutral-700 ${
+        isDefault ? 'text-neutral-600' : 'text-neutral-300'
+      }`}
+      title={title}
     >
-      {fadeInMs}ms
+      {label}
+      {shown}
     </button>
   );
 }

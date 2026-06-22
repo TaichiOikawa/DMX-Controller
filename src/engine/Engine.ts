@@ -25,6 +25,7 @@ import {
   type EngineRuntime,
   type Group,
   type Project,
+  type SequenceEntry,
   type Show,
 } from '../shared/types';
 import { encodeArtDmx, nextSequence } from './artnet';
@@ -429,12 +430,16 @@ export class Engine {
 
     const cue = this.cueFromFaders(opts);
     const targetGroupId = opts?.targetGroupId;
+    const at = opts?.atIndex;
     if (targetGroupId) {
       const group = this.findGroupInShow(show, targetGroupId);
       if (!group) return;
-      group.cues.push(cue);
+      if (at === undefined) group.cues.push(cue);
+      else group.cues.splice(clampInsert(at, group.cues.length), 0, cue);
     } else {
-      show.sequence.push(createCueEntry(cue));
+      const entry = createCueEntry(cue);
+      if (at === undefined) show.sequence.push(entry);
+      else show.sequence.splice(clampInsert(at, show.sequence.length), 0, entry);
     }
     this.afterStructureChange(showId);
   }
@@ -516,6 +521,37 @@ export class Engine {
     if (!found) return;
     this.pushUndo();
     moveById(found.group.cues, (c) => c.id === cueId, toIndex);
+    this.afterStructureChange(found.show.id);
+  }
+
+  /** マスター列のエントリ（CUE / GROUP）を複製し、直後に挿入する。 */
+  duplicateEntry(showId: string, entryId: string): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    const idx = show.sequence.findIndex((e) =>
+      e.kind === 'cue' ? e.cue.id === entryId : e.group.id === entryId,
+    );
+    if (idx < 0) return;
+    this.pushUndo();
+    const entry = show.sequence[idx];
+    const clone: SequenceEntry =
+      entry.kind === 'cue'
+        ? { kind: 'cue', cue: cloneCue(entry.cue) }
+        : { kind: 'group', group: cloneGroup(entry.group) };
+    show.sequence.splice(idx + 1, 0, clone);
+    this.afterStructureChange(showId);
+  }
+
+  /** GROUP 内の子 CUE を複製し、直後に挿入する。 */
+  duplicateCueInGroup(groupId: string, cueId: string): void {
+    if (!this.editable) return;
+    const found = this.findGroup(groupId);
+    if (!found) return;
+    const idx = found.group.cues.findIndex((c) => c.id === cueId);
+    if (idx < 0) return;
+    this.pushUndo();
+    found.group.cues.splice(idx + 1, 0, cloneCue(found.group.cues[idx]));
     this.afterStructureChange(found.show.id);
   }
 
@@ -903,6 +939,22 @@ export class Engine {
     }
     this.measuredHz = this.tickTimestamps.length;
   }
+}
+
+/** 挿入位置を 0..len にクランプする。 */
+function clampInsert(index: number, len: number): number {
+  if (!Number.isFinite(index)) return len;
+  return Math.max(0, Math.min(Math.round(index), len));
+}
+
+/** CUE を新しい id で複製する（values は別オブジェクトに複製）。 */
+function cloneCue(cue: Cue): Cue {
+  return { ...cue, id: genId(), values: { ...cue.values } };
+}
+
+/** GROUP を新しい id で複製する（子 CUE も全て複製）。 */
+function cloneGroup(g: Group): Group {
+  return { id: genId(), name: g.name, loop: g.loop, cues: g.cues.map(cloneCue) };
 }
 
 /** 配列内の要素を述語で探し、toIndex へ移動する。 */

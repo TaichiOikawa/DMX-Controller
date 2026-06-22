@@ -204,6 +204,12 @@ export class EngineHost {
     ipcMain.on(Cmd.moveCueInGroup, (_e, groupId: string, cueId: string, toIndex: number) =>
       this.engine.moveCueInGroup(groupId, cueId, toIndex),
     );
+    ipcMain.on(Cmd.duplicateEntry, (_e, showId: string, entryId: string) =>
+      this.engine.duplicateEntry(showId, entryId),
+    );
+    ipcMain.on(Cmd.duplicateCueInGroup, (_e, groupId: string, cueId: string) =>
+      this.engine.duplicateCueInGroup(groupId, cueId),
+    );
 
     // --- キャプチャ / リリース ---
     ipcMain.on(Cmd.releaseCapture, (_e, channels?: number[]) =>

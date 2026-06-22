@@ -224,6 +224,35 @@ describe('authoring', () => {
     }
   });
 
+  it('inserts a recorded cue at a given index', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(
+      projectWithSequence([cueEntry(cue('a', { 0: 1 })), cueEntry(cue('b', { 0: 2 }))]),
+    );
+    engine.setFader(0, 50);
+    engine.recordCue('show1', { atIndex: 1 });
+    const seq = engine.getProject().shows[0].sequence;
+    expect(seq).toHaveLength(3);
+    if (seq[0].kind === 'cue' && seq[2].kind === 'cue') {
+      expect(seq[0].cue.id).toBe('a');
+      expect(seq[2].cue.id).toBe('b'); // 既存は後ろへ
+    }
+  });
+
+  it('duplicateEntry clones a cue with a new id right after it', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('a', { 0: 50 }))]));
+    engine.updateCue('a', { name: 'orig' });
+    engine.duplicateEntry('show1', 'a');
+    const seq = engine.getProject().shows[0].sequence;
+    expect(seq).toHaveLength(2);
+    if (seq[0].kind === 'cue' && seq[1].kind === 'cue') {
+      expect(seq[1].cue.id).not.toBe('a');
+      expect(seq[1].cue.name).toBe('orig');
+      expect(seq[1].cue.values).toEqual({ 0: 50 });
+    }
+  });
+
   it('deleteEntry removes a master entry and updates the footprint', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));

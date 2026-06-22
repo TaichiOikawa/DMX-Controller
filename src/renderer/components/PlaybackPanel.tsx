@@ -155,6 +155,8 @@ function EntryRow({
           onMoveUp={editable && index > 0 ? moveUp : undefined}
           onMoveDown={editable && index < lastIndex ? moveDown : undefined}
           onDelete={del}
+          onDuplicate={() => window.dmx.duplicateEntry(showId, entry.cue.id)}
+          onInsertBelow={() => window.dmx.recordCue(showId, { atIndex: index + 1 })}
         />
       </li>
     );
@@ -193,6 +195,15 @@ function EntryRow({
             onUp={editable && index > 0 ? moveUp : undefined}
             onDown={editable && index < lastIndex ? moveDown : undefined}
           />
+          {editable && (
+            <button
+              onClick={() => window.dmx.duplicateEntry(showId, g.id)}
+              className="rounded px-1 text-neutral-400 hover:bg-neutral-700"
+              title="この GROUP を複製して直下に挿入"
+            >
+              ⧉
+            </button>
+          )}
           {editable && <DeleteButton onClick={del} title="GROUP 削除" />}
         </div>
       </div>
@@ -222,6 +233,10 @@ function EntryRow({
                       : undefined
                   }
                   onDelete={() => window.dmx.deleteCueFromGroup(g.id, cue.id)}
+                  onDuplicate={() => window.dmx.duplicateCueInGroup(g.id, cue.id)}
+                  onInsertBelow={() =>
+                    window.dmx.recordCue(showId, { targetGroupId: g.id, atIndex: j + 1 })
+                  }
                 />
               </li>
             );
@@ -244,6 +259,8 @@ interface CueRowProps {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   onDelete: () => void;
+  onDuplicate?: () => void;
+  onInsertBelow?: () => void;
 }
 
 function CueRow({
@@ -258,6 +275,8 @@ function CueRow({
   onMoveUp,
   onMoveDown,
   onDelete,
+  onDuplicate,
+  onInsertBelow,
 }: CueRowProps) {
   const channelCount = Object.keys(cue.values).length;
   const showLyric = editable || (cue.lyrics?.trim().length ?? 0) > 0;
@@ -281,6 +300,24 @@ function CueRow({
         <FadeFields cue={cue} editable={editable} />
         <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
           <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
+          {editable && onInsertBelow && (
+            <button
+              onClick={onInsertBelow}
+              className="rounded px-1 text-amber-300/80 hover:bg-neutral-700"
+              title="現在のキャプチャから、この直下に CUE を挿入"
+            >
+              ＋
+            </button>
+          )}
+          {editable && onDuplicate && (
+            <button
+              onClick={onDuplicate}
+              className="rounded px-1 text-neutral-400 hover:bg-neutral-700"
+              title="この CUE を複製して直下に挿入"
+            >
+              ⧉
+            </button>
+          )}
           {editable && <DeleteButton onClick={onDelete} title="CUE 削除" />}
         </div>
       </div>

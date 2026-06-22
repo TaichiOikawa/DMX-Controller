@@ -103,6 +103,12 @@ const api: DmxBridge = {
   moveCueInGroup(groupId, cueId, toIndex) {
     ipcRenderer.send(Cmd.moveCueInGroup, groupId, cueId, toIndex);
   },
+  duplicateEntry(showId, entryId) {
+    ipcRenderer.send(Cmd.duplicateEntry, showId, entryId);
+  },
+  duplicateCueInGroup(groupId, cueId) {
+    ipcRenderer.send(Cmd.duplicateCueInGroup, groupId, cueId);
+  },
 
   // キャプチャ / リリース
   releaseCapture(channels?: number[]) {

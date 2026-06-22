@@ -49,6 +49,8 @@ export const Cmd = {
   deleteCueFromGroup: 'cmd:deleteCueFromGroup',
   moveEntry: 'cmd:moveEntry',
   moveCueInGroup: 'cmd:moveCueInGroup',
+  duplicateEntry: 'cmd:duplicateEntry',
+  duplicateCueInGroup: 'cmd:duplicateCueInGroup',
 
   // --- キャプチャ / リリース（§6） ---
   releaseCapture: 'cmd:releaseCapture',
@@ -120,6 +122,8 @@ export interface CaptureCueOptions {
   fadeInMs?: number;
   /** 指定すると、その GROUP の子 CUE として追加（省略時はマスター列末尾へ）。 */
   targetGroupId?: string;
+  /** 挿入位置（省略時は末尾へ追加）。 */
+  atIndex?: number;
 }
 
 /** updateCue で変更可能なフィールド。 */
@@ -211,6 +215,8 @@ export interface DmxBridge {
   deleteCueFromGroup(groupId: string, cueId: string): void;
   moveEntry(showId: string, entryId: string, toIndex: number): void;
   moveCueInGroup(groupId: string, cueId: string, toIndex: number): void;
+  duplicateEntry(showId: string, entryId: string): void;
+  duplicateCueInGroup(groupId: string, cueId: string): void;
 
   // キャプチャ / リリース（§6）
   releaseCapture(channels?: number[]): void;

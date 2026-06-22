@@ -18,7 +18,7 @@ import {
   type Project,
   defaultArtnetSettings,
 } from '../shared/types';
-import type { EngineStateSnapshot, PlaybackStatus } from '../shared/ipc';
+import type { DirtyState, EngineStateSnapshot, PlaybackStatus } from '../shared/ipc';
 
 interface TransportState {
   playing: boolean;
@@ -46,6 +46,10 @@ interface DmxState {
   masterLevel: number;
   /** ブラックアウト中か。 */
   blackout: boolean;
+  /** 未保存の変更があるか。 */
+  dirty: boolean;
+  /** 現在ひも付くプロジェクトファイルのパス（未保存の新規は null）。 */
+  projectPath: string | null;
 
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
@@ -57,6 +61,7 @@ interface DmxState {
   setMode: (mode: EngineMode) => void;
   setMasterLevel: (level: number) => void;
   setBlackout: (on: boolean) => void;
+  setDirty: (state: DirtyState) => void;
 
   /** キャプチャ解除（その ch を 0 に戻し、CUE/0 へ復帰）。 */
   releaseChannel: (ch: number) => void;
@@ -107,6 +112,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   mode: 'edit',
   masterLevel: 255,
   blackout: false,
+  dirty: false,
+  projectPath: null,
 
   setFader: (ch, value) =>
     set((s) => {
@@ -184,6 +191,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       window.dmx.setBlackout(on);
       return { blackout: on };
     }),
+
+  setDirty: (state) => set({ dirty: state.dirty, projectPath: state.filePath }),
 
   releaseChannel: (ch) =>
     set((s) => {

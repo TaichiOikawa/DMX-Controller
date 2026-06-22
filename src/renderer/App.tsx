@@ -21,12 +21,14 @@ export default function App() {
   const setOutput = useDmxStore((s) => s.setOutput);
   const setProject = useDmxStore((s) => s.setProject);
   const setEngineState = useDmxStore((s) => s.setEngineState);
+  const setDirty = useDmxStore((s) => s.setDirty);
   const [tab, setTab] = useState<Tab>('cue');
 
   useEffect(() => {
     const offFrame = window.dmx.onOutputFrame((frame) => setOutput(frame));
     const offState = window.dmx.onEngineState((state) => setEngineState(state));
     const offProject = window.dmx.onProject((project) => setProject(project));
+    const offDirty = window.dmx.onDirty((state) => setDirty(state));
     // 初期状態を取得して反映。
     window.dmx.getProject().then(setProject);
     window.dmx.getEngineState().then(setEngineState);
@@ -34,8 +36,9 @@ export default function App() {
       offFrame();
       offState();
       offProject();
+      offDirty();
     };
-  }, [setOutput, setProject, setEngineState]);
+  }, [setOutput, setProject, setEngineState, setDirty]);
 
   // グローバルキーボード操作（本番オペ）：Space/→ で GO、Backspace/← で 1つ戻る。
   // テキスト入力中（input/textarea/select/編集可能要素）は誤爆を避けて無効化する。

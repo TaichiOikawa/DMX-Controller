@@ -13,7 +13,11 @@ export function ProjectBar() {
   const selectShow = useDmxStore((s) => s.selectShow);
   const mode = useDmxStore((s) => s.mode);
   const setMode = useDmxStore((s) => s.setMode);
+  const dirty = useDmxStore((s) => s.dirty);
+  const projectPath = useDmxStore((s) => s.projectPath);
   const [busy, setBusy] = useState(false);
+
+  const fileName = projectPath ? projectPath.replace(/^.*[\\/]/, '') : '未保存';
 
   const shows = project?.shows ?? [];
   const isLoaded = activeShowId !== null;
@@ -82,6 +86,14 @@ export function ProjectBar() {
       >
         開く
       </button>
+      <span
+        className={`flex items-center gap-1 text-xs ${dirty ? 'text-amber-400' : 'text-neutral-500'}`}
+        title={dirty ? '未保存の変更があります' : '保存済み'}
+      >
+        <span>{dirty ? '●' : '○'}</span>
+        <span className="max-w-[16ch] truncate">{fileName}</span>
+        {dirty && <span>(未保存)</span>}
+      </span>
 
       <div className="mx-1 h-5 w-px bg-neutral-700" />
 

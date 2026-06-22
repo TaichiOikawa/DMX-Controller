@@ -12,6 +12,7 @@ import {
   type ActionPatch,
   type CaptureCueOptions,
   type CuePatch,
+  type DirtyState,
   type DmxBridge,
   type EngineStateSnapshot,
 } from '../shared/ipc';
@@ -171,6 +172,9 @@ const api: DmxBridge = {
   },
   onProject(cb) {
     return subscribe<Project>(Evt.project, cb);
+  },
+  onDirty(cb) {
+    return subscribe<DirtyState>(Evt.dirty, cb);
   },
 };
 

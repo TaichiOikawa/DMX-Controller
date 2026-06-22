@@ -10,7 +10,8 @@
 
 import dgram from 'node:dgram';
 import fs from 'node:fs/promises';
-import { dialog, ipcMain, type WebContents } from 'electron';
+import path from 'node:path';
+import { app, dialog, ipcMain, type WebContents } from 'electron';
 import { Engine } from '../engine/Engine';
 import {
   Cmd,
@@ -30,6 +31,8 @@ const ARTNET_PORT = 6454;
 const FRAME_FORWARD_INTERVAL_MS = 33;
 /** engineState 転送間隔（ms）。状態は低頻度で十分。 */
 const STATE_FORWARD_INTERVAL_MS = 250;
+/** 自動バックアップ間隔（ms）。未保存変更があるときのみ書き出す。 */
+const AUTOSAVE_INTERVAL_MS = 20_000;
 
 const PROJECT_FILTERS = [
   { name: 'DMX Project', extensions: ['dmxproj', 'json'] },
@@ -51,6 +54,12 @@ export class EngineHost {
   private webContents: WebContents | null = null;
   private lastFrameSentAt = 0;
   private lastStateSentAt = 0;
+
+  /** 未保存状態の追跡。最後の保存／読込時点の JSON と比較して判定する。 */
+  private dirty = false;
+  private lastSavedJson: string;
+  private currentFilePath: string | null = null;
+  private autosaveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.artnet = defaultArtnetSettings();
@@ -79,7 +88,39 @@ export class EngineHost {
     });
     this.engine.onProject((project) => {
       this.webContents?.send(Evt.project, project);
+      this.recomputeDirty();
     });
+
+    // 起動直後の Project を「保存済み（クリーン）」の基準にする。
+    this.lastSavedJson = serializeProject(this.engine.getProject());
+  }
+
+  // ===== 未保存（dirty）状態の管理 =====
+
+  /** 現在の Project を最後の保存状態と比較し、変化があれば renderer へ通知する。 */
+  private recomputeDirty(): void {
+    const json = serializeProject(this.engine.getProject());
+    const dirty = json !== this.lastSavedJson;
+    if (dirty !== this.dirty) {
+      this.dirty = dirty;
+      this.emitDirty();
+    }
+  }
+
+  /** 現在の Project を「保存済み」基準に更新し、dirty=false にする。 */
+  private markClean(): void {
+    this.lastSavedJson = serializeProject(this.engine.getProject());
+    this.dirty = false;
+    this.emitDirty();
+  }
+
+  private emitDirty(): void {
+    this.webContents?.send(Evt.dirty, { dirty: this.dirty, filePath: this.currentFilePath });
+  }
+
+  /** main プロセス（ウィンドウ終了処理）から参照する。 */
+  isDirty(): boolean {
+    return this.dirty;
   }
 
   /** renderer の WebContents を登録し、現在の Project / 状態を初期送信する。 */
@@ -87,14 +128,22 @@ export class EngineHost {
     this.webContents = webContents;
     webContents.send(Evt.project, this.engine.getProject());
     webContents.send(Evt.engineState, this.engine.getState());
+    this.emitDirty();
   }
 
   start(): void {
     this.engine.start();
+    if (this.autosaveTimer === null) {
+      this.autosaveTimer = setInterval(() => void this.autosaveBackup(), AUTOSAVE_INTERVAL_MS);
+    }
   }
 
   stop(): void {
     this.engine.stop();
+    if (this.autosaveTimer !== null) {
+      clearInterval(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
     try {
       this.socket.close();
     } catch {
@@ -189,24 +238,44 @@ export class EngineHost {
     ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
 
     // --- 永続化 ---
-    ipcMain.on(Cmd.newProject, () => this.engine.newProject());
+    ipcMain.on(Cmd.newProject, () => {
+      this.engine.newProject();
+      this.currentFilePath = null;
+      this.markClean();
+    });
     ipcMain.handle(Cmd.saveProject, () => this.saveProject());
     ipcMain.handle(Cmd.loadProject, () => this.loadProject());
+  }
+
+  /** 指定パスへ Project を書き出し、保存済み基準を更新する。 */
+  private async writeProject(filePath: string): Promise<SaveLoadResult> {
+    try {
+      await fs.writeFile(filePath, serializeProject(this.engine.getProject()), 'utf-8');
+      this.currentFilePath = filePath;
+      this.markClean();
+      return { ok: true, path: filePath };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
   }
 
   private async saveProject(): Promise<SaveLoadResult> {
     const res = await dialog.showSaveDialog({
       title: 'Project を保存',
-      defaultPath: 'project.dmxproj',
+      defaultPath: this.currentFilePath ?? 'project.dmxproj',
       filters: PROJECT_FILTERS,
     });
     if (res.canceled || !res.filePath) return { ok: false };
-    try {
-      await fs.writeFile(res.filePath, serializeProject(this.engine.getProject()), 'utf-8');
-      return { ok: true, path: res.filePath };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
+    return this.writeProject(res.filePath);
+  }
+
+  /**
+   * 終了時に未保存変更を保存する。既存ファイルがあれば確認なしで上書き、
+   * 無ければ保存ダイアログを開く。
+   */
+  async saveActiveForClose(): Promise<SaveLoadResult> {
+    if (this.currentFilePath) return this.writeProject(this.currentFilePath);
+    return this.saveProject();
   }
 
   private async loadProject(): Promise<SaveLoadResult> {
@@ -219,9 +288,24 @@ export class EngineHost {
     try {
       const text = await fs.readFile(res.filePaths[0], 'utf-8');
       this.engine.loadProject(deserializeProject(text));
+      this.currentFilePath = res.filePaths[0];
+      this.markClean();
       return { ok: true, path: res.filePaths[0] };
     } catch (e) {
       return { ok: false, error: String(e) };
+    }
+  }
+
+  /** 未保存変更があるとき、定期的にバックアップを書き出す（クラッシュ/誤クローズ対策）。 */
+  private async autosaveBackup(): Promise<void> {
+    if (!this.dirty) return;
+    const target = this.currentFilePath
+      ? `${this.currentFilePath}.bak`
+      : path.join(app.getPath('userData'), 'recovery.dmxproj');
+    try {
+      await fs.writeFile(target, serializeProject(this.engine.getProject()), 'utf-8');
+    } catch (e) {
+      console.error('[autosave] failed:', e);
     }
   }
 

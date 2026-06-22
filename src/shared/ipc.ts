@@ -82,7 +82,17 @@ export const Evt = {
   engineState: 'evt:engineState',
   /** Project 構造（編集・読込で更新） */
   project: 'evt:project',
+  /** 未保存状態（dirty）と現在のファイルパス */
+  dirty: 'evt:dirty',
 } as const;
+
+/** 未保存状態の通知ペイロード。 */
+export interface DirtyState {
+  /** 最後の保存／読込以降に変更があるか。 */
+  dirty: boolean;
+  /** 現在ひも付くファイルパス（未保存の新規は null）。 */
+  filePath: string | null;
+}
 
 // ===== ペイロード型 =====
 
@@ -220,6 +230,7 @@ export interface DmxBridge {
   onOutputFrame(cb: (frame: number[]) => void): () => void;
   onEngineState(cb: (state: EngineStateSnapshot) => void): () => void;
   onProject(cb: (project: Project) => void): () => void;
+  onDirty(cb: (state: DirtyState) => void): () => void;
 }
 
 /** Cue 単体を export 型として再公開（preload/renderer の利便のため）。 */

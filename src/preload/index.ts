@@ -41,6 +41,12 @@ const api: DmxBridge = {
   setMode(mode) {
     ipcRenderer.send(Cmd.setMode, mode);
   },
+  setMasterLevel(level) {
+    ipcRenderer.send(Cmd.setMasterLevel, level);
+  },
+  setBlackout(on) {
+    ipcRenderer.send(Cmd.setBlackout, on);
+  },
 
   // 再生
   loadShow(showId) {

@@ -8,6 +8,7 @@ import { SettingsBar } from './components/SettingsBar';
 import { ProjectBar } from './components/ProjectBar';
 import { PlaybackPanel } from './components/PlaybackPanel';
 import { NowNextPanel } from './components/NowNextPanel';
+import { MasterBar } from './components/MasterBar';
 import { ActionPanel } from './components/ActionPanel';
 import { TimelineView } from './components/timeline/TimelineView';
 import { FaderBank } from './components/FaderBank';
@@ -64,6 +65,7 @@ export default function App() {
     <div className="flex h-screen flex-col gap-2 bg-neutral-950 p-2 text-neutral-100">
       <SettingsBar />
       <ProjectBar />
+      <MasterBar />
 
       {/* 本番モードの「現在 / 次の CUE」帯（SHOW 時のみ表示） */}
       <NowNextPanel />

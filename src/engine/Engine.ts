@@ -101,6 +101,8 @@ export class Engine {
       faderLive: this.project.faders.slice(),
       activeActions: [],
       mode: 'edit',
+      masterLevel: 255,
+      blackout: false,
       output: new Array(UNIVERSE_SIZE).fill(0),
     };
 
@@ -157,6 +159,18 @@ export class Engine {
   /** 操作モードを切り替える（'edit' / 'show'）。 */
   setMode(mode: EngineMode): void {
     this.runtime.mode = mode;
+    this.emitState();
+  }
+
+  /** グランドマスター（全体調光 0-255）。最終出力に乗算する。 */
+  setMasterLevel(level: number): void {
+    this.runtime.masterLevel = clamp255(level);
+    this.emitState();
+  }
+
+  /** ブラックアウト（DBO）。true で全 ch を 0 出力（編集データは保持）。 */
+  setBlackout(on: boolean): void {
+    this.runtime.blackout = on;
     this.emitState();
   }
 
@@ -655,6 +669,8 @@ export class Engine {
       artnet: { ...this.artnet },
       measuredHz: this.measuredHz,
       mode: this.runtime.mode,
+      masterLevel: this.runtime.masterLevel,
+      blackout: this.runtime.blackout,
       activeActionIds: this.runtime.activeActions.map((r) => r.actionId),
       playback:
         show && this.activeShow
@@ -716,6 +732,7 @@ export class Engine {
 
     const ctx = contextFromRuntime(this.runtime);
     resolveFrame(ctx, this.runtime.output);
+    this.applyMaster(this.runtime.output);
 
     const packet = encodeArtDmx(this.runtime.output, this.sequence, this.artnet);
     this.sequence = nextSequence(this.sequence);
@@ -727,6 +744,26 @@ export class Engine {
       const frame = this.runtime.output;
       for (const cb of this.frameListeners) cb(frame);
     }
+  }
+
+  /**
+   * 最終段にグランドマスター / ブラックアウトを適用する（破壊的・out を書き換え）。
+   * blackout 優先で全 0、それ以外は masterLevel/255 を全 ch に乗算する。
+   * ※ 機材モデル（フィクスチャ）が無いため調光以外の ch にも一律に乗る点に注意。
+   */
+  private applyMaster(out: number[]): void {
+    if (this.runtime.blackout) {
+      out.fill(0);
+      return;
+    }
+    const m = this.runtime.masterLevel;
+    if (m >= 255) return;
+    if (m <= 0) {
+      out.fill(0);
+      return;
+    }
+    const f = m / 255;
+    for (let ch = 0; ch < UNIVERSE_SIZE; ch++) out[ch] = Math.round(out[ch] * f);
   }
 
   /** アクティブ Action を進め、完了したものを除去する。 */

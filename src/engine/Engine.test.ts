@@ -52,6 +52,24 @@ describe('Engine', () => {
     expect(frame[5]).toBe(42);
   });
 
+  it('scales output by the grand master and zeroes on blackout', () => {
+    const engine = new Engine({ send: () => {} });
+    engine.setFader(0, 200);
+
+    engine.setMasterLevel(128); // ~50%
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(Math.round(200 * (128 / 255)));
+
+    engine.setBlackout(true);
+    engine.tick(1);
+    expect(engine.getOutput()[0]).toBe(0);
+
+    engine.setBlackout(false);
+    engine.setMasterLevel(255);
+    engine.tick(2);
+    expect(engine.getOutput()[0]).toBe(200); // 全データは保持されている
+  });
+
   it('measures the output rate over a 1s window', () => {
     const engine = new Engine({ send: () => {} });
     // 25ms 間隔で 1 秒ぶんのティックを供給。

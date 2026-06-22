@@ -190,6 +190,10 @@ export interface EngineRuntime {
   activeActions: ActionRuntime[];
   /** 操作モード（非永続・既定 'edit'）。 */
   mode: EngineMode;
+  /** グランドマスター（全体調光 0-255・非永続・既定 255）。最終出力に乗算。 */
+  masterLevel: number;
+  /** ブラックアウト（非永続・既定 false）。true で全 ch を 0 出力。 */
+  blackout: boolean;
   /** 512: 直近の計算済みフレーム */
   output: number[];
 }

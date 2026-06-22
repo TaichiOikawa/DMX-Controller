@@ -42,6 +42,10 @@ interface DmxState {
   transport: TransportState;
   /** 操作モード（'edit' / 'show'）。 */
   mode: EngineMode;
+  /** グランドマスター（全体調光 0-255）。 */
+  masterLevel: number;
+  /** ブラックアウト中か。 */
+  blackout: boolean;
 
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
@@ -51,6 +55,8 @@ interface DmxState {
   setEngineState: (state: EngineStateSnapshot) => void;
   selectShow: (showId: string) => void;
   setMode: (mode: EngineMode) => void;
+  setMasterLevel: (level: number) => void;
+  setBlackout: (on: boolean) => void;
 
   /** キャプチャ解除（その ch を 0 に戻し、CUE/0 へ復帰）。 */
   releaseChannel: (ch: number) => void;
@@ -99,6 +105,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   activeActionIds: [],
   transport: { playing: false, playheadMs: 0, durationMs: DEFAULT_DURATION_MS },
   mode: 'edit',
+  masterLevel: 255,
+  blackout: false,
 
   setFader: (ch, value) =>
     set((s) => {
@@ -152,6 +160,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       activeActionIds: state.activeActionIds,
       captured: state.captured,
       mode: state.mode,
+      masterLevel: state.masterLevel,
+      blackout: state.blackout,
     }),
 
   selectShow: (showId) => set({ selectedShowId: showId }),
@@ -160,6 +170,19 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     set(() => {
       window.dmx.setMode(mode);
       return { mode };
+    }),
+
+  setMasterLevel: (level) =>
+    set(() => {
+      const masterLevel = Math.max(0, Math.min(255, Math.round(level)));
+      window.dmx.setMasterLevel(masterLevel);
+      return { masterLevel };
+    }),
+
+  setBlackout: (on) =>
+    set(() => {
+      window.dmx.setBlackout(on);
+      return { blackout: on };
     }),
 
   releaseChannel: (ch) =>

@@ -112,6 +112,8 @@ export class EngineHost {
     ipcMain.handle(Cmd.getEngineState, () => this.engine.getState());
     ipcMain.handle(Cmd.getProject, () => this.engine.getProject());
     ipcMain.on(Cmd.setMode, (_e, mode: 'edit' | 'show') => this.engine.setMode(mode));
+    ipcMain.on(Cmd.setMasterLevel, (_e, level: number) => this.engine.setMasterLevel(level));
+    ipcMain.on(Cmd.setBlackout, (_e, on: boolean) => this.engine.setBlackout(on));
 
     // --- 再生 ---
     ipcMain.on(Cmd.loadShow, (_e, showId: string) => this.engine.loadShow(showId));

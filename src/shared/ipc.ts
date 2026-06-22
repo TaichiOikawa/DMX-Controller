@@ -24,6 +24,8 @@ export const Cmd = {
   getEngineState: 'cmd:getEngineState',
   getProject: 'cmd:getProject',
   setMode: 'cmd:setMode',
+  setMasterLevel: 'cmd:setMasterLevel',
+  setBlackout: 'cmd:setBlackout',
 
   // --- 再生 ---
   loadShow: 'cmd:loadShow',
@@ -141,6 +143,10 @@ export interface EngineStateSnapshot {
   measuredHz: number;
   /** 操作モード（'edit' / 'show'）。 */
   mode: EngineMode;
+  /** グランドマスター（全体調光 0-255）。 */
+  masterLevel: number;
+  /** ブラックアウト中か。 */
+  blackout: boolean;
   /** アクティブな Action の id。 */
   activeActionIds: string[];
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -158,6 +164,8 @@ export interface DmxBridge {
   getEngineState(): Promise<EngineStateSnapshot>;
   getProject(): Promise<Project>;
   setMode(mode: EngineMode): void;
+  setMasterLevel(level: number): void;
+  setBlackout(on: boolean): void;
 
   // 再生
   loadShow(showId: string): void;

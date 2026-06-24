@@ -14,7 +14,7 @@
  * 予約（後続）: releaseCapture / action* / timeline* / reportAudioPlayhead
  */
 
-import type { ActionMode, ArtnetSettings, Cue, EngineMode, Project } from './types';
+import type { ActionMode, ArtnetSettings, Cue, EngineMode, Project, Show } from './types';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
@@ -92,12 +92,19 @@ export const Cmd = {
   pickShowAudio: 'cmd:pickShowAudio',
   clearShowAudio: 'cmd:clearShowAudio',
   readAudioFile: 'cmd:readAudioFile',
+  relinkAudioFromFolder: 'cmd:relinkAudioFromFolder',
+  checkMissingFiles: 'cmd:checkMissingFiles',
 
   // --- 永続化 ---
   newProject: 'cmd:newProject',
   saveProject: 'cmd:saveProject',
   saveProjectOverwrite: 'cmd:saveProjectOverwrite',
   loadProject: 'cmd:loadProject',
+
+  // --- Show 単体の書き出し / 読み込み（.dmxshow） ---
+  exportShow: 'cmd:exportShow',
+  pickShowFile: 'cmd:pickShowFile',
+  importShow: 'cmd:importShow',
 } as const;
 
 /** Engine → UI（イベント）チャンネル名。 */
@@ -124,6 +131,7 @@ export type MenuAction =
   | 'file:open'
   | 'file:save'
   | 'file:saveAs'
+  | 'file:relink'
   // 編集
   | 'edit:undo'
   | 'edit:redo'
@@ -213,6 +221,24 @@ export interface FixturePatch {
 export interface ActionPatch {
   name?: string;
   mode?: ActionMode;
+}
+
+/** .dmxshow 読込時に main → renderer へ返す解析結果（パッチ画面の入力）。 */
+export interface ShowFilePayload {
+  /** 取り込む Show 本体（id はそのまま。取り込み時に Engine が再採番する）。 */
+  show: Show;
+  /** 書き出し元 ch ラベル（使用 ch のみ・表示専用）。 */
+  sourceLabels?: Record<number, string>;
+}
+
+/** Project 読込時に存在確認して見つからなかった参照ファイル（現状は Show の音声）。 */
+export interface MissingFile {
+  /** 参照元 Show の id。 */
+  showId: string;
+  /** 参照元 Show の名前（表示用）。 */
+  showName: string;
+  /** 見つからなかった絶対パス。 */
+  filePath: string;
 }
 
 /** 単一プレイヘッドの再生状態（可視化用）。 */
@@ -347,13 +373,39 @@ export interface DmxBridge {
   clearShowAudio(showId: string): void;
   /** 音声ファイルのバイト列を読み出す（Blob URL 化して再生/波形に使う）。 */
   readAudioFile(filePath: string): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }>;
+  /**
+   * フォルダをダイアログで選び、欠損中の各音声を同名ファイルで一括再リンクする。
+   * resolved は再リンクできた件数。結果は project イベントで反映される。
+   */
+  relinkAudioFromFolder(): Promise<{ ok: boolean; resolved?: number; error?: string }>;
+  /** 現在の Project が参照する音声ファイルの存在確認を行い、見つからない一覧を返す。 */
+  checkMissingFiles(): Promise<MissingFile[]>;
 
   // 永続化（main が結果を project イベントで返す）
   newProject(): void;
   saveProject(): Promise<{ ok: boolean; path?: string; error?: string }>;
   /** 既存ファイルへ確認なしで上書き保存。未保存（パス未確定）なら保存ダイアログを開く。 */
   saveProjectOverwrite(): Promise<{ ok: boolean; path?: string; error?: string }>;
-  loadProject(): Promise<{ ok: boolean; path?: string; error?: string }>;
+  /** Project を開く。読込後、参照ファイル（音声）の存在確認結果 missingFiles も返す。 */
+  loadProject(): Promise<{
+    ok: boolean;
+    path?: string;
+    error?: string;
+    missingFiles?: MissingFile[];
+  }>;
+
+  // Show 単体の書き出し / 読み込み（.dmxshow）
+  /** 指定 Show を .dmxshow として書き出す（保存ダイアログ）。 */
+  exportShow(showId: string): Promise<{ ok: boolean; path?: string; error?: string }>;
+  /** .dmxshow を選んで解析だけ行う（Project は変更しない）。パッチ画面の入力を返す。 */
+  pickShowFile(): Promise<{
+    ok: boolean;
+    path?: string;
+    payload?: ShowFilePayload;
+    error?: string;
+  }>;
+  /** パッチ済み Show を現在の Project に取り込む（id は Engine が再採番）。 */
+  importShow(show: Show): void;
 
   // 購読（解除関数を返す）
   onOutputFrame(cb: (frame: number[]) => void): () => void;

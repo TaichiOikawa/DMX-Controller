@@ -157,7 +157,13 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
     },
     {
       label: 'ウインドウ',
-      role: 'windowMenu',
+      submenu: [
+        { label: 'ファイルを再リンク…', click: dispatch('file:relink') },
+        { type: 'separator' },
+        { role: 'minimize', label: '最小化' },
+        { role: 'zoom', label: 'ズーム' },
+        { role: 'close', label: '閉じる' },
+      ],
     },
     {
       label: 'ヘルプ',

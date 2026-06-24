@@ -1,7 +1,9 @@
 {
   "name": "dmx-controller",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "DMX/Art-Net 照明コントローラー",
+  "author": "TaichiOikawa",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -11,7 +13,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pack": "yarn build && electron-builder --dir",
+    "dist": "yarn build && electron-builder",
+    "dist:win": "yarn build && electron-builder --win",
+    "dist:mac": "yarn build && electron-builder --mac",
+    "dist:linux": "yarn build && electron-builder --linux"
   },
   "dependencies": {
     "lucide-react": "^1.21.0",

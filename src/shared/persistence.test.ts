@@ -1,6 +1,40 @@
 import { describe, it, expect } from 'vitest';
-import { deserializeProject, migrateProject, serializeProject } from './persistence';
-import { PROJECT_VERSION, UNIVERSE_SIZE, createDefaultProject } from './types';
+import {
+  collectShowChannels,
+  deserializeProject,
+  deserializeShow,
+  migrateProject,
+  remapShowChannels,
+  serializeProject,
+  serializeShow,
+} from './persistence';
+import { PROJECT_VERSION, UNIVERSE_SIZE, createDefaultProject, type Show } from './types';
+
+/** テスト用の Show（CUE・GROUP・Timeline・audio を含む）。 */
+function sampleShow(): Show {
+  return {
+    id: 's1',
+    name: 'Act 1',
+    folderId: 'f1',
+    audio: { filePath: '/tmp/song.mp3' },
+    sequence: [
+      { kind: 'cue', cue: { id: 'c1', name: 'Blue', values: { 0: 255, 5: 128 }, fadeInMs: 3000 } },
+      {
+        kind: 'group',
+        group: {
+          id: 'g1',
+          name: 'Chase',
+          loop: true,
+          cues: [
+            { id: 'c2', values: { 5: 0, 10: 64 }, fadeInMs: 1500 },
+            { id: 'c3', values: { 11: 200 }, fadeInMs: 500 },
+          ],
+        },
+      },
+    ],
+    timeline: { points: [{ timecodeMs: 1000, cueId: 'c1', groupId: 'g1', type: 'go' }] },
+  };
+}
 
 describe('serialize/deserialize round-trip', () => {
   it('preserves a master sequence with cue and group entries', () => {
@@ -156,5 +190,72 @@ describe('migrateProject (tolerant loading)', () => {
       shows: [{ id: 's', name: 'S', sequence: [{ kind: 'bogus' }, { kind: 'cue' }, 42] }],
     });
     expect(p.shows[0].sequence).toEqual([]);
+  });
+});
+
+describe('serializeShow / deserializeShow (.dmxshow)', () => {
+  it('round-trips sequence / cue / group / timeline / audio and drops folderId', () => {
+    const { show } = deserializeShow(serializeShow(sampleShow()));
+    const expected = sampleShow();
+    delete expected.folderId; // 書き出しで落ちる
+    expect(show).toEqual(expected);
+  });
+
+  it('embeds sourceLabels for used channels only', () => {
+    const labels = { 0: 'Front', 5: 'Wash', 99: 'Unused' };
+    const { sourceLabels } = deserializeShow(serializeShow(sampleShow(), labels));
+    // sampleShow が使う ch は 0,5,10,11 → ラベルがあるのは 0,5 のみ。
+    expect(sourceLabels).toEqual({ 0: 'Front', 5: 'Wash' });
+  });
+
+  it('omits sourceLabels when no channelLabels are provided', () => {
+    const { sourceLabels } = deserializeShow(serializeShow(sampleShow()));
+    expect(sourceLabels).toBeUndefined();
+  });
+
+  it('throws on wrong kind or broken JSON', () => {
+    expect(() => deserializeShow(JSON.stringify({ kind: 'dmxproj', show: {} }))).toThrow();
+    expect(() => deserializeShow('{ not json')).toThrow();
+  });
+});
+
+describe('collectShowChannels', () => {
+  it('returns the sorted union across cues and group cues', () => {
+    expect(collectShowChannels(sampleShow())).toEqual([0, 5, 10, 11]);
+  });
+});
+
+describe('remapShowChannels', () => {
+  it('remaps cue value keys, leaves unmapped channels, and drops out-of-range targets', () => {
+    const out = remapShowChannels(sampleShow(), { 0: 100, 5: 200, 11: 600 });
+    const cue = out.sequence[0];
+    if (cue.kind === 'cue') {
+      expect(cue.cue.values).toEqual({ 100: 255, 200: 128 });
+    }
+    const group = out.sequence[1];
+    if (group.kind === 'group') {
+      // 5→200, 10 は据え置き
+      expect(group.group.cues[0].values).toEqual({ 200: 0, 10: 64 });
+      // 11→600 は範囲外なので除外
+      expect(group.group.cues[1].values).toEqual({});
+    }
+  });
+
+  it('does not mutate the input show', () => {
+    const input = sampleShow();
+    remapShowChannels(input, { 0: 100 });
+    const cue = input.sequence[0];
+    if (cue.kind === 'cue') expect(cue.cue.values).toEqual({ 0: 255, 5: 128 });
+  });
+
+  it('last write wins on target collision', () => {
+    const show: Show = {
+      id: 's',
+      name: 'S',
+      sequence: [{ kind: 'cue', cue: { id: 'c', values: { 0: 10, 1: 20 }, fadeInMs: 0 } }],
+    };
+    const out = remapShowChannels(show, { 0: 7, 1: 7 });
+    const cue = out.sequence[0];
+    if (cue.kind === 'cue') expect(cue.cue.values).toEqual({ 7: 20 });
   });
 });

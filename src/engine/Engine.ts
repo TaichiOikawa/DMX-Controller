@@ -570,6 +570,68 @@ export class Engine {
     this.notifyProject();
   }
 
+  /**
+   * 外部ファイル（.dmxshow）から読み込んだ Show を取り込む。
+   * id を全て再採番して既存 Project との衝突を防ぎ、Timeline の参照も新 id へ付け替える。
+   * 名前が重複する場合は一意化する。folderId は持たない（ルート直下）。
+   */
+  importShow(show: Show): void {
+    if (!this.editable) return;
+    this.pushUndo();
+
+    // 旧 id -> 新 id（cue / group）。Timeline 参照の付け替えに使う。
+    const idMap = new Map<string, string>();
+    const remapId = (oldId: string): string => {
+      const next = genId();
+      idMap.set(oldId, next);
+      return next;
+    };
+
+    show.id = genId();
+    for (const entry of show.sequence) {
+      if (entry.kind === 'group') {
+        entry.group.id = remapId(entry.group.id);
+        for (const cue of entry.group.cues) cue.id = remapId(cue.id);
+      } else {
+        entry.cue.id = remapId(entry.cue.id);
+      }
+    }
+
+    // Timeline の cueId / groupId を新 id へ。対応が無ければ当該キーを外す（順送りにフォールバック）。
+    if (show.timeline) {
+      for (const p of show.timeline.points) {
+        if (p.cueId !== undefined) {
+          const mapped = idMap.get(p.cueId);
+          if (mapped) p.cueId = mapped;
+          else delete p.cueId;
+        }
+        if (p.groupId !== undefined) {
+          const mapped = idMap.get(p.groupId);
+          if (mapped) p.groupId = mapped;
+          else delete p.groupId;
+        }
+      }
+    }
+
+    delete show.folderId;
+    show.name = this.uniqueShowName(show.name);
+    this.project.shows.push(show);
+    this.notifyProject();
+  }
+
+  /** 既存 Show 名と重複しない名前を返す（重複時は「(取り込み)」＋必要なら連番）。 */
+  private uniqueShowName(name: string): string {
+    const base = name.trim() || 'Show';
+    const taken = new Set(this.project.shows.map((s) => s.name));
+    if (!taken.has(base)) return base;
+    const withTag = `${base} (取り込み)`;
+    if (!taken.has(withTag)) return withTag;
+    for (let i = 2; ; i++) {
+      const candidate = `${base} (取り込み ${i})`;
+      if (!taken.has(candidate)) return candidate;
+    }
+  }
+
   /** Show 名を変更する。空文字は既定名にフォールバック。 */
   renameShow(showId: string, name: string): void {
     if (!this.editable) return;

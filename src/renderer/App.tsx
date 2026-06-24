@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ProjectBar } from './components/ProjectBar';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { PreferencesModal } from './components/PreferencesModal';
+import { ShowImportPatchModal } from './components/ShowImportPatchModal';
+import { MissingFilesModal } from './components/MissingFilesModal';
 import { PlaybackPanel } from './components/PlaybackPanel';
 import { NowNextPanel } from './components/NowNextPanel';
 import { MasterBar } from './components/MasterBar';
@@ -18,6 +20,7 @@ import { useDmxStore } from './store';
 import {
   fileNewProject,
   fileOpenProject,
+  fileRelinkAudio,
   fileSaveProjectAs,
   fileSaveProjectOverwrite,
 } from './projectFileOps';
@@ -132,6 +135,9 @@ export default function App() {
         case 'file:saveAs':
           void fileSaveProjectAs();
           break;
+        case 'file:relink':
+          void fileRelinkAudio();
+          break;
         case 'edit:undo':
           window.dmx.undo();
           break;
@@ -221,6 +227,8 @@ export default function App() {
 
       {/* 環境設定モーダル（prefsOpen で表示） */}
       <PreferencesModal />
+      <ShowImportPatchModal />
+      <MissingFilesModal />
     </div>
   );
 }

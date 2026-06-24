@@ -14,11 +14,18 @@ import {
   Folder as FolderIcon,
   FolderOpen as FolderOpenIcon,
   Plus,
+  Upload,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useDmxStore, type ShowSort } from '../store';
 import { InlineText } from './InlineText';
-import { fileNewProject, fileOpenProject, fileSaveProjectAs } from '../projectFileOps';
+import {
+  fileExportShow,
+  fileImportShow,
+  fileNewProject,
+  fileOpenProject,
+  fileSaveProjectAs,
+} from '../projectFileOps';
 import type { Folder, Show } from '../../shared/types';
 
 /** 右クリックメニュー状態（画面座標）。Show 用とフォルダ用の判別共用体。 */
@@ -359,22 +366,32 @@ export function ProjectSidebar() {
             {rootShows.map((s) => renderShow(s, false))}
 
             {editable && (
-              <div className="mt-1 flex gap-1">
+              <>
+                <div className="mt-1 flex gap-1">
+                  <button
+                    onClick={() => window.dmx.newShow()}
+                    className="flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-sky-300 hover:bg-neutral-800"
+                    title="Show を追加"
+                  >
+                    <Plus size={12} /> Show
+                  </button>
+                  <button
+                    onClick={() => window.dmx.addFolder()}
+                    className="flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-neutral-300 hover:bg-neutral-800"
+                    title="フォルダを追加"
+                  >
+                    <Plus size={12} /> フォルダ
+                  </button>
+                </div>
                 <button
-                  onClick={() => window.dmx.newShow()}
-                  className="flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-sky-300 hover:bg-neutral-800"
-                  title="Show を追加"
+                  onClick={() => runFileOp(fileImportShow)}
+                  disabled={busy}
+                  className="mt-0.5 flex w-full items-center justify-center gap-1 rounded px-1.5 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                  title="Show をファイルから読み込み（パッチ）"
                 >
-                  <Plus size={12} /> Show
+                  <Upload size={12} /> Show 読込
                 </button>
-                <button
-                  onClick={() => window.dmx.addFolder()}
-                  className="flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-neutral-300 hover:bg-neutral-800"
-                  title="フォルダを追加"
-                >
-                  <Plus size={12} /> フォルダ
-                </button>
-              </div>
+              </>
             )}
           </div>
         )}
@@ -400,6 +417,15 @@ export function ProjectSidebar() {
         >
           {menu.kind === 'show' ? (
             <>
+              <button
+                onClick={() => {
+                  void fileExportShow(menu.id);
+                  setMenu(null);
+                }}
+                className="block w-full px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-700"
+              >
+                書き出し
+              </button>
               <button
                 onClick={deleteShow}
                 className="block w-full px-3 py-1.5 text-left text-red-300 hover:bg-red-600/30"

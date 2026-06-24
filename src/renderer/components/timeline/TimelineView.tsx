@@ -13,6 +13,7 @@ import { Music, Pause, Play, Plus, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cueAt } from "../../../engine/playback";
 import { useDmxStore } from "../../store";
+import { AudioRelinkModal } from "./AudioRelinkModal";
 import { AudioTrack } from "./AudioTrack";
 import { GoMarkers } from "./GoMarkers";
 import { Playhead } from "./Playhead";
@@ -60,6 +61,10 @@ export function TimelineView({ active }: { active: boolean }) {
   const [labelMode, setLabelMode] = useState<CueLabelMode>("lyrics");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioMs, setAudioMs] = useState(0);
+  // 音声ファイルが読み込めなかった（移動/リネーム/削除された）状態と、再リンクモーダルを
+  // 一旦閉じたかどうか。filePath が変わるたびにリセットして再プロンプトする。
+  const [audioMissing, setAudioMissing] = useState(false);
+  const [relinkDismissed, setRelinkDismissed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   // タブ非表示（display:none）でスクロール位置がリセットされても復元できるよう保持する。
   const savedScrollLeft = useRef(0);
@@ -90,7 +95,13 @@ export function TimelineView({ active }: { active: boolean }) {
     let createdUrl: string | null = null;
     if (filePath) {
       window.dmx.readAudioFile(filePath).then((res) => {
-        if (cancelled || !res.ok || !res.data) return;
+        if (cancelled) return;
+        if (!res.ok || !res.data) {
+          // ファイルが見つからない/読めない → 再リンクを促す。
+          setAudioMissing(true);
+          return;
+        }
+        setAudioMissing(false);
         const url = URL.createObjectURL(
           new Blob([res.data], { type: mimeFor(filePath) }),
         );
@@ -104,6 +115,9 @@ export function TimelineView({ active }: { active: boolean }) {
       if (createdUrl) URL.revokeObjectURL(createdUrl);
       setAudioUrl(null);
       setAudioMs(0);
+      // filePath が変わったら欠損状態と「閉じた」フラグをリセットして再プロンプトできるようにする。
+      setAudioMissing(false);
+      setRelinkDismissed(false);
       unloadAudio();
     };
   }, [filePath, loadAudio, unloadAudio]);
@@ -276,12 +290,23 @@ export function TimelineView({ active }: { active: boolean }) {
           </div>
 
           {/* 音声トラック */}
-          <div className="p-1">
+          <div className="relative p-1">
             <AudioTrack
               audioUrl={audioUrl}
               scale={scale}
               onDurationMs={setAudioMs}
             />
+            {audioMissing && (
+              <div className="absolute inset-1 flex items-center gap-2 rounded bg-neutral-900/80 px-2 text-[11px] text-red-400 ring-1 ring-red-500/40">
+                <span>音声ファイルが見つかりません</span>
+                <button
+                  onClick={() => setRelinkDismissed(false)}
+                  className="rounded bg-neutral-800 px-2 py-0.5 text-sky-300 hover:bg-neutral-700"
+                >
+                  再リンク
+                </button>
+              </div>
+            )}
           </div>
 
           {/* プレイヘッド（全高オーバーレイ） */}
@@ -293,6 +318,22 @@ export function TimelineView({ active }: { active: boolean }) {
           />
         </div>
       </div>
+
+      {/* 音声欠損時の再リンクモーダル（Timeline タブ表示中のみ） */}
+      {active && audioMissing && !relinkDismissed && filePath && (
+        <AudioRelinkModal
+          filePath={filePath}
+          onClose={() => setRelinkDismissed(true)}
+          onRelink={() => {
+            if (!activeShowId) return;
+            // 別ファイルを選ぶと filePath が変わり読み込み useEffect が再走する。
+            // 選択（ok）したらモーダルは閉じる。キャンセル時は警告を残す。
+            window.dmx.pickShowAudio(activeShowId).then((res) => {
+              if (res.ok) setRelinkDismissed(true);
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

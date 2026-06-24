@@ -1,0 +1,60 @@
+# electron-builder の設定。
+# `yarn dist` / `yarn dist:win` などから参照される（package.json の scripts を参照）。
+# 前段の `yarn build`（tsc -b && vite build）が dist/ と dist-electron/ を生成済みである前提。
+appId: com.taichioikawa.dmxconsole
+productName: DMX Console
+copyright: Copyright © 2026 TaichiOikawa
+
+# パッケージへ同梱するファイル。
+#  - dist/          : renderer（Vite ビルド成果物。main.js が ../dist/index.html を読み込む）
+#  - dist-electron/ : main プロセス & preload（main.js, preload.cjs）
+#  - package.json   : main フィールド（dist-electron/main.js）解決に必要
+# renderer/main の依存はすべて Vite/Rolldown でバンドル済みのため node_modules の同梱は不要。
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  # 依存はすべてバンドル済みのため node_modules は同梱しない（lucide-react 等の肥大を回避）。
+  - "!node_modules/**/*"
+
+# ソースの node_modules はバンドル済みのため取り込まない（成果物を小さく保つ）。
+npmRebuild: false
+asar: true
+
+directories:
+  output: release
+  buildResources: build
+
+# Windows: NSIS インストーラ + ポータブル exe（インストール不要で実行可能）。
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  # build/icon.ico があれば使用される。無い場合は Electron 既定アイコンになる。
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DMX Console
+
+# macOS（ビルドする場合）。
+mac:
+  target:
+    - dmg
+  category: public.app-category.music
+  icon: build/icon.icns
+
+# Linux（ビルドする場合）。
+linux:
+  target:
+    - AppImage
+  category: AudioVideo
+  icon: build/icon.png

@@ -216,6 +216,16 @@ const api: DmxBridge = {
   readAudioFile(filePath) {
     return ipcRenderer.invoke(Cmd.readAudioFile, filePath) as ReturnType<DmxBridge['readAudioFile']>;
   },
+  relinkAudioFromFolder() {
+    return ipcRenderer.invoke(Cmd.relinkAudioFromFolder) as ReturnType<
+      DmxBridge['relinkAudioFromFolder']
+    >;
+  },
+  checkMissingFiles() {
+    return ipcRenderer.invoke(Cmd.checkMissingFiles) as ReturnType<
+      DmxBridge['checkMissingFiles']
+    >;
+  },
 
   // 永続化
   newProject() {
@@ -231,6 +241,17 @@ const api: DmxBridge = {
   },
   loadProject() {
     return ipcRenderer.invoke(Cmd.loadProject) as ReturnType<DmxBridge['loadProject']>;
+  },
+
+  // Show 単体の書き出し / 読み込み
+  exportShow(showId) {
+    return ipcRenderer.invoke(Cmd.exportShow, showId) as ReturnType<DmxBridge['exportShow']>;
+  },
+  pickShowFile() {
+    return ipcRenderer.invoke(Cmd.pickShowFile) as ReturnType<DmxBridge['pickShowFile']>;
+  },
+  importShow(show) {
+    ipcRenderer.send(Cmd.importShow, show);
   },
 
   // 購読

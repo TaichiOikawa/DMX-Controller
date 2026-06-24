@@ -32,6 +32,95 @@ export function deserializeProject(text: string): Project {
   return migrateProject(raw);
 }
 
+// ===== Show 単体の書き出し / 読み込み（.dmxshow） =====
+
+/** .dmxshow ファイルの種別マーカー。 */
+const SHOW_EXPORT_KIND = 'dmxshow';
+/** Show 単体エクスポートのフォーマットバージョン。 */
+export const SHOW_EXPORT_VERSION = 1;
+
+/**
+ * 単一 Show を .dmxshow 文字列へ。folderId は読込先と無関係なので落とす。
+ * channelLabels を渡すと、Show が使う ch のラベルのみ sourceLabels（表示専用）として同梱する。
+ */
+export function serializeShow(show: Show, channelLabels?: Record<number, string>): string {
+  const rest: Show = { ...show };
+  delete rest.folderId; // 読込先と無関係なので落とす
+  const out: {
+    kind: string;
+    version: number;
+    show: Show;
+    sourceLabels?: Record<number, string>;
+  } = {
+    kind: SHOW_EXPORT_KIND,
+    version: SHOW_EXPORT_VERSION,
+    show: rest,
+  };
+  if (channelLabels) {
+    const labels: Record<number, string> = {};
+    let any = false;
+    for (const ch of collectShowChannels(show)) {
+      const name = channelLabels[ch];
+      if (typeof name === 'string' && name.trim()) {
+        labels[ch] = name.trim();
+        any = true;
+      }
+    }
+    if (any) out.sourceLabels = labels;
+  }
+  return JSON.stringify(out, null, 2);
+}
+
+/** .dmxshow 文字列を Show + 参考ラベルへ。種別不正・壊れた入力は throw。 */
+export function deserializeShow(text: string): {
+  show: Show;
+  sourceLabels?: Record<number, string>;
+} {
+  const raw = JSON.parse(text) as unknown;
+  if (!isObject(raw) || raw.kind !== SHOW_EXPORT_KIND || !isObject(raw.show)) {
+    throw new Error('Show ファイルとして認識できません（kind 不正）。');
+  }
+  // 読込先のフォルダ体系は別物なので folderId は除去（空集合を渡す）。
+  const show = normalizeShow(raw.show, new Set<string>());
+  const sourceLabels = normalizeLabels(raw.sourceLabels, UNIVERSE_SIZE);
+  return sourceLabels ? { show, sourceLabels } : { show };
+}
+
+/** Show が制御する ch（全 CUE・GROUP 子 CUE の values キー）の和集合を昇順で返す。 */
+export function collectShowChannels(show: Show): number[] {
+  const set = new Set<number>();
+  const add = (values: Record<number, number>) => {
+    for (const k of Object.keys(values)) set.add(Number(k));
+  };
+  for (const entry of show.sequence) {
+    if (entry.kind === 'cue') add(entry.cue.values);
+    else for (const cue of entry.group.cues) add(cue.values);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * Show をディープクローンし、全 CUE の values の ch キーを map で付け替える純関数。
+ * map に無い ch は据え置き。同一の先 ch へ衝突したら後勝ち。範囲外（0..511 外）は除外。
+ */
+export function remapShowChannels(show: Show, map: Record<number, number>): Show {
+  const clone = structuredClone(show);
+  const remap = (values: Record<number, number>): Record<number, number> => {
+    const out: Record<number, number> = {};
+    for (const [k, v] of Object.entries(values)) {
+      const src = Number(k);
+      const dst = map[src] ?? src;
+      if (Number.isInteger(dst) && dst >= 0 && dst < UNIVERSE_SIZE) out[dst] = v;
+    }
+    return out;
+  };
+  for (const entry of clone.sequence) {
+    if (entry.kind === 'cue') entry.cue.values = remap(entry.cue.values);
+    else for (const cue of entry.group.cues) cue.values = remap(cue.values);
+  }
+  return clone;
+}
+
 /**
  * 任意のオブジェクトを現行スキーマの Project に正規化する。
  * 旧バージョンのマイグレーション枠もここに集約する（現状 v1 のみ）。

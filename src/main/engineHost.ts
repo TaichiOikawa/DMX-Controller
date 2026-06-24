@@ -22,11 +22,17 @@ import {
   type EngineStateSnapshot,
   type FixtureInit,
   type FixturePatch,
+  type MissingFile,
   type SetFaderPayload,
   type UiState,
 } from '../shared/ipc';
-import { type ArtnetSettings, defaultArtnetSettings } from '../shared/types';
-import { deserializeProject, serializeProject } from '../shared/persistence';
+import { type ArtnetSettings, type Show, defaultArtnetSettings } from '../shared/types';
+import {
+  deserializeProject,
+  deserializeShow,
+  serializeProject,
+  serializeShow,
+} from '../shared/persistence';
 
 /** Art-Net の標準 UDP ポート。 */
 const ARTNET_PORT = 6454;
@@ -45,6 +51,11 @@ const PROJECT_FILTERS = [
 
 const AUDIO_FILTERS = [
   { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const SHOW_FILTERS = [
+  { name: 'DMX Show', extensions: ['dmxshow', 'json'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 
@@ -328,6 +339,8 @@ export class EngineHost {
     ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
     ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
+    ipcMain.handle(Cmd.relinkAudioFromFolder, () => this.relinkAudioFromFolder());
+    ipcMain.handle(Cmd.checkMissingFiles, () => this.findMissingFiles());
 
     // --- 永続化 ---
     ipcMain.on(Cmd.newProject, () => {
@@ -338,6 +351,11 @@ export class EngineHost {
     ipcMain.handle(Cmd.saveProject, () => this.saveProject());
     ipcMain.handle(Cmd.saveProjectOverwrite, () => this.saveProjectOverwrite());
     ipcMain.handle(Cmd.loadProject, () => this.loadProject());
+
+    // --- Show 単体の書き出し / 読み込み ---
+    ipcMain.handle(Cmd.exportShow, (_e, showId: string) => this.exportShow(showId));
+    ipcMain.handle(Cmd.pickShowFile, () => this.pickShowFile());
+    ipcMain.on(Cmd.importShow, (_e, show: Show) => this.engine.importShow(show));
   }
 
   /** 指定パスへ Project を書き出し、保存済み基準を更新する。 */
@@ -379,7 +397,7 @@ export class EngineHost {
     return this.saveProjectOverwrite();
   }
 
-  private async loadProject(): Promise<SaveLoadResult> {
+  private async loadProject(): Promise<SaveLoadResult & { missingFiles?: MissingFile[] }> {
     const res = await dialog.showOpenDialog({
       title: 'Project を開く',
       properties: ['openFile'],
@@ -391,7 +409,103 @@ export class EngineHost {
       this.engine.loadProject(deserializeProject(text));
       this.currentFilePath = res.filePaths[0];
       this.markClean();
-      return { ok: true, path: res.filePaths[0] };
+      const missingFiles = await this.findMissingFiles();
+      return { ok: true, path: res.filePaths[0], missingFiles };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  /**
+   * 読込済み Project が参照する外部ファイル（現状は各 Show の音声）の存在確認を行い、
+   * 見つからなかったものを返す。プロジェクトの移動・音声の改名/削除を開いた直後に検知する。
+   */
+  private async findMissingFiles(): Promise<MissingFile[]> {
+    const missing: MissingFile[] = [];
+    for (const show of this.engine.getProject().shows) {
+      const filePath = show.audio?.filePath;
+      if (!filePath) continue;
+      try {
+        await fs.access(filePath);
+      } catch {
+        missing.push({ showId: show.id, showName: show.name, filePath });
+      }
+    }
+    return missing;
+  }
+
+  /**
+   * フォルダを選び、欠損中の各音声を「同じファイル名」で探して一括再リンクする。
+   * フォルダごと移動した一般的なケースを一度の選択でまとめて解消する。
+   * （直下のみを走査。ファイル名が変わったものは個別 pickShowAudio で対応する。）
+   */
+  private async relinkAudioFromFolder(): Promise<{
+    ok: boolean;
+    resolved?: number;
+    error?: string;
+  }> {
+    const missing = await this.findMissingFiles();
+    if (missing.length === 0) return { ok: true, resolved: 0 };
+    const res = await dialog.showOpenDialog({
+      title: '音声フォルダを選択（同名ファイルを自動で再リンク）',
+      properties: ['openDirectory'],
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: false };
+    const dir = res.filePaths[0];
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+    // ファイル名（小文字）→ 実ファイル名。大文字小文字の差を吸収する。
+    const byName = new Map<string, string>();
+    for (const name of entries) byName.set(name.toLowerCase(), name);
+    let resolved = 0;
+    for (const m of missing) {
+      const hit = byName.get(path.basename(m.filePath).toLowerCase());
+      if (!hit) continue;
+      this.engine.setShowAudio(m.showId, path.join(dir, hit));
+      resolved++;
+    }
+    return { ok: true, resolved };
+  }
+
+  /** 指定 Show を .dmxshow として書き出す。Project の dirty / パスは変更しない。 */
+  private async exportShow(showId: string): Promise<SaveLoadResult> {
+    const project = this.engine.getProject();
+    const show = project.shows.find((s) => s.id === showId);
+    if (!show) return { ok: false, error: 'Show が見つかりません。' };
+    const res = await dialog.showSaveDialog({
+      title: 'Show を書き出し',
+      defaultPath: `${show.name || 'show'}.dmxshow`,
+      filters: SHOW_FILTERS,
+    });
+    if (res.canceled || !res.filePath) return { ok: false };
+    try {
+      await fs.writeFile(res.filePath, serializeShow(show, project.channelLabels), 'utf-8');
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  /** .dmxshow を選んで解析だけ行う（Engine は変更しない）。パッチ画面の入力を返す。 */
+  private async pickShowFile(): Promise<{
+    ok: boolean;
+    path?: string;
+    payload?: ReturnType<typeof deserializeShow>;
+    error?: string;
+  }> {
+    const res = await dialog.showOpenDialog({
+      title: 'Show を読み込み',
+      properties: ['openFile'],
+      filters: SHOW_FILTERS,
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: false };
+    try {
+      const text = await fs.readFile(res.filePaths[0], 'utf-8');
+      return { ok: true, path: res.filePaths[0], payload: deserializeShow(text) };
     } catch (e) {
       return { ok: false, error: String(e) };
     }

@@ -18,7 +18,13 @@ import {
   type Project,
   defaultArtnetSettings,
 } from '../shared/types';
-import type { DirtyState, EngineStateSnapshot, PlaybackStatus } from '../shared/ipc';
+import type {
+  DirtyState,
+  EngineStateSnapshot,
+  MissingFile,
+  PlaybackStatus,
+  ShowFilePayload,
+} from '../shared/ipc';
 import { cueAt } from '../engine/playback';
 
 interface TransportState {
@@ -43,6 +49,10 @@ interface DmxState {
   sidebarCollapsed: boolean;
   /** 環境設定モーダルを開いているか（UI のみ）。 */
   prefsOpen: boolean;
+  /** Show 読込パッチモーダルの入力（非 null で表示・UI のみ）。 */
+  showImport: ShowFilePayload | null;
+  /** Project 読込時に見つからなかった音声ファイル一覧（非 null で再リンクモーダル表示・UI のみ）。 */
+  missingFiles: MissingFile[] | null;
   /** 左パネルの並び順（UI のみ・非永続）。 */
   showSort: ShowSort;
 
@@ -78,6 +88,10 @@ interface DmxState {
   toggleSidebarCollapsed: () => void;
   /** 環境設定モーダルの開閉を設定する。 */
   setPrefsOpen: (open: boolean) => void;
+  /** Show 読込パッチモーダルの入力を設定する（null で閉じる）。 */
+  setShowImport: (payload: ShowFilePayload | null) => void;
+  /** 欠損音声の再リンクモーダルを設定する（null で閉じる）。 */
+  setMissingFiles: (files: MissingFile[] | null) => void;
   /** 左パネルの並び順を設定する。 */
   setShowSort: (sort: ShowSort) => void;
   setProject: (project: Project) => void;
@@ -145,6 +159,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   fadersCollapsed: false,
   sidebarCollapsed: false,
   prefsOpen: false,
+  showImport: null,
+  missingFiles: null,
   showSort: 'manual',
 
   project: null,
@@ -193,6 +209,10 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   setPrefsOpen: (open) => set({ prefsOpen: open }),
+
+  setShowImport: (payload) => set({ showImport: payload }),
+
+  setMissingFiles: (files) => set({ missingFiles: files }),
 
   setShowSort: (sort) => set({ showSort: sort }),
 

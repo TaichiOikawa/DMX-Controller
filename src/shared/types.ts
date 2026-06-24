@@ -83,7 +83,10 @@ export interface Show {
    * 各エントリは CUE（単一 look）か GROUP（子 CUE を束ねた入れ子）。
    */
   sequence: SequenceEntry[];
-  /** Project フォルダからの相対パス */
+  /**
+   * 音声ファイルパス。メモリ上は常に絶対パス。保存時、Project ファイルの配下にある場合のみ
+   * 相対パス（POSIX 区切り）でディスクへ書き出し、読込時に絶対パスへ戻す（src/main/projectPaths.ts）。
+   */
   audio?: { filePath: string };
   timeline?: Timeline;
 }

@@ -33,6 +33,7 @@ import {
   serializeProject,
   serializeShow,
 } from '../shared/persistence';
+import { resolveProjectAudioPaths, toPortableProject } from './projectPaths';
 
 /** Art-Net の標準 UDP ポート。 */
 const ARTNET_PORT = 6454;
@@ -361,7 +362,9 @@ export class EngineHost {
   /** 指定パスへ Project を書き出し、保存済み基準を更新する。 */
   private async writeProject(filePath: string): Promise<SaveLoadResult> {
     try {
-      await fs.writeFile(filePath, serializeProject(this.engine.getProject()), 'utf-8');
+      // 配下の音声は相対パスで書き出す（ポータブル化）。メモリ上は絶対パスのまま。
+      const portable = toPortableProject(this.engine.getProject(), path.dirname(filePath));
+      await fs.writeFile(filePath, serializeProject(portable), 'utf-8');
       this.currentFilePath = filePath;
       this.markClean();
       return { ok: true, path: filePath };
@@ -406,7 +409,10 @@ export class EngineHost {
     if (res.canceled || res.filePaths.length === 0) return { ok: false };
     try {
       const text = await fs.readFile(res.filePaths[0], 'utf-8');
-      this.engine.loadProject(deserializeProject(text));
+      const project = deserializeProject(text);
+      // 相対パスで保存された音声を絶対パスへ戻す（以降のメモリ処理は絶対パス前提）。
+      resolveProjectAudioPaths(project, path.dirname(res.filePaths[0]));
+      this.engine.loadProject(project);
       this.currentFilePath = res.filePaths[0];
       this.markClean();
       const missingFiles = await this.findMissingFiles();
@@ -518,7 +524,9 @@ export class EngineHost {
       ? `${this.currentFilePath}.bak`
       : path.join(app.getPath('userData'), 'recovery.dmxproj');
     try {
-      await fs.writeFile(target, serializeProject(this.engine.getProject()), 'utf-8');
+      // 本保存と同様に、対象ファイル位置を基準に配下の音声を相対化する。
+      const portable = toPortableProject(this.engine.getProject(), path.dirname(target));
+      await fs.writeFile(target, serializeProject(portable), 'utf-8');
     } catch (e) {
       console.error('[autosave] failed:', e);
     }

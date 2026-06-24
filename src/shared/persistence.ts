@@ -13,8 +13,10 @@ import {
   type ActionButton,
   type ArtnetSettings,
   type Cue,
+  type Folder,
   type Group,
   type Project,
+  type RgbFixture,
   type SequenceEntry,
   type Show,
 } from './types';
@@ -40,19 +42,47 @@ export function migrateProject(raw: unknown): Project {
 
   // 将来: const version = num(raw.version, 0); if (version < N) { ...移行... }
 
+  const folders = normalizeFolders(raw.folders);
+  const validFolderIds = new Set(folders.map((f) => f.id));
   const project: Project = {
     version: PROJECT_VERSION,
     name: str(raw.name, def.name),
     settings: normalizeSettings(raw.settings),
     faders: normalizeFaders(raw.faders),
     actions: normalizeActions(raw.actions),
-    shows: normalizeShows(raw.shows),
+    shows: normalizeShows(raw.shows, validFolderIds),
   };
+  if (folders.length > 0) project.folders = folders;
   const channelLabels = normalizeLabels(raw.channelLabels, UNIVERSE_SIZE);
   if (channelLabels) project.channelLabels = channelLabels;
   const bankLabels = normalizeLabels(raw.bankLabels, UNIVERSE_SIZE / 32);
   if (bankLabels) project.bankLabels = bankLabels;
+  const fixtures = normalizeFixtures(raw.fixtures);
+  if (fixtures) project.fixtures = fixtures;
   return project;
+}
+
+/** RGB フィクスチャ配列を正規化する。r/g/b が範囲内の要素のみ採用、空なら undefined。 */
+function normalizeFixtures(raw: unknown): RgbFixture[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: RgbFixture[] = [];
+  for (const item of raw) {
+    if (!isObject(item)) continue;
+    const r = channelOrNull(item.r);
+    const g = channelOrNull(item.g);
+    const b = channelOrNull(item.b);
+    if (r === null || g === null || b === null) continue;
+    const fx: RgbFixture = { id: str(item.id, fallbackId()), r, g, b };
+    if (typeof item.name === 'string' && item.name.trim()) fx.name = item.name.trim();
+    out.push(fx);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** ch を整数かつ 0..UNIVERSE_SIZE-1 に検証する（外れたら null）。 */
+function channelOrNull(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= UNIVERSE_SIZE) return null;
+  return v;
 }
 
 /** index->文字列のラベル辞書を正規化する。範囲外/空は捨て、空なら undefined。 */
@@ -108,17 +138,30 @@ function normalizeActions(raw: unknown): ActionButton[] {
   return raw.filter(isObject) as unknown as ActionButton[];
 }
 
-function normalizeShows(raw: unknown): Show[] {
+/** フォルダ配列を正規化する（id/name のみ）。 */
+function normalizeFolders(raw: unknown): Folder[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(isObject).map(normalizeShow);
+  return (raw.filter(isObject) as Record<string, unknown>[]).map((f) => ({
+    id: str(f.id, fallbackId()),
+    name: str(f.name, 'フォルダ'),
+  }));
 }
 
-function normalizeShow(raw: Record<string, unknown>): Show {
+function normalizeShows(raw: unknown, validFolderIds: Set<string>): Show[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isObject).map((s) => normalizeShow(s, validFolderIds));
+}
+
+function normalizeShow(raw: Record<string, unknown>, validFolderIds: Set<string>): Show {
   const show: Show = {
     id: str(raw.id, fallbackId()),
     name: str(raw.name, 'Show'),
     sequence: normalizeSequence(raw),
   };
+  // 実在するフォルダを参照しているときのみ folderId を保持（ダングリング除去）。
+  if (typeof raw.folderId === 'string' && validFolderIds.has(raw.folderId)) {
+    show.folderId = raw.folderId;
+  }
   if (isObject(raw.audio) && typeof raw.audio.filePath === 'string') {
     show.audio = { filePath: raw.audio.filePath };
   }
@@ -181,6 +224,7 @@ function normalizeCue(raw: Record<string, unknown>): Cue {
   };
   if (raw.fadeOutMs !== undefined) cue.fadeOutMs = Math.max(0, num(raw.fadeOutMs, 0));
   if (raw.delayMs !== undefined) cue.delayMs = Math.max(0, num(raw.delayMs, 0));
+  if (raw.followMs !== undefined) cue.followMs = Math.max(0, num(raw.followMs, 0));
   return cue;
 }
 

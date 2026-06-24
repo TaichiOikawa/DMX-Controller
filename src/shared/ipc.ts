@@ -28,6 +28,13 @@ export const Cmd = {
   setBlackout: 'cmd:setBlackout',
   setChannelLabel: 'cmd:setChannelLabel',
   setBankLabel: 'cmd:setBankLabel',
+  addFixture: 'cmd:addFixture',
+  updateFixture: 'cmd:updateFixture',
+  deleteFixture: 'cmd:deleteFixture',
+  /** RGB カラーピッカーを別ウィンドウで開く（main がウィンドウを生成）。 */
+  openColorPicker: 'cmd:openColorPicker',
+  /** renderer 専用 UI 状態（タブ・パネル開閉）を main へ同期し、メニューのチェック反映に使う。 */
+  uiState: 'cmd:uiState',
 
   // --- 再生 ---
   loadShow: 'cmd:loadShow',
@@ -35,6 +42,7 @@ export const Cmd = {
   go: 'cmd:go',
   goBack: 'cmd:goBack',
   goTo: 'cmd:goTo',
+  deselectCue: 'cmd:deselectCue',
   holdFade: 'cmd:holdFade',
 
   // --- Undo / Redo ---
@@ -43,10 +51,17 @@ export const Cmd = {
 
   // --- オーサリング（Show / マスター列 / GROUP / Cue 編集） ---
   newShow: 'cmd:newShow',
+  renameShow: 'cmd:renameShow',
+  deleteShow: 'cmd:deleteShow',
+  addFolder: 'cmd:addFolder',
+  renameFolder: 'cmd:renameFolder',
+  deleteFolder: 'cmd:deleteFolder',
+  setShowFolder: 'cmd:setShowFolder',
   recordCue: 'cmd:recordCue',
   addGroupEntry: 'cmd:addGroupEntry',
   setGroupLoop: 'cmd:setGroupLoop',
   updateCue: 'cmd:updateCue',
+  deleteCueChannel: 'cmd:deleteCueChannel',
   deleteEntry: 'cmd:deleteEntry',
   deleteCueFromGroup: 'cmd:deleteCueFromGroup',
   moveEntry: 'cmd:moveEntry',
@@ -73,6 +88,7 @@ export const Cmd = {
   addTimelinePoint: 'cmd:addTimelinePoint',
   deleteTimelinePoint: 'cmd:deleteTimelinePoint',
   updateTimelinePoint: 'cmd:updateTimelinePoint',
+  setTimelinePointCue: 'cmd:setTimelinePointCue',
   pickShowAudio: 'cmd:pickShowAudio',
   clearShowAudio: 'cmd:clearShowAudio',
   readAudioFile: 'cmd:readAudioFile',
@@ -80,6 +96,7 @@ export const Cmd = {
   // --- 永続化 ---
   newProject: 'cmd:newProject',
   saveProject: 'cmd:saveProject',
+  saveProjectOverwrite: 'cmd:saveProjectOverwrite',
   loadProject: 'cmd:loadProject',
 } as const;
 
@@ -93,7 +110,43 @@ export const Evt = {
   project: 'evt:project',
   /** 未保存状態（dirty）と現在のファイルパス */
   dirty: 'evt:dirty',
+  /** アプリメニューからのアクション（main → renderer） */
+  menuAction: 'evt:menuAction',
 } as const;
+
+/**
+ * アプリメニュー項目に対応するアクション識別子（main → renderer）。
+ * renderer 側で既存ロジック（window.dmx / store / 確認ダイアログ）へディスパッチする。
+ */
+export type MenuAction =
+  // ファイル
+  | 'file:new'
+  | 'file:open'
+  | 'file:save'
+  | 'file:saveAs'
+  // 編集
+  | 'edit:undo'
+  | 'edit:redo'
+  | 'edit:prefs'
+  // 表示
+  | 'view:tabCue'
+  | 'view:tabTimeline'
+  | 'view:toggleSidebar'
+  | 'view:toggleFaders'
+  // ショー
+  | 'show:go'
+  | 'show:goBack'
+  | 'show:modeEdit'
+  | 'show:modeShow'
+  | 'show:blackoutToggle'
+  | 'show:gmFull';
+
+/** renderer → main の UI 状態同期ペイロード（メニューのチェック反映用）。 */
+export interface UiState {
+  tab: 'cue' | 'timeline';
+  sidebarCollapsed: boolean;
+  fadersCollapsed: boolean;
+}
 
 /** 未保存状態の通知ペイロード。 */
 export interface DirtyState {
@@ -135,6 +188,25 @@ export interface CuePatch {
   fadeInMs?: number;
   fadeOutMs?: number;
   delayMs?: number;
+  /** 自動送り Delay（ms）。null で解除（自動送りオフ＝手動 GO 待ち）。 */
+  followMs?: number | null;
+}
+
+/** addFixture で渡す初期値（id はエンジンが採番）。 */
+export interface FixtureInit {
+  name?: string;
+  /** R/G/B チャンネル index 0-511 */
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** updateFixture で変更可能なフィールド。 */
+export interface FixturePatch {
+  name?: string;
+  r?: number;
+  g?: number;
+  b?: number;
 }
 
 /** updateAction で変更可能なフィールド。 */
@@ -198,6 +270,16 @@ export interface DmxBridge {
   setBlackout(on: boolean): void;
   setChannelLabel(ch: number, label: string): void;
   setBankLabel(bank: number, label: string): void;
+  /** RGB フィクスチャを追加する（id はエンジンが採番）。 */
+  addFixture(init: FixtureInit): void;
+  /** RGB フィクスチャを更新する（指定フィールドのみ）。 */
+  updateFixture(id: string, patch: FixturePatch): void;
+  /** RGB フィクスチャを削除する。 */
+  deleteFixture(id: string): void;
+  /** RGB カラーピッカーを別ウィンドウで開く（既に開いていれば前面化）。 */
+  openColorPicker(): void;
+  /** renderer の UI 状態（タブ・パネル開閉）を main へ通知する。 */
+  notifyUiState(state: UiState): void;
 
   // 再生
   loadShow(showId: string): void;
@@ -205,16 +287,32 @@ export interface DmxBridge {
   go(): void;
   goBack(): void;
   goTo(mainIndex: number, subIndex: number): void;
+  /** CUE 選択を解除し、プレイヘッドを未 GO（-1）へ戻す。 */
+  deselectCue(): void;
   holdFade(): void;
   undo(): void;
   redo(): void;
 
   // オーサリング
   newShow(name?: string): void;
+  /** Show 名を変更（空文字は既定名へ）。 */
+  renameShow(showId: string, name: string): void;
+  /** Show を削除する（読込中なら解放してから削除）。 */
+  deleteShow(showId: string): void;
+  /** フォルダを追加する。 */
+  addFolder(name?: string): void;
+  /** フォルダ名を変更する（空文字は無視）。 */
+  renameFolder(folderId: string, name: string): void;
+  /** フォルダを削除する（中の Show はルートへ移動）。 */
+  deleteFolder(folderId: string): void;
+  /** Show の所属フォルダを設定/解除する（null でルートへ）。 */
+  setShowFolder(showId: string, folderId: string | null): void;
   recordCue(showId: string, opts?: CaptureCueOptions): void;
   addGroupEntry(showId: string, name?: string): void;
   setGroupLoop(groupId: string, loop: boolean): void;
   updateCue(cueId: string, patch: CuePatch): void;
+  /** 選択中（current）CUE からこの ch を削除する（cue.values からキー削除）。 */
+  deleteCueChannel(cueId: string, ch: number): void;
   deleteEntry(showId: string, entryId: string): void;
   deleteCueFromGroup(groupId: string, cueId: string): void;
   moveEntry(showId: string, entryId: string, toIndex: number): void;
@@ -238,9 +336,11 @@ export interface DmxBridge {
   reportAudioPlayhead(ms: number): void;
   timelineSeek(ms: number): void;
   timelineStop(): void;
-  addTimelinePoint(showId: string, timecodeMs: number): void;
+  addTimelinePoint(showId: string, timecodeMs: number, cueId?: string): void;
   deleteTimelinePoint(showId: string, index: number): void;
   updateTimelinePoint(showId: string, index: number, timecodeMs: number): void;
+  /** GO ポイントに紐づく CUE を設定/解除（undefined で順送りに戻す）。 */
+  setTimelinePointCue(showId: string, index: number, cueId: string | undefined): void;
   /** 音声ファイルをダイアログで選び、Show に絶対パスを設定。 */
   pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }>;
   /** Show の音声を解除。 */
@@ -251,6 +351,8 @@ export interface DmxBridge {
   // 永続化（main が結果を project イベントで返す）
   newProject(): void;
   saveProject(): Promise<{ ok: boolean; path?: string; error?: string }>;
+  /** 既存ファイルへ確認なしで上書き保存。未保存（パス未確定）なら保存ダイアログを開く。 */
+  saveProjectOverwrite(): Promise<{ ok: boolean; path?: string; error?: string }>;
   loadProject(): Promise<{ ok: boolean; path?: string; error?: string }>;
 
   // 購読（解除関数を返す）
@@ -258,6 +360,8 @@ export interface DmxBridge {
   onEngineState(cb: (state: EngineStateSnapshot) => void): () => void;
   onProject(cb: (project: Project) => void): () => void;
   onDirty(cb: (state: DirtyState) => void): () => void;
+  /** アプリメニューからのアクションを購読する（解除関数を返す）。 */
+  onMenuAction(cb: (action: MenuAction) => void): () => void;
 }
 
 /** Cue 単体を export 型として再公開（preload/renderer の利便のため）。 */

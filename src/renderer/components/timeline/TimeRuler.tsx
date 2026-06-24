@@ -4,7 +4,7 @@
  */
 
 import { useRef } from 'react';
-import { timeToPx, formatTimecode, type TimeScale } from './utils';
+import { formatTimecode, timeToPx, type TimeScale } from './utils';
 
 interface StepConfig {
   majorStep: number;

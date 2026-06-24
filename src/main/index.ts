@@ -3,10 +3,12 @@
  * BrowserWindow のライフサイクル管理と EngineHost の起動を担う。
  */
 
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { EngineHost } from './engineHost';
+import { buildAppMenu, defaultMenuState, type MenuState } from './menu';
+import { Cmd } from '../shared/ipc';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,9 +16,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
 let mainWindow: BrowserWindow | null = null;
+/** RGB カラーピッカーの別ウィンドウ（未表示は null）。 */
+let pickerWindow: BrowserWindow | null = null;
 let host: EngineHost | null = null;
 /** 終了確認を通過した（または不要）ことを示すフラグ。再入防止。 */
 let allowClose = false;
+
+/** メニューの動的状態。engine state と renderer の UI 状態から更新し、変化時に再構築する。 */
+let menuState: MenuState = { ...defaultMenuState };
+
+/** 現在の menuState でメニューを構築（再構築）する。 */
+function refreshMenu(): void {
+  buildAppMenu(mainWindow, menuState);
+}
 
 /** 未保存があれば終了前に確認ダイアログを出す。保存/破棄/キャンセルを処理する。 */
 async function confirmCloseWhenDirty(): Promise<void> {
@@ -71,16 +83,94 @@ function createWindow(): void {
   });
 
   mainWindow.on('closed', () => {
+    // メインを閉じたら付随するピッカーも閉じる。
+    pickerWindow?.close();
     mainWindow = null;
+  });
+}
+
+/** RGB カラーピッカーを別ウィンドウで開く（既に開いていれば前面化）。 */
+function openColorPickerWindow(): void {
+  if (pickerWindow) {
+    if (pickerWindow.isMinimized()) pickerWindow.restore();
+    pickerWindow.focus();
+    return;
+  }
+
+  pickerWindow = new BrowserWindow({
+    width: 360,
+    height: 460,
+    minWidth: 260,
+    minHeight: 200,
+    backgroundColor: '#0a0a0a',
+    title: 'RGB Picker',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  // メインのアプリメニューはこのウィンドウには出さない（操作はメイン側）。
+  pickerWindow.setMenu(null);
+
+  if (VITE_DEV_SERVER_URL) {
+    pickerWindow.loadURL(`${VITE_DEV_SERVER_URL}#picker`);
+  } else {
+    pickerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'picker' });
+  }
+
+  const wc = pickerWindow.webContents;
+  wc.on('did-finish-load', () => host?.addClient(wc));
+  pickerWindow.on('closed', () => {
+    host?.removeClient(wc);
+    pickerWindow = null;
   });
 }
 
 app.whenReady().then(() => {
   host = new EngineHost();
   host.registerIpc();
+
+  // engine state（モード/BLACKOUT/Undo・Redo 可否）の変化でメニューを再構築。
+  host.setEngineStateListener((state) => {
+    menuState = {
+      ...menuState,
+      mode: state.mode,
+      blackout: state.blackout,
+      canUndo: state.canUndo,
+      canRedo: state.canRedo,
+    };
+    refreshMenu();
+  });
+  // renderer の UI 状態（タブ/パネル開閉）の変化でメニューを再構築。
+  host.setUiStateListener((ui) => {
+    menuState = {
+      ...menuState,
+      tab: ui.tab,
+      sidebarCollapsed: ui.sidebarCollapsed,
+      fadersCollapsed: ui.fadersCollapsed,
+    };
+    refreshMenu();
+  });
+
+  // RGB カラーピッカーを別ウィンドウで開く要求（renderer → main）。
+  ipcMain.on(Cmd.openColorPicker, () => openColorPickerWindow());
+
   host.start();
 
+  // 起動時点の engine state を初期メニュー状態へ反映してから構築する。
+  const initial = host.getEngineState();
+  menuState = {
+    ...menuState,
+    mode: initial.mode,
+    blackout: initial.blackout,
+    canUndo: initial.canUndo,
+    canRedo: initial.canRedo,
+  };
+
   createWindow();
+  refreshMenu();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

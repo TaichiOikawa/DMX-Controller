@@ -75,6 +75,7 @@ describe('capture / release (§6.1/6.2)', () => {
   it('recordCue saves the captured (programmer) channels including zeros', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
+    engine.loadShow('show1'); // capture は show 読込中のみ（解放中は概念なし）
     engine.setFader(5, 0); // captured at 0
     engine.setFader(6, 100);
     engine.recordCue('show1');
@@ -111,6 +112,36 @@ describe('channel / bank labels', () => {
   });
 });
 
+describe('RGB fixtures', () => {
+  it('adds, updates, deletes, and undoes fixtures', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+
+    engine.addFixture({ name: 'Par L', r: 0, g: 1, b: 2 });
+    const fixtures = engine.getProject().fixtures;
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures?.[0]).toMatchObject({ name: 'Par L', r: 0, g: 1, b: 2 });
+    const id = fixtures![0].id;
+
+    engine.updateFixture(id, { g: 5, name: 'Par R' });
+    expect(engine.getProject().fixtures?.[0]).toMatchObject({ name: 'Par R', r: 0, g: 5, b: 2 });
+
+    engine.deleteFixture(id);
+    expect(engine.getProject().fixtures).toBeUndefined();
+
+    engine.undo(); // 削除を取り消す
+    expect(engine.getProject().fixtures).toHaveLength(1);
+  });
+
+  it('is blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setMode('show');
+    engine.addFixture({ r: 0, g: 1, b: 2 });
+    expect(engine.getProject().fixtures).toBeUndefined();
+  });
+});
+
 describe('holdFade', () => {
   it('freezes the running fade at its current value', () => {
     const { engine, clock } = makeEngine();
@@ -136,6 +167,7 @@ describe('undo / redo', () => {
   it('reverts and reapplies a recordCue', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
+    engine.loadShow('show1');
     expect(engine.getState().canUndo).toBe(false);
 
     engine.setFader(0, 100);
@@ -195,6 +227,168 @@ describe('updateCue name / lyrics', () => {
       expect(entry.cue.name).toBe('サビ赤');
       expect(entry.cue.lyrics).toBe('君の名を呼ぶ');
     }
+  });
+});
+
+describe('renameShow', () => {
+  it('renames a show, falls back to a default for blank, and undoes', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    expect(engine.getProject().shows[0].name).toBe('Show 1');
+
+    engine.renameShow('show1', '本番A');
+    expect(engine.getProject().shows[0].name).toBe('本番A');
+
+    engine.renameShow('show1', '   '); // 空 -> 既定名へ
+    expect(engine.getProject().shows[0].name).toBe('Show 1');
+
+    engine.undo(); // 既定名化を取り消す
+    expect(engine.getProject().shows[0].name).toBe('本番A');
+  });
+
+  it('is blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setMode('show');
+    engine.renameShow('show1', 'nope');
+    expect(engine.getProject().shows[0].name).toBe('Show 1');
+  });
+});
+
+describe('deleteCueChannel', () => {
+  it('removes a channel from the current cue and drops it live; undo restores', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200, 1: 100 }))]));
+    engine.loadShow('show1');
+    engine.go(); // current = c1
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(200);
+
+    engine.deleteCueChannel('c1', 0);
+    engine.tick(0);
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.values).toEqual({ 1: 100 });
+    expect(engine.getOutput()[0]).toBe(0); // 削除 ch は 0 へフォールバック
+    expect(engine.getOutput()[1]).toBe(100); // 他 ch は不変
+
+    engine.undo();
+    const e2 = engine.getProject().shows[0].sequence[0];
+    if (e2.kind === 'cue') expect(e2.cue.values).toEqual({ 0: 200, 1: 100 });
+  });
+
+  it('is a no-op for an absent channel and blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
+    engine.deleteCueChannel('c1', 5); // 存在しない ch -> 何もしない
+    expect(engine.getState().canUndo).toBe(false);
+
+    engine.setMode('show');
+    engine.deleteCueChannel('c1', 0); // show モードは編集不可
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.values).toEqual({ 0: 200 });
+  });
+});
+
+describe('GROUP auto-follow (Delay)', () => {
+  function child(id: string, v: number, followMs?: number): Cue {
+    const c: Cue = { id, values: { 0: v }, fadeInMs: 0 };
+    if (followMs !== undefined) c.followMs = followMs;
+    return c;
+  }
+  function groupEntry(id: string, cues: Cue[], loop = false): SequenceEntry {
+    return { kind: 'group', group: { id, name: id, cues, loop } };
+  }
+
+  it('auto-advances through group children by followMs in show mode', () => {
+    const { engine, clock } = makeEngine();
+    engine.loadProject(
+      projectWithSequence([
+        groupEntry('g', [child('c1', 10, 1000), child('c2', 20, 1000), child('c3', 30)]),
+      ]),
+    );
+    engine.loadShow('show1');
+    engine.setMode('show');
+    clock.now = 0;
+    engine.go(); // GROUP に入る -> c1 (sub 0)
+    engine.tick(0);
+    expect(engine.getState().playback?.subIndex).toBe(0);
+    expect(engine.getOutput()[0]).toBe(10);
+
+    clock.now = 1000;
+    engine.tick(1000); // c1 の followMs 経過 -> c2 へ自動送り
+    expect(engine.getState().playback?.subIndex).toBe(1);
+    expect(engine.getOutput()[0]).toBe(20);
+
+    clock.now = 2000;
+    engine.tick(2000); // c2 -> c3
+    expect(engine.getState().playback?.subIndex).toBe(2);
+    expect(engine.getOutput()[0]).toBe(30);
+
+    clock.now = 9000;
+    engine.tick(9000); // c3 は followMs 無し -> 末尾で停止
+    expect(engine.getState().playback?.subIndex).toBe(2);
+  });
+
+  it('does not auto-advance in edit mode', () => {
+    const { engine, clock } = makeEngine();
+    engine.loadProject(projectWithSequence([groupEntry('g', [child('c1', 10, 500), child('c2', 20)])]));
+    engine.loadShow('show1'); // 既定 edit モード
+    clock.now = 0;
+    engine.go();
+    engine.tick(0);
+    clock.now = 2000;
+    engine.tick(2000);
+    expect(engine.getState().playback?.subIndex).toBe(0); // 進まない
+  });
+
+  it('loops back to the first child at the end when loop is on', () => {
+    const { engine, clock } = makeEngine();
+    engine.loadProject(
+      projectWithSequence([groupEntry('g', [child('c1', 10, 1000), child('c2', 20, 1000)], true)]),
+    );
+    engine.loadShow('show1');
+    engine.setMode('show');
+    clock.now = 0;
+    engine.go();
+    engine.tick(0);
+
+    clock.now = 1000;
+    engine.tick(1000); // c1 -> c2
+    expect(engine.getState().playback?.subIndex).toBe(1);
+
+    clock.now = 2000;
+    engine.tick(2000); // c2 末尾 & loop -> c1 へ戻る
+    expect(engine.getState().playback?.subIndex).toBe(0);
+    expect(engine.getOutput()[0]).toBe(10);
+  });
+
+  it('updateCue sets and clears followMs', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([groupEntry('g', [child('c1', 10)])]));
+    engine.updateCue('c1', { followMs: 1500 });
+    let g = engine.getProject().shows[0].sequence[0];
+    if (g.kind === 'group') expect(g.group.cues[0].followMs).toBe(1500);
+
+    engine.updateCue('c1', { followMs: null }); // OFF
+    g = engine.getProject().shows[0].sequence[0];
+    if (g.kind === 'group') expect(g.group.cues[0].followMs).toBeUndefined();
+  });
+});
+
+describe('deselectCue', () => {
+  it('returns the playhead to un-started and drops show output', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
+    engine.loadShow('show1');
+    engine.go();
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(200);
+    expect(engine.getState().playback?.mainIndex).toBe(0);
+
+    engine.deselectCue();
+    engine.tick(0);
+    expect(engine.getState().playback?.mainIndex).toBe(-1); // 未 GO へ
+    expect(engine.getOutput()[0]).toBe(0); // show 層は非アクティブ
   });
 });
 
@@ -262,6 +456,49 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
     engine.reportAudioPlayhead(2500); // cross point 1 -> GO -> cue1
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(20);
+  });
+
+  it('jumps to a linked cue (goTo) instead of sequential GO', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([
+      cueEntry(cue('c0', { 0: 10 })),
+      cueEntry(cue('c1', { 0: 20 })),
+      cueEntry(cue('c2', { 0: 30 })),
+    ]);
+    // 1点目で c2 へ直接頭出し（順送りなら c0 のはず）。
+    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go', cueId: 'c2' }] };
+    engine.loadProject(p);
+    engine.loadShow('show1');
+
+    engine.reportAudioPlayhead(1000); // cross -> goTo c2
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(30);
+    expect(engine.getState().playback?.mainIndex).toBe(2);
+  });
+
+  it('falls back to sequential GO when the linked cue was deleted', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
+    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go', cueId: 'missing' }] };
+    engine.loadProject(p);
+    engine.loadShow('show1');
+
+    engine.reportAudioPlayhead(1000); // cueId 不在 -> 順送り go() -> c0
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(10);
+  });
+
+  it('setTimelinePointCue links and unlinks a point', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
+    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go' }] };
+    engine.loadProject(p);
+
+    engine.setTimelinePointCue('show1', 0, 'c0');
+    expect(engine.getProject().shows[0].timeline!.points[0].cueId).toBe('c0');
+
+    engine.setTimelinePointCue('show1', 0, undefined);
+    expect(engine.getProject().shows[0].timeline!.points[0].cueId).toBeUndefined();
   });
 
   it('updateTimelinePoint moves a point and keeps points sorted', () => {

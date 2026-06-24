@@ -3,6 +3,45 @@
  * リファレンス（DMX-TimelineController）の timeline/utils.ts を ms 専用に簡素化して移植。
  */
 
+import type { SequenceEntry } from '../../../shared/types';
+
+/** CUE ラベルの表示モード。'lyrics'=歌詞優先 / 'name'=CUE 名優先。 */
+export type CueLabelMode = 'lyrics' | 'name';
+
+/** GO ポイントに紐づける CUE 候補。番号(main.sub)と表示ラベル付き。 */
+export interface CueOption {
+  id: string;
+  /** "1" / "2.1" 形式の番号ラベル。 */
+  no: string;
+  /** 表示ラベル（モードに応じて歌詞 or CUE 名を優先）。 */
+  label: string;
+}
+
+/**
+ * CUE の表示ラベル。モードに応じて優先順を入れ替え、優先側が空なら他方へフォールバック。
+ * どちらも無ければ 'Cue'。
+ */
+function cueLabel(cue: { name?: string; lyrics?: string }, mode: CueLabelMode): string {
+  const name = cue.name?.trim();
+  const lyrics = cue.lyrics?.trim();
+  return (mode === 'lyrics' ? lyrics || name : name || lyrics) || 'Cue';
+}
+
+/** マスター列を走査し、選択肢用の CUE 一覧（番号＋ラベル）を返す。 */
+export function cueOptions(seq: readonly SequenceEntry[], mode: CueLabelMode): CueOption[] {
+  const out: CueOption[] = [];
+  seq.forEach((entry, m) => {
+    if (entry.kind === 'cue') {
+      out.push({ id: entry.cue.id, no: `${m + 1}`, label: cueLabel(entry.cue, mode) });
+    } else {
+      entry.group.cues.forEach((c, j) => {
+        out.push({ id: c.id, no: `${m + 1}.${j + 1}`, label: cueLabel(c, mode) });
+      });
+    }
+  });
+  return out;
+}
+
 /** ズーム前の基準スケール（1ms あたりの px）。zoom と掛け合わせて使う。 */
 export const BASE_PX_PER_MS = 0.1;
 

@@ -15,7 +15,9 @@ import {
   createAction,
   createDefaultProject,
   createCueEntry,
+  createFolder,
   createGroupEntry,
+  createRgbFixture,
   createShowRuntime,
   genId,
   type ActionRuntime,
@@ -27,6 +29,7 @@ import {
   type Project,
   type SequenceEntry,
   type Show,
+  type TimelinePoint,
 } from '../shared/types';
 import { encodeArtDmx, nextSequence } from './artnet';
 import { Clock } from './clock';
@@ -39,7 +42,9 @@ import {
   currentTarget,
   flattenCues,
   footprintOf,
+  nextInGroup,
   nextPosition,
+  positionOfCue,
   prevPosition,
   startFade,
   type Position,
@@ -52,6 +57,8 @@ import type {
   CaptureCueOptions,
   CuePatch,
   EngineStateSnapshot,
+  FixtureInit,
+  FixturePatch,
 } from '../shared/ipc';
 
 export interface EngineOptions {
@@ -230,6 +237,8 @@ export class Engine {
   /** 操作モードを切り替える（'edit' / 'show'）。 */
   setMode(mode: EngineMode): void {
     this.runtime.mode = mode;
+    // SHOW へ切替時は自動送りタイマーを今から測り直す（EDIT 中の古い予定で即発火しないように）。
+    if (mode === 'show') this.scheduleFollow(this.nowFn());
     this.emitState();
   }
 
@@ -261,7 +270,8 @@ export class Engine {
     this.runtime.faderLive[ch] = v;
 
     const show = this.runtime.show;
-    const controlled = show !== null && show.mainIndex >= 0 && show.controlled[ch];
+    if (show === null) return; // 解放中: フェーダー直接出力。capture 概念を持たない
+    const controlled = show.mainIndex >= 0 && show.controlled[ch];
     if (this.runtime.mode === 'edit' && controlled) {
       this.editCurrentCue(ch, v);
       this.runtime.captured[ch] = false;
@@ -340,6 +350,57 @@ export class Engine {
     this.notifyProject();
   }
 
+  /** ch を 0..UNIVERSE_SIZE-1 へ丸めて返す（非数は null）。 */
+  private clampChannel(v: number): number | null {
+    if (!Number.isFinite(v)) return null;
+    return Math.max(0, Math.min(UNIVERSE_SIZE - 1, Math.round(v)));
+  }
+
+  /** RGB フィクスチャを追加（id は採番）。 */
+  addFixture(init: FixtureInit): void {
+    if (!this.editable) return;
+    const r = this.clampChannel(init.r);
+    const g = this.clampChannel(init.g);
+    const b = this.clampChannel(init.b);
+    if (r === null || g === null || b === null) return;
+    this.pushUndo();
+    this.project.fixtures ??= [];
+    this.project.fixtures.push(createRgbFixture(r, g, b, init.name?.trim() || undefined));
+    this.notifyProject();
+  }
+
+  /** RGB フィクスチャを更新（指定フィールドのみ・範囲外 ch は無視）。 */
+  updateFixture(id: string, patch: FixturePatch): void {
+    if (!this.editable) return;
+    const fx = this.project.fixtures?.find((f) => f.id === id);
+    if (!fx) return;
+    this.pushUndo();
+    if (patch.name !== undefined) {
+      const t = patch.name.trim();
+      if (t) fx.name = t;
+      else delete fx.name;
+    }
+    for (const key of ['r', 'g', 'b'] as const) {
+      const v = patch[key];
+      if (v === undefined) continue;
+      const ch = this.clampChannel(v);
+      if (ch !== null) fx[key] = ch;
+    }
+    this.notifyProject();
+  }
+
+  /** RGB フィクスチャを削除（空になれば fixtures フィールド自体を省く）。 */
+  deleteFixture(id: string): void {
+    if (!this.editable) return;
+    if (!this.project.fixtures) return;
+    const next = this.project.fixtures.filter((f) => f.id !== id);
+    if (next.length === this.project.fixtures.length) return;
+    this.pushUndo();
+    if (next.length > 0) this.project.fixtures = next;
+    else delete this.project.fixtures;
+    this.notifyProject();
+  }
+
   private applyArtnet(settings: ArtnetSettings): void {
     const rateChanged = settings.refreshRateHz !== this.artnet.refreshRateHz;
     this.artnet = { ...settings };
@@ -369,9 +430,14 @@ export class Engine {
   }
 
   unloadShow(): void {
+    // 解放前の合成出力（グランドマスター適用前）をフェーダーへ取り込み、出力ジャンプを防ぐ。
+    // resolveFrame は ch ごとに独立して書き込むため、出力先に faderLive を直接渡せる。
+    resolveFrame(contextFromRuntime(this.runtime), this.runtime.faderLive);
+    this.runtime.captured.fill(false); // 解放中は capture 概念を持たない
     this.activeShow = null;
     this.runtime.activeShowId = null;
     this.runtime.show = null;
+    this.notifyProject(); // faderLive→project.faders をレンダラへ反映（faders 同期）
     this.emitState();
   }
 
@@ -418,6 +484,21 @@ export class Engine {
     this.emitState();
   }
 
+  /**
+   * CUE 選択を解除し、プレイヘッドを未 GO（-1）の初期状態へ戻す。
+   * show 層は非アクティブになり、出力はプログラマー/0 に戻る（頭出し前の状態）。
+   */
+  deselectCue(): void {
+    const rt = this.runtime.show;
+    if (!rt) return;
+    rt.mainIndex = -1;
+    rt.subIndex = 0;
+    rt.fade = null;
+    rt.followAtMs = null;
+    rt.tracked.fill(0);
+    this.emitState();
+  }
+
   private playPosition(pos: Position, now: number): void {
     const rt = this.runtime.show;
     const show = this.activeShow;
@@ -428,10 +509,54 @@ export class Engine {
     startFade(rt, target, now, cue.fadeInMs, cue.delayMs ?? 0, cue.fadeOutMs ?? cue.fadeInMs);
     rt.mainIndex = pos.main;
     rt.subIndex = pos.sub;
+    this.scheduleFollow(now);
     // §6.2: 新 cue が操作対象に含む ch のキャプチャを解除（cue が引き継ぐ）。
     for (const k of Object.keys(cue.values)) {
       const ch = Number(k);
       if (ch >= 0 && ch < UNIVERSE_SIZE) this.runtime.captured[ch] = false;
+    }
+  }
+
+  /**
+   * 現在位置が GROUP 子 CUE で followMs を持ち、かつ次位置があるとき、
+   * now+followMs を自動送り発火時刻に設定する。それ以外は解除（null）。
+   */
+  private scheduleFollow(now: number): void {
+    const rt = this.runtime.show;
+    const show = this.activeShow;
+    if (!rt || !show) {
+      if (rt) rt.followAtMs = null;
+      return;
+    }
+    const entry = show.sequence[rt.mainIndex];
+    let at: number | null = null;
+    if (entry?.kind === 'group') {
+      const cue = entry.group.cues[rt.subIndex];
+      if (
+        cue?.followMs !== undefined &&
+        nextInGroup(show.sequence, rt.mainIndex, rt.subIndex) !== null
+      ) {
+        at = now + Math.max(0, cue.followMs);
+      }
+    }
+    rt.followAtMs = at;
+  }
+
+  /** GROUP 子 CUE の自動送り: SHOW モードで発火時刻に達したら次の子へ進む。 */
+  private maybeAutoAdvance(now: number): void {
+    const rt = this.runtime.show;
+    if (!rt || rt.followAtMs === null || now < rt.followAtMs) return;
+    if (this.runtime.mode !== 'show') return; // 自動再生は SHOW モードのみ（EDIT 中は編集を妨げない）
+    const show = this.activeShow;
+    if (!show) {
+      rt.followAtMs = null;
+      return;
+    }
+    const pos = nextInGroup(show.sequence, rt.mainIndex, rt.subIndex);
+    rt.followAtMs = null;
+    if (pos) {
+      this.playPosition(pos, now); // 次位置で followAtMs を再スケジュール
+      this.emitState();
     }
   }
 
@@ -442,6 +567,83 @@ export class Engine {
     this.pushUndo();
     const show = { id: genId(), name: name ?? `Show ${this.project.shows.length + 1}`, sequence: [] };
     this.project.shows.push(show);
+    this.notifyProject();
+  }
+
+  /** Show 名を変更する。空文字は既定名にフォールバック。 */
+  renameShow(showId: string, name: string): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    const next = name.trim() || `Show ${this.project.shows.indexOf(show) + 1}`;
+    if (next === show.name) return; // 変更なし
+    this.pushUndo();
+    show.name = next;
+    this.notifyProject();
+  }
+
+  /** Show を削除する。読込中（アクティブ）の Show なら先に解放してから削除する。 */
+  deleteShow(showId: string): void {
+    if (!this.editable) return;
+    const idx = this.project.shows.findIndex((s) => s.id === showId);
+    if (idx === -1) return;
+    this.pushUndo();
+    if (this.runtime.activeShowId === showId) this.unloadShow();
+    this.project.shows.splice(idx, 1);
+    this.notifyProject();
+  }
+
+  // ===== コマンド: フォルダ（Show の整理・単層） =====
+
+  /** フォルダを追加する。 */
+  addFolder(name?: string): void {
+    if (!this.editable) return;
+    this.pushUndo();
+    const folder = createFolder(name?.trim() || `フォルダ ${(this.project.folders?.length ?? 0) + 1}`);
+    this.project.folders = [...(this.project.folders ?? []), folder];
+    this.notifyProject();
+  }
+
+  /** フォルダ名を変更する。空文字は無視。 */
+  renameFolder(folderId: string, name: string): void {
+    if (!this.editable) return;
+    const folder = this.project.folders?.find((f) => f.id === folderId);
+    if (!folder) return;
+    const next = name.trim();
+    if (!next || next === folder.name) return;
+    this.pushUndo();
+    folder.name = next;
+    this.notifyProject();
+  }
+
+  /** フォルダを削除する。中の Show はルート直下へ移す（非破壊）。 */
+  deleteFolder(folderId: string): void {
+    if (!this.editable) return;
+    const folders = this.project.folders;
+    if (!folders) return;
+    const idx = folders.findIndex((f) => f.id === folderId);
+    if (idx === -1) return;
+    this.pushUndo();
+    for (const show of this.project.shows) {
+      if (show.folderId === folderId) delete show.folderId;
+    }
+    folders.splice(idx, 1);
+    if (folders.length === 0) delete this.project.folders;
+    this.notifyProject();
+  }
+
+  /** Show の所属フォルダを設定/解除する（null/未指定でルートへ）。 */
+  setShowFolder(showId: string, folderId: string | null): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    // 実在しないフォルダ指定は無視（ルート扱いにはしない）。
+    if (folderId && !this.project.folders?.some((f) => f.id === folderId)) return;
+    const next = folderId ?? undefined;
+    if (show.folderId === next) return;
+    this.pushUndo();
+    if (next) show.folderId = next;
+    else delete show.folderId;
     this.notifyProject();
   }
 
@@ -497,7 +699,41 @@ export class Engine {
     if (patch.fadeInMs !== undefined) cue.fadeInMs = Math.max(0, patch.fadeInMs);
     if (patch.fadeOutMs !== undefined) cue.fadeOutMs = Math.max(0, patch.fadeOutMs);
     if (patch.delayMs !== undefined) cue.delayMs = Math.max(0, patch.delayMs);
+    if (patch.followMs !== undefined) {
+      if (patch.followMs === null) delete cue.followMs;
+      else cue.followMs = Math.max(0, patch.followMs);
+    }
     this.notifyProject();
+  }
+
+  /**
+   * CUE からこの ch を削除する（cue.values からキー削除）。Edit 専用。
+   * アクティブ Show なら footprint(controlled) を再計算し、現在(プレイヘッド) CUE なら
+   * live 反映として ch を 0 にフォールバックする。
+   */
+  deleteCueChannel(cueId: string, ch: number): void {
+    if (!this.editable) return;
+    if (ch < 0 || ch >= UNIVERSE_SIZE) return;
+    const cue = this.findCue(cueId);
+    if (!cue || cue.values[ch] === undefined) return;
+    this.pushUndo();
+    delete cue.values[ch];
+
+    const show = this.activeShow;
+    const rt = this.runtime.show;
+    if (show && rt && flattenCues(show.sequence).includes(cue)) {
+      rt.controlled = footprintOf(flattenCues(show.sequence));
+      // 現在(プレイヘッド)の CUE なら live 反映：この ch を 0 へ落とす。
+      const current = cueAt(show.sequence, { main: rt.mainIndex, sub: rt.subIndex });
+      if (current === cue) {
+        rt.tracked[ch] = 0;
+        if (rt.fade) rt.fade.to[ch] = 0;
+        this.runtime.faderLive[ch] = 0;
+        this.runtime.captured[ch] = false;
+      }
+    }
+    this.notifyProject();
+    this.emitState();
   }
 
   /** マスター列のエントリ（CUE / GROUP）を id で削除。 */
@@ -607,6 +843,7 @@ export class Engine {
 
   addAction(name?: string): void {
     if (!this.editable) return;
+    if (this.runtime.show === null) return; // 解放中はオーサリング不可
     this.pushUndo();
     const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
     // 現在のフェーダー(captured)を最初の step として取り込む。
@@ -640,6 +877,7 @@ export class Engine {
   /** 現在のフェーダー(captured)を新しい step として追加（チェイス用）。 */
   addActionStep(actionId: string, fadeInMs = 0, holdMs = 500): void {
     if (!this.editable) return;
+    if (this.runtime.show === null) return; // 解放中はオーサリング不可
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
     this.pushUndo();
@@ -669,10 +907,17 @@ export class Engine {
 
   /** レンダラの再生位置（ms）。跨いだポイントで GO を発火。 */
   reportAudioPlayhead(ms: number): void {
-    const timeline = this.activeShow?.timeline;
-    if (timeline && this.runtime.show) {
+    const show = this.activeShow;
+    const timeline = show?.timeline;
+    if (show && timeline && this.runtime.show) {
       const crossed = pointsCrossed(timeline.points, this.lastPlayheadMs, ms);
-      for (let i = 0; i < crossed.length; i++) this.go();
+      for (const idx of crossed) {
+        const pt = timeline.points[idx];
+        // CUE 紐づけがあればその CUE へ頭出し。無効/未指定なら従来の順送り GO。
+        const pos = pt.cueId ? positionOfCue(show.sequence, pt.cueId) : null;
+        if (pos) this.goTo(pos.main, pos.sub);
+        else this.go();
+      }
     }
     this.lastPlayheadMs = ms;
   }
@@ -687,14 +932,29 @@ export class Engine {
     this.lastPlayheadMs = 0;
   }
 
-  addTimelinePoint(showId: string, timecodeMs: number): void {
+  addTimelinePoint(showId: string, timecodeMs: number, cueId?: string): void {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     this.pushUndo();
     if (!show.timeline) show.timeline = { points: [] };
-    show.timeline.points.push({ timecodeMs: Math.max(0, Math.round(timecodeMs)), type: 'go' });
+    const point: TimelinePoint = { timecodeMs: Math.max(0, Math.round(timecodeMs)), type: 'go' };
+    if (cueId) point.cueId = cueId;
+    show.timeline.points.push(point);
     show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
+    this.notifyProject();
+  }
+
+  /** GO ポイントに紐づく CUE を設定/解除する（undefined で順送りに戻す）。 */
+  setTimelinePointCue(showId: string, index: number, cueId: string | undefined): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show?.timeline) return;
+    const point = show.timeline.points[index];
+    if (!point) return;
+    this.pushUndo();
+    if (cueId) point.cueId = cueId;
+    else delete point.cueId;
     this.notifyProject();
   }
 
@@ -749,7 +1009,7 @@ export class Engine {
       const v = this.runtime.faderLive[ch];
       if (v > 0 || includeZero) values[ch] = v;
     }
-    return { id: genId(), name: opts?.name, values, fadeInMs: opts?.fadeInMs ?? 1000 };
+    return { id: genId(), name: opts?.name, values, fadeInMs: opts?.fadeInMs ?? 0 };
   }
 
   /** 構造変更後: 読込中 Show ならフットプリント再計算＋プレイヘッド補正し、Project 通知。 */
@@ -900,6 +1160,8 @@ export class Engine {
   // ===== 出力ループ =====
 
   tick(now: number): void {
+    // 自動送りを先に判定（新 cue のフェードを同 tick で反映するため）。
+    this.maybeAutoAdvance(now);
     if (this.runtime.show) applyFade(this.runtime.show, now);
     this.advanceActions(now);
 

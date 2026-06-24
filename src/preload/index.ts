@@ -15,6 +15,8 @@ import {
   type DirtyState,
   type DmxBridge,
   type EngineStateSnapshot,
+  type MenuAction,
+  type UiState,
 } from '../shared/ipc';
 import type { ArtnetSettings, Project } from '../shared/types';
 
@@ -54,6 +56,21 @@ const api: DmxBridge = {
   setBankLabel(bank, label) {
     ipcRenderer.send(Cmd.setBankLabel, bank, label);
   },
+  addFixture(init) {
+    ipcRenderer.send(Cmd.addFixture, init);
+  },
+  updateFixture(id, patch) {
+    ipcRenderer.send(Cmd.updateFixture, id, patch);
+  },
+  deleteFixture(id) {
+    ipcRenderer.send(Cmd.deleteFixture, id);
+  },
+  openColorPicker() {
+    ipcRenderer.send(Cmd.openColorPicker);
+  },
+  notifyUiState(state: UiState) {
+    ipcRenderer.send(Cmd.uiState, state);
+  },
 
   // 再生
   loadShow(showId) {
@@ -71,6 +88,9 @@ const api: DmxBridge = {
   goTo(mainIndex, subIndex) {
     ipcRenderer.send(Cmd.goTo, mainIndex, subIndex);
   },
+  deselectCue() {
+    ipcRenderer.send(Cmd.deselectCue);
+  },
   holdFade() {
     ipcRenderer.send(Cmd.holdFade);
   },
@@ -85,6 +105,24 @@ const api: DmxBridge = {
   newShow(name) {
     ipcRenderer.send(Cmd.newShow, name);
   },
+  renameShow(showId, name) {
+    ipcRenderer.send(Cmd.renameShow, showId, name);
+  },
+  deleteShow(showId) {
+    ipcRenderer.send(Cmd.deleteShow, showId);
+  },
+  addFolder(name) {
+    ipcRenderer.send(Cmd.addFolder, name);
+  },
+  renameFolder(folderId, name) {
+    ipcRenderer.send(Cmd.renameFolder, folderId, name);
+  },
+  deleteFolder(folderId) {
+    ipcRenderer.send(Cmd.deleteFolder, folderId);
+  },
+  setShowFolder(showId, folderId) {
+    ipcRenderer.send(Cmd.setShowFolder, showId, folderId);
+  },
   recordCue(showId, opts?: CaptureCueOptions) {
     ipcRenderer.send(Cmd.recordCue, showId, opts);
   },
@@ -96,6 +134,9 @@ const api: DmxBridge = {
   },
   updateCue(cueId, patch: CuePatch) {
     ipcRenderer.send(Cmd.updateCue, cueId, patch);
+  },
+  deleteCueChannel(cueId, ch) {
+    ipcRenderer.send(Cmd.deleteCueChannel, cueId, ch);
   },
   deleteEntry(showId, entryId) {
     ipcRenderer.send(Cmd.deleteEntry, showId, entryId);
@@ -154,14 +195,17 @@ const api: DmxBridge = {
   timelineStop() {
     ipcRenderer.send(Cmd.timelineStop);
   },
-  addTimelinePoint(showId, timecodeMs) {
-    ipcRenderer.send(Cmd.addTimelinePoint, showId, timecodeMs);
+  addTimelinePoint(showId, timecodeMs, cueId) {
+    ipcRenderer.send(Cmd.addTimelinePoint, showId, timecodeMs, cueId);
   },
   deleteTimelinePoint(showId, index) {
     ipcRenderer.send(Cmd.deleteTimelinePoint, showId, index);
   },
   updateTimelinePoint(showId, index, timecodeMs) {
     ipcRenderer.send(Cmd.updateTimelinePoint, showId, index, timecodeMs);
+  },
+  setTimelinePointCue(showId, index, cueId) {
+    ipcRenderer.send(Cmd.setTimelinePointCue, showId, index, cueId);
   },
   pickShowAudio(showId) {
     return ipcRenderer.invoke(Cmd.pickShowAudio, showId) as ReturnType<DmxBridge['pickShowAudio']>;
@@ -180,6 +224,11 @@ const api: DmxBridge = {
   saveProject() {
     return ipcRenderer.invoke(Cmd.saveProject) as ReturnType<DmxBridge['saveProject']>;
   },
+  saveProjectOverwrite() {
+    return ipcRenderer.invoke(
+      Cmd.saveProjectOverwrite,
+    ) as ReturnType<DmxBridge['saveProjectOverwrite']>;
+  },
   loadProject() {
     return ipcRenderer.invoke(Cmd.loadProject) as ReturnType<DmxBridge['loadProject']>;
   },
@@ -196,6 +245,9 @@ const api: DmxBridge = {
   },
   onDirty(cb) {
     return subscribe<DirtyState>(Evt.dirty, cb);
+  },
+  onMenuAction(cb) {
+    return subscribe<MenuAction>(Evt.menuAction, cb);
   },
 };
 

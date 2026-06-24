@@ -7,6 +7,7 @@
  * 各 Action は mode 変更 / ＋Step（チェイス用）/ 削除ができる。
  */
 
+import { Plus, X } from 'lucide-react';
 import type { ActionButton, ActionMode } from '../../shared/types';
 import { useDmxStore } from '../store';
 
@@ -21,6 +22,8 @@ export function ActionPanel() {
   const activeActionIds = useDmxStore((s) => s.activeActionIds);
   const capturedCount = useDmxStore((s) => s.captured.reduce((n, b) => (b ? n + 1 : n), 0));
   const editable = useDmxStore((s) => s.mode === 'edit');
+  // Show 未読込（解放中）は capture 概念が無く、Action オーサリング不可。
+  const released = useDmxStore((s) => s.activeShowId === null);
 
   const actions = project?.actions ?? [];
 
@@ -30,18 +33,22 @@ export function ActionPanel() {
         <span className="text-[11px] font-semibold text-sky-400">Action</span>
         <button
           onClick={() => window.dmx.addAction()}
-          disabled={!editable || capturedCount === 0}
-          className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
-          title="キャプチャ中のフェーダーから Action を作成"
+          disabled={!editable || released || capturedCount === 0}
+          className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
+          title={
+            released
+              ? 'Show を読み込むと作成できます'
+              : 'キャプチャ中のフェーダーから Action を作成'
+          }
         >
-          ＋Action
+          <Plus size={11} /> Action
         </button>
       </div>
 
       <div className="flex flex-1 gap-2 overflow-x-auto">
         {actions.length === 0 ? (
           <div className="flex items-center px-2 text-[11px] text-neutral-600">
-            フェーダーを動かして「＋Action」で作成
+            {released ? 'Show を読み込むと作成できます' : 'フェーダーを動かして「＋Action」で作成'}
           </div>
         ) : (
           actions.map((a) => (
@@ -50,6 +57,7 @@ export function ActionPanel() {
               action={a}
               active={activeActionIds.includes(a.id)}
               editable={editable}
+              released={released}
             />
           ))
         )}
@@ -62,10 +70,12 @@ function ActionCard({
   action,
   active,
   editable,
+  released,
 }: {
   action: ActionButton;
   active: boolean;
   editable: boolean;
+  released: boolean;
 }) {
   const hold = action.mode !== 'press-once';
 
@@ -112,10 +122,10 @@ function ActionCard({
                 if (window.confirm(`Action「${action.name ?? 'Action'}」を削除しますか？`))
                   window.dmx.deleteAction(action.id);
               }}
-              className="rounded px-1 text-[11px] text-neutral-500 hover:bg-red-900/50 hover:text-red-300"
+              className="inline-flex items-center rounded px-1 text-neutral-500 hover:bg-red-900/50 hover:text-red-300"
               title="Action 削除"
             >
-              ✕
+              <X size={12} />
             </button>
           </div>
 
@@ -123,10 +133,13 @@ function ActionCard({
             <span>{action.steps.length} step</span>
             <button
               onClick={() => window.dmx.addActionStep(action.id)}
-              className="rounded px-1 text-sky-300 hover:bg-neutral-700"
-              title="現在のキャプチャを step として追加（チェイス）"
+              disabled={released}
+              className="inline-flex items-center gap-0.5 rounded px-1 text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
+              title={
+                released ? 'Show を読み込むと追加できます' : '現在のキャプチャを step として追加（チェイス）'
+              }
             >
-              ＋Step
+              <Plus size={11} /> Step
             </button>
           </div>
         </>

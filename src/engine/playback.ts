@@ -80,6 +80,20 @@ export function cueAt(seq: readonly SequenceEntry[], pos: Position): Cue | null 
   return entry.group.cues[pos.sub] ?? null;
 }
 
+/** CUE id からマスター列内の再生位置を逆引きする（見つからなければ null）。 */
+export function positionOfCue(seq: readonly SequenceEntry[], cueId: string): Position | null {
+  for (let m = 0; m < seq.length; m++) {
+    const e = seq[m];
+    if (e.kind === 'cue') {
+      if (e.cue.id === cueId) return { main: m, sub: 0 };
+    } else {
+      const sub = e.group.cues.findIndex((c) => c.id === cueId);
+      if (sub >= 0) return { main: m, sub };
+    }
+  }
+  return null;
+}
+
 /** `from` 以降で最初に再生可能なエントリ位置（空 GROUP はスキップ）。 */
 function firstPlayable(seq: readonly SequenceEntry[], from: number): Position | null {
   for (let m = from; m < seq.length; m++) {
@@ -145,6 +159,26 @@ export function nextPosition(
   }
   // CUE / 範囲外
   return firstPlayable(seq, main + 1);
+}
+
+/**
+ * GROUP 内の自動送りの次位置。GROUP の子に居るときのみ:
+ *   - 子が残る: sub+1
+ *   - 末尾 & loop: 子先頭(sub=0)
+ *   - 末尾 & 非loop / GROUP 以外: null（自動送りしない）
+ * nextPosition と違い、末尾で GROUP を抜けて次エントリへは進まない。
+ */
+export function nextInGroup(
+  seq: readonly SequenceEntry[],
+  main: number,
+  sub: number,
+): Position | null {
+  const entry = seq[main];
+  if (entry?.kind !== 'group') return null;
+  const g = entry.group;
+  if (sub < g.cues.length - 1) return { main, sub: sub + 1 };
+  if (g.loop && g.cues.length > 0) return { main, sub: 0 };
+  return null;
 }
 
 /** delay 経過後の経過時間 elapsed から進捗 t を求める（dur<=0 は即スナップ）。 */

@@ -3,9 +3,12 @@
  * ページ切替タブでバンクを移動する。キャプチャ中 ch（プログラマー）をハイライト。
  */
 
+import { ChevronDown, ChevronRight, Palette } from 'lucide-react';
+import { useEffect } from 'react';
 import { Fader } from './Fader';
 import { InlineText } from './InlineText';
 import { BANK_COUNT, FADERS_PER_BANK, useDmxStore } from '../store';
+import { cueAt } from '../../engine/playback';
 
 export function FaderBank() {
   const bank = useDmxStore((s) => s.bank);
@@ -16,26 +19,94 @@ export function FaderBank() {
   const setFader = useDmxStore((s) => s.setFader);
   const releaseChannel = useDmxStore((s) => s.releaseChannel);
   const releaseAll = useDmxStore((s) => s.releaseAll);
+  const syncFadersToCue = useDmxStore((s) => s.syncFadersToCue);
+  const deleteCueChannel = useDmxStore((s) => s.deleteCueChannel);
+  const collapsed = useDmxStore((s) => s.fadersCollapsed);
+  const toggleCollapsed = useDmxStore((s) => s.toggleFadersCollapsed);
   const editable = useDmxStore((s) => s.mode === 'edit');
+  const project = useDmxStore((s) => s.project);
+  const activeShowId = useDmxStore((s) => s.activeShowId);
+  const playback = useDmxStore((s) => s.playback);
   const channelLabels = useDmxStore((s) => s.project?.channelLabels);
   const bankLabels = useDmxStore((s) => s.project?.bankLabels);
+
+  // 選択中（プレイヘッド位置）の CUE。EDIT モードのみ。
+  const activeShow = project?.shows.find((s) => s.id === activeShowId) ?? null;
+  const mainIndex = playback?.mainIndex ?? -1;
+  const subIndex = playback?.subIndex ?? 0;
+  const selectedCue =
+    editable && activeShow && mainIndex >= 0
+      ? cueAt(activeShow.sequence, { main: mainIndex, sub: subIndex })
+      : null;
+  const cueChannels = new Set(Object.keys(selectedCue?.values ?? {}).map(Number));
+
+  // 選択 CUE が変わったとき（内容ではなく識別子）にフェーダー位置をその CUE へ同期する。
+  useEffect(() => {
+    syncFadersToCue(selectedCue ? selectedCue.values : null);
+    // selectedCue.values の中身は依存に入れない（編集中の再同期で値が飛ぶのを防ぐ）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCue?.id, mainIndex, subIndex, editable, activeShowId]);
 
   const start = bank * FADERS_PER_BANK;
   const channels = Array.from({ length: FADERS_PER_BANK }, (_, i) => start + i);
   const capturedCount = captured.reduce((n, b) => (b ? n + 1 : n), 0);
+  // Show 未読込（解放中）は capture/release の概念を持たず、フェーダーが 1:1 で直接出力。
+  const released = activeShowId === null;
+
+  // 折りたたみ時はスリムバーのみ（高さは App 側で解放）。
+  if (collapsed) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-neutral-900/60 px-3 py-1.5 ring-1 ring-neutral-800">
+        <button
+          onClick={toggleCollapsed}
+          className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] font-semibold text-neutral-200 hover:bg-neutral-700"
+          title="フェーダーを展開"
+        >
+          <ChevronRight size={13} /> フェーダー
+        </button>
+        {released ? (
+          <span className="text-[11px] text-neutral-500">直接出力（Show 未読込）</span>
+        ) : (
+          <span className="text-[11px] text-neutral-400">
+            キャプチャ中: <span className="font-mono text-amber-300">{capturedCount}</span> ch
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <PickerButton />
+          {!released && (
+            <button
+              onClick={releaseAll}
+              disabled={capturedCount === 0}
+              className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+              title="全キャプチャを解除（値を 0 に戻す）"
+            >
+              RELEASE 全
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col gap-3">
       {/* バンク切替タブ + プログラマー状態 */}
       <div className="flex flex-wrap items-center gap-1">
+        <button
+          onClick={toggleCollapsed}
+          className="inline-flex items-center rounded bg-neutral-800 px-2 py-1 text-neutral-200 hover:bg-neutral-700"
+          title="フェーダーを折りたたむ"
+        >
+          <ChevronDown size={14} />
+        </button>
         {Array.from({ length: BANK_COUNT }, (_, b) => {
           const from = b * FADERS_PER_BANK + 1;
           const to = (b + 1) * FADERS_PER_BANK;
           const active = b === bank;
           const name = bankLabels?.[b];
-          const hasCaptured = captured
-            .slice(b * FADERS_PER_BANK, (b + 1) * FADERS_PER_BANK)
-            .some(Boolean);
+          const hasCaptured =
+            !released &&
+            captured.slice(b * FADERS_PER_BANK, (b + 1) * FADERS_PER_BANK).some(Boolean);
           return (
             <button
               key={b}
@@ -70,37 +141,66 @@ export function FaderBank() {
         )}
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-neutral-400">
-            キャプチャ中: <span className="font-mono text-amber-300">{capturedCount}</span> ch
-          </span>
-          <button
-            onClick={releaseAll}
-            disabled={capturedCount === 0}
-            className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-            title="全キャプチャを解除（値を 0 に戻す）"
-          >
-            RELEASE 全
-          </button>
+          <PickerButton />
+          {released ? (
+            <span className="text-[11px] text-neutral-500">直接出力（Show 未読込）</span>
+          ) : (
+            <>
+              <span className="text-[11px] text-neutral-400">
+                キャプチャ中: <span className="font-mono text-amber-300">{capturedCount}</span> ch
+              </span>
+              <button
+                onClick={releaseAll}
+                disabled={capturedCount === 0}
+                className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                title="全キャプチャを解除（値を 0 に戻す）"
+              >
+                RELEASE 全
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* フェーダー列 */}
       <div className="flex flex-1 gap-1 overflow-x-auto rounded-lg bg-neutral-900/60 p-3 ring-1 ring-neutral-800">
-        {channels.map((ch) => (
-          <Fader
-            key={ch}
-            ch={ch}
-            value={faders[ch]}
-            output={output[ch]}
-            captured={captured[ch]}
-            label={channelLabels?.[ch]}
-            editable={editable}
-            onChange={(v) => setFader(ch, v)}
-            onClear={() => releaseChannel(ch)}
-            onLabelChange={(label) => window.dmx.setChannelLabel(ch, label)}
-          />
-        ))}
+        {channels.map((ch) => {
+          const inSelectedCue = cueChannels.has(ch);
+          return (
+            <Fader
+              key={ch}
+              ch={ch}
+              value={faders[ch]}
+              output={output[ch]}
+              captured={!released && captured[ch]}
+              inSelectedCue={inSelectedCue}
+              released={released}
+              label={channelLabels?.[ch]}
+              editable={editable}
+              onChange={(v) => setFader(ch, v)}
+              onClear={
+                inSelectedCue && selectedCue
+                  ? () => deleteCueChannel(selectedCue.id, ch)
+                  : () => releaseChannel(ch)
+              }
+              onLabelChange={(label) => window.dmx.setChannelLabel(ch, label)}
+            />
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+/** RGB カラーピッカーを別ウィンドウで開くボタン。 */
+function PickerButton() {
+  return (
+    <button
+      onClick={() => window.dmx.openColorPicker()}
+      className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700"
+      title="RGB カラーピッカーを別ウィンドウで開く"
+    >
+      <Palette size={13} /> RGB ピッカー
+    </button>
   );
 }

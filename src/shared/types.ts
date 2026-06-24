@@ -29,6 +29,28 @@ export interface Project {
   bankLabels?: Record<number, string>;
   actions: ActionButton[];
   shows: Show[];
+  /** Show を整理するフォルダ（任意・単層）。Show.folderId が参照する。 */
+  folders?: Folder[];
+  /** RGB フィクスチャ定義（任意）。3ch を 1 色として束ねカラーピッカー入力に使う。 */
+  fixtures?: RgbFixture[];
+}
+
+// ===== RGB フィクスチャ（R/G/B 3ch を 1 色として束ねる定義） =====
+export interface RgbFixture {
+  id: string;
+  name?: string;
+  /** R チャンネル index 0-511 */
+  r: number;
+  /** G チャンネル index 0-511 */
+  g: number;
+  /** B チャンネル index 0-511 */
+  b: number;
+}
+
+// ===== Folder（Show を束ねる整理用フォルダ・単層） =====
+export interface Folder {
+  id: string;
+  name: string;
 }
 
 export interface ArtnetSettings {
@@ -54,6 +76,8 @@ export interface ProjectSettings {
 export interface Show {
   id: string;
   name: string;
+  /** 所属フォルダ id（Project.folders を参照）。未設定はルート直下。 */
+  folderId?: string;
   /**
    * マスター順序リスト。単一の GO ボタンで先頭から順送りに再生する。
    * 各エントリは CUE（単一 look）か GROUP（子 CUE を束ねた入れ子）。
@@ -93,6 +117,13 @@ export interface Cue {
   fadeOutMs?: number;
   /** フェード前のディレイ */
   delayMs?: number;
+  /**
+   * 自動送り Delay（ms）。GROUP の子 CUE のみ有効。
+   * 設定すると、SHOW モードでこの CUE を発火してから followMs 後に
+   * GROUP 内の次の子 CUE へ自動で進む（末尾は loop のときのみ先頭へ）。
+   * 省略時は自動送りせず、手動 GO 待ち。
+   */
+  followMs?: number;
 }
 
 // ===== Action ボタン =====
@@ -123,6 +154,12 @@ export interface TimelinePoint {
   timecodeMs: number;
   /** 指定すればそのグループのみ GO / 省略で全グループ一斉（§11-③） */
   groupId?: string;
+  /**
+   * 紐づく CUE の id。指定すると跨いだとき**その CUE へ goTo**（頭出し）する。
+   * 省略時は従来どおりマスター列を1つ順送り（GO）。
+   * 参照先 CUE が削除済みなら順送りにフォールバック。
+   */
+  cueId?: string;
   type: 'go';
 }
 
@@ -153,6 +190,11 @@ export interface ShowRuntime {
   tracked: number[];
   /** 進行中フェード（無ければ null）。 */
   fade: FadeState | null;
+  /**
+   * GROUP 子 CUE の自動送り発火時刻（ms・絶対 now 基準）。無ければ null。
+   * playPosition でスケジュールし、tick で now>=この値かつ SHOW モードなら次の子へ進む。
+   */
+  followAtMs: number | null;
   /**
    * 512: この Show が制御する ch（全 cue= 子含む の values キーの和集合）。
    * 非永続。loadShow 時と編集時に再計算する（§6 層3 の制御判定に使う）。
@@ -251,6 +293,16 @@ export function createShow(name = 'Show 1'): Show {
   return { id: genId(), name, sequence: [] };
 }
 
+/** 新規 Folder。 */
+export function createFolder(name = 'フォルダ'): Folder {
+  return { id: genId(), name };
+}
+
+/** 新規 RGB フィクスチャ。 */
+export function createRgbFixture(r: number, g: number, b: number, name?: string): RgbFixture {
+  return { id: genId(), name, r, g, b };
+}
+
 /** 新規 Group（空の子 CUE 列）。 */
 export function createGroup(name = 'Group'): Group {
   return { id: genId(), name, cues: [], loop: false };
@@ -273,6 +325,7 @@ export function createShowRuntime(): ShowRuntime {
     subIndex: 0,
     tracked: new Array(UNIVERSE_SIZE).fill(0),
     fade: null,
+    followAtMs: null,
     controlled: new Array(UNIVERSE_SIZE).fill(false),
   };
 }

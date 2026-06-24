@@ -9,34 +9,41 @@
  * トランスポート（再生/シーク/停止）と音声クロックはストアが所有する。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useDmxStore } from '../../store';
-import { TimeRuler } from './TimeRuler';
-import { Playhead } from './Playhead';
-import { GoMarkers } from './GoMarkers';
-import { AudioTrack } from './AudioTrack';
-import { timeToPx, formatTimecode } from './utils';
+import { Music, Pause, Play, Plus, Square, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { cueAt } from "../../../engine/playback";
+import { useDmxStore } from "../../store";
+import { AudioTrack } from "./AudioTrack";
+import { GoMarkers } from "./GoMarkers";
+import { Playhead } from "./Playhead";
+import { TimeRuler } from "./TimeRuler";
+import {
+  cueOptions,
+  formatTimecode,
+  timeToPx,
+  type CueLabelMode,
+} from "./utils";
 
 function mimeFor(path: string): string {
-  const ext = path.toLowerCase().split('.').pop();
+  const ext = path.toLowerCase().split(".").pop();
   switch (ext) {
-    case 'mp3':
-      return 'audio/mpeg';
-    case 'wav':
-      return 'audio/wav';
-    case 'ogg':
-      return 'audio/ogg';
-    case 'm4a':
-    case 'aac':
-      return 'audio/aac';
-    case 'flac':
-      return 'audio/flac';
+    case "mp3":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "ogg":
+      return "audio/ogg";
+    case "m4a":
+    case "aac":
+      return "audio/aac";
+    case "flac":
+      return "audio/flac";
     default:
-      return 'audio/*';
+      return "audio/*";
   }
 }
 
-export function TimelineView() {
+export function TimelineView({ active }: { active: boolean }) {
   const project = useDmxStore((s) => s.project);
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const transport = useDmxStore((s) => s.transport);
@@ -46,17 +53,33 @@ export function TimelineView() {
   const seek = useDmxStore((s) => s.transportSeek);
   const loadAudio = useDmxStore((s) => s.loadAudio);
   const unloadAudio = useDmxStore((s) => s.unloadAudio);
-  const editable = useDmxStore((s) => s.mode === 'edit');
+  const playback = useDmxStore((s) => s.playback);
+  const editable = useDmxStore((s) => s.mode === "edit");
 
   const [zoom, setZoom] = useState(1);
+  const [labelMode, setLabelMode] = useState<CueLabelMode>("lyrics");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioMs, setAudioMs] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // タブ非表示（display:none）でスクロール位置がリセットされても復元できるよう保持する。
+  const savedScrollLeft = useRef(0);
 
   const show = project?.shows.find((s) => s.id === activeShowId) ?? null;
   const points = show?.timeline?.points ?? [];
   const filePath = show?.audio?.filePath ?? null;
   const loaded = show !== null;
+  const cues = useMemo(
+    () => (show ? cueOptions(show.sequence, labelMode) : []),
+    [show, labelMode],
+  );
+  // 「＋点」で新規ポイントに紐づける既定 CUE = 現在選択中（プレイヘッド位置）の CUE。
+  const selectedCueId =
+    show && (playback?.mainIndex ?? -1) >= 0
+      ? (cueAt(show.sequence, {
+          main: playback!.mainIndex,
+          sub: playback!.subIndex,
+        })?.id ?? undefined)
+      : undefined;
   const scale = useMemo(() => ({ zoom }), [zoom]);
   const durationMs = Math.max(transport.durationMs, audioMs);
 
@@ -68,7 +91,9 @@ export function TimelineView() {
     if (filePath) {
       window.dmx.readAudioFile(filePath).then((res) => {
         if (cancelled || !res.ok || !res.data) return;
-        const url = URL.createObjectURL(new Blob([res.data], { type: mimeFor(filePath) }));
+        const url = URL.createObjectURL(
+          new Blob([res.data], { type: mimeFor(filePath) }),
+        );
         createdUrl = url;
         setAudioUrl(url);
         loadAudio(url);
@@ -94,6 +119,12 @@ export function TimelineView() {
     }
   }, [transport.playheadMs, transport.playing, scale]);
 
+  // タブ表示に戻ったとき、保持していたスクロール位置を復元する（display:none 対策）。
+  useLayoutEffect(() => {
+    if (active && scrollRef.current)
+      scrollRef.current.scrollLeft = savedScrollLeft.current;
+  }, [active]);
+
   const contentWidth = timeToPx(durationMs, scale);
 
   return (
@@ -105,60 +136,92 @@ export function TimelineView() {
             <button
               onClick={pause}
               disabled={!loaded}
-              className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
+              className="inline-flex items-center rounded bg-neutral-800 px-2.5 py-1 text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
               title="一時停止"
             >
-              ⏸
+              <Pause size={14} fill="currentColor" />
             </button>
           ) : (
             <button
               onClick={play}
               disabled={!loaded}
-              className="rounded bg-emerald-700 px-2.5 py-1 text-xs text-white hover:bg-emerald-600 disabled:opacity-40"
+              className="inline-flex items-center rounded bg-emerald-700 px-2.5 py-1 text-white hover:bg-emerald-600 disabled:opacity-40"
               title="再生"
             >
-              ▶
+              <Play size={14} fill="currentColor" />
             </button>
           )}
           <button
             onClick={stop}
             disabled={!loaded}
-            className="rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+            className="inline-flex items-center rounded bg-neutral-800 px-2.5 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
             title="停止（先頭へ）"
           >
-            ⏹
+            <Square size={14} fill="currentColor" />
           </button>
         </div>
 
-        <span className="font-mono text-xs text-neutral-200">{formatTimecode(transport.playheadMs)}</span>
-        <span className="font-mono text-[10px] text-neutral-500">/ {formatTimecode(durationMs)}</span>
+        <span className="font-mono text-xs text-neutral-200">
+          {formatTimecode(transport.playheadMs)}
+        </span>
+        <span className="font-mono text-[10px] text-neutral-500">
+          / {formatTimecode(durationMs)}
+        </span>
+        <span className="text-[10px] text-neutral-600">
+          Space: 再生/一時停止
+        </span>
 
         <button
-          onClick={() => activeShowId && window.dmx.addTimelinePoint(activeShowId, transport.playheadMs)}
+          onClick={() =>
+            activeShowId &&
+            window.dmx.addTimelinePoint(
+              activeShowId,
+              transport.playheadMs,
+              selectedCueId,
+            )
+          }
           disabled={!editable}
-          className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
-          title="現在位置に GO ポイントを追加"
+          className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-2 py-1 text-[11px] text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
+          title={
+            selectedCueId
+              ? "現在位置に GO ポイントを追加（選択中の CUE に紐づけ）"
+              : "現在位置に GO ポイントを追加（順送り。CUE を選択すると紐づきます）"
+          }
         >
-          ＋GO点
+          <Plus size={12} /> GO点
+        </button>
+
+        <button
+          onClick={() =>
+            setLabelMode((m) => (m === "lyrics" ? "name" : "lyrics"))
+          }
+          className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700"
+          title="GO点ラベルの表示を 歌詞 / CUE名 で切り替え"
+        >
+          ラベル切替
         </button>
 
         <div className="ml-auto flex items-center gap-2">
           {/* 音声 */}
           <button
-            onClick={() => activeShowId && window.dmx.pickShowAudio(activeShowId)}
+            onClick={() =>
+              activeShowId && window.dmx.pickShowAudio(activeShowId)
+            }
             disabled={!loaded}
-            className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-emerald-300 hover:bg-neutral-700 disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-emerald-300 hover:bg-neutral-700 disabled:opacity-40"
             title="音声ファイルを選択"
           >
-            🎵 音声
+            <Music size={12} /> 音声
           </button>
           {filePath && (
             <button
-              onClick={() => activeShowId && window.dmx.clearShowAudio(activeShowId)}
-              className="rounded px-1.5 py-1 text-[11px] text-neutral-500 hover:text-red-400"
+              onClick={() =>
+                activeShowId && window.dmx.clearShowAudio(activeShowId)
+              }
+              className="inline-flex items-center rounded px-1.5 py-1 text-neutral-500 hover:text-red-400"
               title="音声を解除"
             >
-              ✕
+              <X size={12} />
             </button>
           )}
           {/* ズーム */}
@@ -176,20 +239,35 @@ export function TimelineView() {
       </div>
 
       {/* トラックビュー（横スクロール） */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800">
-        <div className="relative" style={{ width: contentWidth, minWidth: '100%' }}>
-          <TimeRuler durationMs={durationMs} scale={scale} onSeek={seek} playing={transport.playing} />
+      <div
+        ref={scrollRef}
+        onScroll={(e) => {
+          savedScrollLeft.current = e.currentTarget.scrollLeft;
+        }}
+        className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800"
+      >
+        <div
+          className="relative"
+          style={{ width: contentWidth, minWidth: "100%" }}
+        >
+          <TimeRuler
+            durationMs={durationMs}
+            scale={scale}
+            onSeek={seek}
+            playing={transport.playing}
+          />
 
           {/* GO トラック */}
-          <div className="relative h-8 border-b border-neutral-800 bg-neutral-900/40">
+          <div className="relative h-12 border-b border-neutral-800 bg-neutral-900/40">
             {!loaded && (
               <span className="absolute left-2 top-1.5 text-[11px] text-neutral-600">
                 Show を読み込むと GO 点を編集できます
               </span>
             )}
             <GoMarkers
-              showId={activeShowId ?? ''}
+              showId={activeShowId ?? ""}
               points={points}
+              cues={cues}
               durationMs={durationMs}
               scale={scale}
               editable={editable}
@@ -199,11 +277,20 @@ export function TimelineView() {
 
           {/* 音声トラック */}
           <div className="p-1">
-            <AudioTrack audioUrl={audioUrl} scale={scale} onDurationMs={setAudioMs} />
+            <AudioTrack
+              audioUrl={audioUrl}
+              scale={scale}
+              onDurationMs={setAudioMs}
+            />
           </div>
 
           {/* プレイヘッド（全高オーバーレイ） */}
-          <Playhead playheadMs={transport.playheadMs} durationMs={durationMs} scale={scale} onSeek={seek} />
+          <Playhead
+            playheadMs={transport.playheadMs}
+            durationMs={durationMs}
+            scale={scale}
+            onSeek={seek}
+          />
         </div>
       </div>
     </div>

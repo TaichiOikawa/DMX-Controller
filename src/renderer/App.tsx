@@ -3,9 +3,10 @@
  * 購読し、Project・再生・フェーダー・出力モニターを配置する。
  */
 
-import { useEffect, useState } from 'react';
-import { SettingsBar } from './components/SettingsBar';
+import { useEffect, useRef, useState } from 'react';
 import { ProjectBar } from './components/ProjectBar';
+import { ProjectSidebar } from './components/ProjectSidebar';
+import { PreferencesModal } from './components/PreferencesModal';
 import { PlaybackPanel } from './components/PlaybackPanel';
 import { NowNextPanel } from './components/NowNextPanel';
 import { MasterBar } from './components/MasterBar';
@@ -14,6 +15,13 @@ import { TimelineView } from './components/timeline/TimelineView';
 import { FaderBank } from './components/FaderBank';
 import { OutputMeter } from './components/OutputMeter';
 import { useDmxStore } from './store';
+import {
+  fileNewProject,
+  fileOpenProject,
+  fileSaveProjectAs,
+  fileSaveProjectOverwrite,
+} from './projectFileOps';
+import type { MenuAction } from '../shared/ipc';
 
 type Tab = 'cue' | 'timeline';
 
@@ -22,7 +30,14 @@ export default function App() {
   const setProject = useDmxStore((s) => s.setProject);
   const setEngineState = useDmxStore((s) => s.setEngineState);
   const setDirty = useDmxStore((s) => s.setDirty);
+  const fadersCollapsed = useDmxStore((s) => s.fadersCollapsed);
+  const sidebarCollapsed = useDmxStore((s) => s.sidebarCollapsed);
   const [tab, setTab] = useState<Tab>('cue');
+  // キーハンドラ（[] 依存で固定）から現在タブを参照するための ref。
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
 
   useEffect(() => {
     const offFrame = window.dmx.onOutputFrame((frame) => setOutput(frame));
@@ -50,6 +65,18 @@ export default function App() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
     };
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl/Cmd+S は上書き保存。入力欄でもブラウザの保存を抑止して実行する。
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void window.dmx.saveProjectOverwrite();
+        return;
+      }
+      // Ctrl/Cmd+, で環境設定を開く。
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        useDmxStore.getState().setPrefsOpen(true);
+        return;
+      }
       if (isTyping(e.target)) return; // 入力欄ではネイティブ動作（テキスト編集の Undo 等）に任せる
       // Undo / Redo（Ctrl/Cmd 修飾）
       if (e.ctrlKey || e.metaKey) {
@@ -64,7 +91,19 @@ export default function App() {
         return;
       }
       if (e.repeat || e.altKey) return;
-      if (e.code === 'Space' || e.code === 'ArrowRight') {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        // Timeline タブでは再生/一時停止トグル、それ以外（CUE）では GO。
+        if (tabRef.current === 'timeline') {
+          const st = useDmxStore.getState();
+          if (st.activeShowId) {
+            if (st.transport.playing) st.transportPause();
+            else st.transportPlay();
+          }
+        } else {
+          window.dmx.go();
+        }
+      } else if (e.code === 'ArrowRight') {
         e.preventDefault();
         window.dmx.go();
       } else if (e.code === 'Backspace' || e.code === 'ArrowLeft') {
@@ -76,32 +115,112 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // アプリメニューからのアクションを受けて、既存のロジック/ストアへディスパッチする。
+  useEffect(() => {
+    const onMenu = (action: MenuAction) => {
+      const st = useDmxStore.getState();
+      switch (action) {
+        case 'file:new':
+          fileNewProject();
+          break;
+        case 'file:open':
+          void fileOpenProject();
+          break;
+        case 'file:save':
+          void fileSaveProjectOverwrite();
+          break;
+        case 'file:saveAs':
+          void fileSaveProjectAs();
+          break;
+        case 'edit:undo':
+          window.dmx.undo();
+          break;
+        case 'edit:redo':
+          window.dmx.redo();
+          break;
+        case 'edit:prefs':
+          st.setPrefsOpen(true);
+          break;
+        case 'view:tabCue':
+          setTab('cue');
+          break;
+        case 'view:tabTimeline':
+          setTab('timeline');
+          break;
+        case 'view:toggleSidebar':
+          st.toggleSidebarCollapsed();
+          break;
+        case 'view:toggleFaders':
+          st.toggleFadersCollapsed();
+          break;
+        case 'show:go':
+          window.dmx.go();
+          break;
+        case 'show:goBack':
+          window.dmx.goBack();
+          break;
+        case 'show:modeEdit':
+          st.setMode('edit');
+          break;
+        case 'show:modeShow':
+          st.setMode('show');
+          break;
+        case 'show:blackoutToggle':
+          st.setBlackout(!st.blackout);
+          break;
+        case 'show:gmFull':
+          st.setMasterLevel(255);
+          break;
+      }
+    };
+    return window.dmx.onMenuAction(onMenu);
+  }, []);
+
+  // タブ/パネル開閉の変化を main へ同期し、メニューのチェック表示に反映する。
+  useEffect(() => {
+    window.dmx.notifyUiState({ tab, sidebarCollapsed, fadersCollapsed });
+  }, [tab, sidebarCollapsed, fadersCollapsed]);
+
   return (
-    <div className="flex h-screen flex-col gap-2 bg-neutral-950 p-2 text-neutral-100">
-      <SettingsBar />
-      <ProjectBar />
-      <MasterBar />
+    <div className="flex h-screen gap-2 bg-neutral-950 p-2 text-neutral-100">
+      {/* 左サイド：Project / Show ツリー（開閉可） */}
+      <ProjectSidebar />
 
-      {/* 本番モードの「現在 / 次の CUE」帯（SHOW 時のみ表示） */}
-      <NowNextPanel />
+      {/* 右側：従来の縦積みレイアウト */}
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <ProjectBar />
+        <MasterBar />
 
-      {/* タブバー：CUE / Timeline を切り替え */}
-      <div className="flex items-center gap-1 border-b border-neutral-800">
-        <TabButton label="CUE" active={tab === 'cue'} onClick={() => setTab('cue')} />
-        <TabButton label="Timeline" active={tab === 'timeline'} onClick={() => setTab('timeline')} />
+        {/* 本番モードの「現在 / 次の CUE」帯（SHOW 時のみ表示） */}
+        <NowNextPanel />
+
+        {/* タブバー：CUE / Timeline を切り替え */}
+        <div className="flex items-center gap-1 border-b border-neutral-800">
+          <TabButton label="CUE" active={tab === 'cue'} onClick={() => setTab('cue')} />
+          <TabButton label="Timeline" active={tab === 'timeline'} onClick={() => setTab('timeline')} />
+        </div>
+
+        {/* タブ内容（共通の高さ領域）。CUE はマスター列、Timeline はトランスポート。
+            両方マウントしたまま表示切替し、Timeline のスクロール位置・再生状態を保持する。 */}
+        <div className="min-h-0 flex-[2]">
+          <div className={`h-full ${tab === 'cue' ? '' : 'hidden'}`}>
+            <PlaybackPanel />
+          </div>
+          <div className={`h-full ${tab === 'timeline' ? '' : 'hidden'}`}>
+            <TimelineView active={tab === 'timeline'} />
+          </div>
+        </div>
+
+        <ActionPanel />
+        {/* フェーダーバンク（折りたたみ時は高さを解放） */}
+        <div className={fadersCollapsed ? 'shrink-0' : 'min-h-0 flex-[3]'}>
+          <FaderBank />
+        </div>
+        <OutputMeter />
       </div>
 
-      {/* タブ内容（共通の高さ領域）。CUE はマスター列、Timeline はトランスポート。 */}
-      <div className="min-h-0 flex-[2]">
-        {tab === 'cue' ? <PlaybackPanel /> : <TimelineView />}
-      </div>
-
-      <ActionPanel />
-      {/* フェーダーバンク */}
-      <div className="min-h-0 flex-[3]">
-        <FaderBank />
-      </div>
-      <OutputMeter />
+      {/* 環境設定モーダル（prefsOpen で表示） */}
+      <PreferencesModal />
     </div>
   );
 }

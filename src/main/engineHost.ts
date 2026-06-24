@@ -19,7 +19,11 @@ import {
   type ActionPatch,
   type CaptureCueOptions,
   type CuePatch,
+  type EngineStateSnapshot,
+  type FixtureInit,
+  type FixturePatch,
   type SetFaderPayload,
+  type UiState,
 } from '../shared/ipc';
 import { type ArtnetSettings, defaultArtnetSettings } from '../shared/types';
 import { deserializeProject, serializeProject } from '../shared/persistence';
@@ -51,9 +55,15 @@ export class EngineHost {
   private readonly socket: dgram.Socket;
   private artnet: ArtnetSettings;
 
-  private webContents: WebContents | null = null;
+  /** イベント配信先（メインウィンドウ + 別ウィンドウのカラーピッカー等）。 */
+  private clients = new Set<WebContents>();
   private lastFrameSentAt = 0;
   private lastStateSentAt = 0;
+
+  /** engine state 変化を main（メニュー再構築）へ通知するリスナ。 */
+  private engineStateListener: ((state: EngineStateSnapshot) => void) | null = null;
+  /** renderer から同期された UI 状態（タブ・パネル開閉）を main へ通知するリスナ。 */
+  private uiStateListener: ((state: UiState) => void) | null = null;
 
   /** 未保存状態の追跡。最後の保存／読込時点の JSON と比較して判定する。 */
   private dirty = false;
@@ -84,10 +94,11 @@ export class EngineHost {
     this.engine.onState((state) => {
       // 送信先 IP 等は Engine 側が真実（loadProject で変わりうる）。常に追従。
       this.artnet = state.artnet;
-      this.webContents?.send(Evt.engineState, state);
+      this.broadcast(Evt.engineState, state);
+      this.engineStateListener?.(state);
     });
     this.engine.onProject((project) => {
-      this.webContents?.send(Evt.project, project);
+      this.broadcast(Evt.project, project);
       this.recomputeDirty();
     });
 
@@ -115,7 +126,15 @@ export class EngineHost {
   }
 
   private emitDirty(): void {
-    this.webContents?.send(Evt.dirty, { dirty: this.dirty, filePath: this.currentFilePath });
+    this.broadcast(Evt.dirty, { dirty: this.dirty, filePath: this.currentFilePath });
+  }
+
+  /** 全クライアントへイベントを配信する（破棄済み webContents は除外）。 */
+  private broadcast(channel: string, payload: unknown): void {
+    for (const wc of this.clients) {
+      if (wc.isDestroyed()) this.clients.delete(wc);
+      else wc.send(channel, payload);
+    }
   }
 
   /** main プロセス（ウィンドウ終了処理）から参照する。 */
@@ -123,12 +142,41 @@ export class EngineHost {
     return this.dirty;
   }
 
-  /** renderer の WebContents を登録し、現在の Project / 状態を初期送信する。 */
+  /** engine state 変化の通知先を登録する（メニュー再構築用）。 */
+  setEngineStateListener(cb: (state: EngineStateSnapshot) => void): void {
+    this.engineStateListener = cb;
+  }
+
+  /** renderer からの UI 状態同期の通知先を登録する（メニュー再構築用）。 */
+  setUiStateListener(cb: (state: UiState) => void): void {
+    this.uiStateListener = cb;
+  }
+
+  /** メニュー初期構築のために現在の engine state を返す。 */
+  getEngineState(): EngineStateSnapshot {
+    return this.engine.getState();
+  }
+
+  /** メインウィンドウの WebContents を登録し、現在の Project / 状態を初期送信する。 */
   attach(webContents: WebContents): void {
-    this.webContents = webContents;
+    this.addClient(webContents);
+  }
+
+  /**
+   * イベント配信先を追加し、現在の Project / 状態を初期送信する。
+   * 別ウィンドウ（カラーピッカー）の WebContents 登録にも使う。
+   */
+  addClient(webContents: WebContents): void {
+    this.clients.add(webContents);
+    webContents.once('destroyed', () => this.clients.delete(webContents));
     webContents.send(Evt.project, this.engine.getProject());
     webContents.send(Evt.engineState, this.engine.getState());
-    this.emitDirty();
+    webContents.send(Evt.dirty, { dirty: this.dirty, filePath: this.currentFilePath });
+  }
+
+  /** イベント配信先を解除する。 */
+  removeClient(webContents: WebContents): void {
+    this.clients.delete(webContents);
   }
 
   start(): void {
@@ -169,6 +217,12 @@ export class EngineHost {
     ipcMain.on(Cmd.setBankLabel, (_e, bank: number, label: string) =>
       this.engine.setBankLabel(bank, label),
     );
+    ipcMain.on(Cmd.addFixture, (_e, init: FixtureInit) => this.engine.addFixture(init));
+    ipcMain.on(Cmd.updateFixture, (_e, id: string, patch: FixturePatch) =>
+      this.engine.updateFixture(id, patch),
+    );
+    ipcMain.on(Cmd.deleteFixture, (_e, id: string) => this.engine.deleteFixture(id));
+    ipcMain.on(Cmd.uiState, (_e, state: UiState) => this.uiStateListener?.(state));
 
     // --- 再生 ---
     ipcMain.on(Cmd.loadShow, (_e, showId: string) => this.engine.loadShow(showId));
@@ -178,6 +232,7 @@ export class EngineHost {
     ipcMain.on(Cmd.goTo, (_e, mainIndex: number, subIndex: number) =>
       this.engine.goTo(mainIndex, subIndex),
     );
+    ipcMain.on(Cmd.deselectCue, () => this.engine.deselectCue());
     ipcMain.on(Cmd.holdFade, () => this.engine.holdFade());
 
     // --- Undo / Redo ---
@@ -186,6 +241,18 @@ export class EngineHost {
 
     // --- オーサリング ---
     ipcMain.on(Cmd.newShow, (_e, name?: string) => this.engine.newShow(name));
+    ipcMain.on(Cmd.renameShow, (_e, showId: string, name: string) =>
+      this.engine.renameShow(showId, name),
+    );
+    ipcMain.on(Cmd.deleteShow, (_e, showId: string) => this.engine.deleteShow(showId));
+    ipcMain.on(Cmd.addFolder, (_e, name?: string) => this.engine.addFolder(name));
+    ipcMain.on(Cmd.renameFolder, (_e, folderId: string, name: string) =>
+      this.engine.renameFolder(folderId, name),
+    );
+    ipcMain.on(Cmd.deleteFolder, (_e, folderId: string) => this.engine.deleteFolder(folderId));
+    ipcMain.on(Cmd.setShowFolder, (_e, showId: string, folderId: string | null) =>
+      this.engine.setShowFolder(showId, folderId),
+    );
     ipcMain.on(Cmd.recordCue, (_e, showId: string, opts?: CaptureCueOptions) =>
       this.engine.recordCue(showId, opts),
     );
@@ -197,6 +264,9 @@ export class EngineHost {
     );
     ipcMain.on(Cmd.updateCue, (_e, cueId: string, patch: CuePatch) =>
       this.engine.updateCue(cueId, patch),
+    );
+    ipcMain.on(Cmd.deleteCueChannel, (_e, cueId: string, ch: number) =>
+      this.engine.deleteCueChannel(cueId, ch),
     );
     ipcMain.on(Cmd.deleteEntry, (_e, showId: string, entryId: string) =>
       this.engine.deleteEntry(showId, entryId),
@@ -241,14 +311,19 @@ export class EngineHost {
     ipcMain.on(Cmd.reportAudioPlayhead, (_e, ms: number) => this.engine.reportAudioPlayhead(ms));
     ipcMain.on(Cmd.timelineSeek, (_e, ms: number) => this.engine.timelineSeek(ms));
     ipcMain.on(Cmd.timelineStop, () => this.engine.timelineStop());
-    ipcMain.on(Cmd.addTimelinePoint, (_e, showId: string, ms: number) =>
-      this.engine.addTimelinePoint(showId, ms),
+    ipcMain.on(Cmd.addTimelinePoint, (_e, showId: string, ms: number, cueId?: string) =>
+      this.engine.addTimelinePoint(showId, ms, cueId),
     );
     ipcMain.on(Cmd.deleteTimelinePoint, (_e, showId: string, index: number) =>
       this.engine.deleteTimelinePoint(showId, index),
     );
     ipcMain.on(Cmd.updateTimelinePoint, (_e, showId: string, index: number, ms: number) =>
       this.engine.updateTimelinePoint(showId, index, ms),
+    );
+    ipcMain.on(
+      Cmd.setTimelinePointCue,
+      (_e, showId: string, index: number, cueId: string | undefined) =>
+        this.engine.setTimelinePointCue(showId, index, cueId),
     );
     ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
@@ -261,6 +336,7 @@ export class EngineHost {
       this.markClean();
     });
     ipcMain.handle(Cmd.saveProject, () => this.saveProject());
+    ipcMain.handle(Cmd.saveProjectOverwrite, () => this.saveProjectOverwrite());
     ipcMain.handle(Cmd.loadProject, () => this.loadProject());
   }
 
@@ -287,12 +363,20 @@ export class EngineHost {
   }
 
   /**
+   * 上書き保存（Ctrl+S）。既存ファイルがあれば確認なしで上書き、
+   * 無ければ保存ダイアログ（名前を付けて保存）にフォールバックする。
+   */
+  private async saveProjectOverwrite(): Promise<SaveLoadResult> {
+    if (this.currentFilePath) return this.writeProject(this.currentFilePath);
+    return this.saveProject();
+  }
+
+  /**
    * 終了時に未保存変更を保存する。既存ファイルがあれば確認なしで上書き、
    * 無ければ保存ダイアログを開く。
    */
   async saveActiveForClose(): Promise<SaveLoadResult> {
-    if (this.currentFilePath) return this.writeProject(this.currentFilePath);
-    return this.saveProject();
+    return this.saveProjectOverwrite();
   }
 
   private async loadProject(): Promise<SaveLoadResult> {
@@ -363,11 +447,11 @@ export class EngineHost {
     if (now - this.lastFrameSentAt < FRAME_FORWARD_INTERVAL_MS) return;
     this.lastFrameSentAt = now;
     // frame は Engine が再利用するバッファなので、送る前にコピーする。
-    this.webContents?.send(Evt.outputFrame, frame.slice());
+    this.broadcast(Evt.outputFrame, frame.slice());
 
     if (now - this.lastStateSentAt >= STATE_FORWARD_INTERVAL_MS) {
       this.lastStateSentAt = now;
-      this.webContents?.send(Evt.engineState, this.engine.getState());
+      this.broadcast(Evt.engineState, this.engine.getState());
     }
   }
 }

@@ -6,6 +6,7 @@
  * 下部の X でキャプチャ解除（値も 0 に戻し show/0 へ復帰 §6.2）。
  */
 
+import { X } from 'lucide-react';
 import { useState } from 'react';
 import { InlineText } from './InlineText';
 
@@ -16,14 +17,18 @@ interface FaderProps {
   value: number;
   /** エンジンの実出力 0-255（キャプチャ/HTP で位置と異なりうる） */
   output: number;
-  /** キャプチャ中か（ハイライト） */
+  /** キャプチャ中か（プログラマー・amber ハイライト） */
   captured: boolean;
+  /** 選択中（current）CUE が握る ch か（sky ハイライト） */
+  inSelectedCue: boolean;
+  /** Show 未読込（解放中）か。capture 概念を持たず、X は「値を 0 に」リセット。 */
+  released?: boolean;
   /** ch ラベル（任意）。 */
   label?: string;
   /** ラベル編集可（EDIT モード）。 */
   editable: boolean;
   onChange: (value: number) => void;
-  /** X 押下: キャプチャ解除＋値クリア */
+  /** X 押下: キャプチャ解除＋値クリア（CUE ch なら CUE から ch を削除） */
   onClear: () => void;
   /** ラベル変更（空文字で削除）。 */
   onLabelChange: (label: string) => void;
@@ -34,6 +39,8 @@ export function Fader({
   value,
   output,
   captured,
+  inSelectedCue,
+  released,
   label,
   editable,
   onChange,
@@ -46,6 +53,10 @@ export function Fader({
   const pct = (value / 255) * 100;
   const outPct = (output / 255) * 100;
   const diverged = output !== value;
+  // ハイライト優先度: captured(amber) > 選択中 CUE(sky) > なし。
+  const cueHi = inSelectedCue && !captured;
+  // 解放中は capture/CUE が無いので、X は「値を 0 に」リセット（値>0 のとき活性）。
+  const clearable = captured || inSelectedCue || (!!released && value > 0);
 
   const commitDraft = () => {
     const n = Math.max(0, Math.min(255, Math.round(Number(draft))));
@@ -56,12 +67,20 @@ export function Fader({
   return (
     <div
       className={`flex w-12 shrink-0 flex-col items-center gap-1 rounded-md py-1 ring-1 transition-colors ${
-        captured ? 'bg-amber-500/10 ring-amber-500/70' : 'ring-transparent'
+        captured
+          ? 'bg-amber-500/10 ring-amber-500/70'
+          : cueHi
+            ? 'bg-sky-500/10 ring-sky-500/70'
+            : 'ring-transparent'
       }`}
     >
       <div
         className={`w-8 rounded text-center text-[10px] font-mono ${
-          captured ? 'bg-amber-500 font-bold text-neutral-900' : 'text-neutral-500'
+          captured
+            ? 'bg-amber-500 font-bold text-neutral-900'
+            : cueHi
+              ? 'bg-sky-500 font-bold text-neutral-900'
+              : 'text-neutral-500'
         }`}
       >
         {ch + 1}
@@ -125,15 +144,27 @@ export function Fader({
 
       <button
         onClick={onClear}
-        disabled={!captured}
+        disabled={!clearable}
         className={`flex h-5 w-5 items-center justify-center rounded text-xs ${
           captured
             ? 'bg-neutral-800 text-amber-300 hover:bg-red-900/60 hover:text-red-200'
-            : 'text-neutral-700'
+            : cueHi
+              ? 'bg-neutral-800 text-sky-300 hover:bg-red-900/60 hover:text-red-200'
+              : clearable
+                ? 'bg-neutral-800 text-neutral-300 hover:bg-red-900/60 hover:text-red-200'
+                : 'text-neutral-700'
         }`}
-        title={captured ? 'キャプチャ解除（値を 0 に）' : '未キャプチャ'}
+        title={
+          cueHi
+            ? 'この CUE からこの ch を削除'
+            : captured
+              ? 'キャプチャ解除（値を 0 に）'
+              : released
+                ? '値を 0 に'
+                : '未キャプチャ'
+        }
       >
-        ✕
+        <X size={13} />
       </button>
     </div>
   );

@@ -175,6 +175,7 @@ describe('authoring', () => {
   it('records a cue from faders to the master list', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
+    engine.loadShow('show1'); // capture は show 読込中のみ（解放中は概念なし）
     engine.setFader(0, 255);
     engine.setFader(3, 128);
     engine.recordCue('show1');
@@ -188,6 +189,7 @@ describe('authoring', () => {
   it('records a cue into a target group', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([groupEntry('g', [])]));
+    engine.loadShow('show1');
     engine.setFader(5, 99);
     engine.recordCue('show1', { targetGroupId: 'g' });
 
@@ -202,9 +204,9 @@ describe('authoring', () => {
   it('records and plays back an authored cue end-to-end', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
+    engine.loadShow('show1');
     engine.setFader(7, 99);
     engine.recordCue('show1', { fadeInMs: 0 });
-    engine.loadShow('show1');
     engine.setFader(7, 0);
     engine.go();
     engine.tick(0);
@@ -229,6 +231,7 @@ describe('authoring', () => {
     engine.loadProject(
       projectWithSequence([cueEntry(cue('a', { 0: 1 })), cueEntry(cue('b', { 0: 2 }))]),
     );
+    engine.loadShow('show1');
     engine.setFader(0, 50);
     engine.recordCue('show1', { atIndex: 1 });
     const seq = engine.getProject().shows[0].sequence;
@@ -262,6 +265,86 @@ describe('authoring', () => {
     engine.setFader(0, 77);
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(77); // footprint cleared -> fader passes
+  });
+
+  it('deleteShow removes a show from the project', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.shows.push({ id: 'show2', name: 'Show 2', sequence: [] });
+    engine.loadProject(p);
+    engine.deleteShow('show1');
+    const shows = engine.getProject().shows;
+    expect(shows).toHaveLength(1);
+    expect(shows[0].id).toBe('show2');
+  });
+
+  it('deleteShow unloads the show first when it is active', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.loadShow('show1');
+    expect(engine.getState().activeShowId).toBe('show1');
+    engine.deleteShow('show1');
+    expect(engine.getProject().shows).toHaveLength(0);
+    expect(engine.getState().activeShowId).toBeNull();
+  });
+
+  it('deleteShow can be undone', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.deleteShow('show1');
+    expect(engine.getProject().shows).toHaveLength(0);
+    engine.undo();
+    expect(engine.getProject().shows).toHaveLength(1);
+    expect(engine.getProject().shows[0].id).toBe('show1');
+  });
+});
+
+describe('folders', () => {
+  it('addFolder appends a folder', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.addFolder('Act 1');
+    const folders = engine.getProject().folders ?? [];
+    expect(folders).toHaveLength(1);
+    expect(folders[0].name).toBe('Act 1');
+  });
+
+  it('setShowFolder moves a show into / out of a folder', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.addFolder('F');
+    const folderId = engine.getProject().folders![0].id;
+    engine.setShowFolder('show1', folderId);
+    expect(engine.getProject().shows[0].folderId).toBe(folderId);
+    engine.setShowFolder('show1', null);
+    expect(engine.getProject().shows[0].folderId).toBeUndefined();
+  });
+
+  it('setShowFolder ignores a non-existent folder id', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setShowFolder('show1', 'nope');
+    expect(engine.getProject().shows[0].folderId).toBeUndefined();
+  });
+
+  it('deleteFolder moves contained shows back to root (non-destructive)', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.addFolder('F');
+    const folderId = engine.getProject().folders![0].id;
+    engine.setShowFolder('show1', folderId);
+    engine.deleteFolder(folderId);
+    expect(engine.getProject().folders).toBeUndefined();
+    expect(engine.getProject().shows).toHaveLength(1);
+    expect(engine.getProject().shows[0].folderId).toBeUndefined();
+  });
+
+  it('folder operations are blocked in show mode', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.setMode('show');
+    engine.addFolder('F');
+    expect(engine.getProject().folders ?? []).toHaveLength(0);
   });
 });
 

@@ -42,6 +42,36 @@ describe('serialize/deserialize round-trip', () => {
     expect(restored.channelLabels).toEqual({ 0: 'Front R', 5: 'Back Wash' });
     expect(restored.bankLabels).toEqual({ 0: 'フロント列' });
   });
+
+  it('preserves RGB fixtures', () => {
+    const p = createDefaultProject();
+    p.fixtures = [
+      { id: 'fx1', name: 'Par L', r: 0, g: 1, b: 2 },
+      { id: 'fx2', r: 10, g: 11, b: 12 },
+    ];
+    const restored = deserializeProject(serializeProject(p));
+    expect(restored.fixtures).toEqual([
+      { id: 'fx1', name: 'Par L', r: 0, g: 1, b: 2 },
+      { id: 'fx2', r: 10, g: 11, b: 12 },
+    ]);
+  });
+
+  it('preserves folders and a show folderId', () => {
+    const p = createDefaultProject();
+    p.folders = [{ id: 'f1', name: 'Act 1' }];
+    p.shows = [{ id: 's1', name: 'Opening', folderId: 'f1', sequence: [] }];
+    const restored = deserializeProject(serializeProject(p));
+    expect(restored.folders).toEqual([{ id: 'f1', name: 'Act 1' }]);
+    expect(restored.shows[0].folderId).toBe('f1');
+  });
+
+  it('drops a folderId that references no existing folder', () => {
+    const p = migrateProject({
+      shows: [{ id: 's1', name: 'Orphan', folderId: 'ghost', sequence: [] }],
+    });
+    expect(p.shows[0].folderId).toBeUndefined();
+    expect(p.folders).toBeUndefined();
+  });
 });
 
 describe('migrateProject (tolerant loading)', () => {
@@ -103,6 +133,22 @@ describe('migrateProject (tolerant loading)', () => {
     });
     expect(p.channelLabels).toEqual({ 0: 'ok' });
     expect(p.bankLabels).toEqual({ 0: 'page' });
+  });
+
+  it('drops fixtures with out-of-range or missing channels', () => {
+    const p = migrateProject({
+      fixtures: [
+        { id: 'ok', name: 'Good', r: 0, g: 1, b: 2 },
+        { id: 'oob', r: 0, g: 1, b: 512 }, // b 範囲外
+        { id: 'missing', r: 3, g: 4 }, // b 欠落
+        { r: 5, g: 6, b: 7 }, // id 欠落 → fallbackId 採番
+        42,
+      ],
+    });
+    expect(p.fixtures).toHaveLength(2);
+    expect(p.fixtures?.[0]).toEqual({ id: 'ok', name: 'Good', r: 0, g: 1, b: 2 });
+    expect(p.fixtures?.[1]).toMatchObject({ r: 5, g: 6, b: 7 });
+    expect(typeof p.fixtures?.[1].id).toBe('string');
   });
 
   it('drops malformed sequence entries', () => {

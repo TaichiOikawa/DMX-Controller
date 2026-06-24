@@ -14,6 +14,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-react": "^1.21.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "wavesurfer.js": "^7.12.8",

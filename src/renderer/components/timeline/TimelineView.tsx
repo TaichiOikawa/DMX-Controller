@@ -102,12 +102,14 @@ export function TimelineView({ active }: { active: boolean }) {
           return;
         }
         setAudioMissing(false);
+        // Blob は res.data をコピーするため先に生成する（直後の decodeAudioData が
+        // ArrayBuffer を detach するため。WaveSurfer 表示用 URL は影響を受けない）。
         const url = URL.createObjectURL(
           new Blob([res.data], { type: mimeFor(filePath) }),
         );
         createdUrl = url;
         setAudioUrl(url);
-        loadAudio(url);
+        loadAudio(url, res.data);
       });
     }
     return () => {

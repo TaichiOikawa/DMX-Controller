@@ -124,8 +124,11 @@ interface DmxState {
   transportSeek: (ms: number) => void;
   /** 内部クロックからの前進（私用）。 */
   advancePlayhead: (deltaMs: number) => void;
-  /** 音声 Blob URL を再生用 <audio> として読込（クロック源になる）。 */
-  loadAudio: (url: string) => void;
+  /**
+   * 音声を読込（Web Audio のクロック源になる）。
+   * url は WaveSurfer 波形表示用の Blob URL、arrayBuffer は再生・時間軸用に decode する実体。
+   */
+  loadAudio: (url: string, arrayBuffer: ArrayBuffer) => void;
   /** 音声を解除（内部クロックへ戻す）。 */
   unloadAudio: () => void;
   /** 絶対位置で playhead を反映しエンジンへ報告（音声クロックから・私用）。 */
@@ -328,8 +331,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPlay: () =>
     set((s) => {
-      if (audioEl) {
-        void audioEl.play().catch(() => {});
+      if (audioBuffer) {
+        startSource(startOffsetSec);
         startAudioRaf();
       } else {
         startClock();
@@ -339,8 +342,10 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPause: () =>
     set((s) => {
-      if (audioEl) {
-        audioEl.pause();
+      if (audioBuffer) {
+        // 現在位置を確定してから停止（次回再生はここから）。
+        startOffsetSec = currentPositionMs() / 1000;
+        stopSource();
         stopAudioRaf();
       } else {
         stopClock();
@@ -350,9 +355,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportStop: () =>
     set((s) => {
-      if (audioEl) {
-        audioEl.pause();
-        audioEl.currentTime = 0;
+      if (audioBuffer) {
+        stopSource();
+        startOffsetSec = 0;
         stopAudioRaf();
       } else {
         stopClock();
@@ -364,7 +369,11 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   transportSeek: (ms) =>
     set((s) => {
       const playheadMs = Math.max(0, Math.min(s.transport.durationMs, ms));
-      if (audioEl) audioEl.currentTime = playheadMs / 1000;
+      if (audioBuffer) {
+        startOffsetSec = playheadMs / 1000;
+        // AudioBufferSourceNode は再利用不可。再生中なら新オフセットで作り直す。
+        if (s.transport.playing) startSource(startOffsetSec);
+      }
       window.dmx.timelineSeek(playheadMs);
       return { transport: { ...s.transport, playheadMs } };
     }),
@@ -383,13 +392,17 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     set({ transport: { ...s.transport, playheadMs: next } });
   },
 
-  loadAudio: (url) => {
-    if (audioEl) audioEl.pause();
+  loadAudio: (_url, arrayBuffer) => {
+    stopSource();
     stopAudioRaf();
-    const el = new Audio(url);
-    audioEl = el;
-    el.addEventListener('loadedmetadata', () => {
-      const ms = Math.round(el.duration * 1000);
+    audioBuffer = null;
+    startOffsetSec = 0;
+    // ファイルを一度だけ PCM デコードし、これを唯一の時間軸・再生源にする。
+    // （<audio>.currentTime は VBR 等で非線形・不正確になるため使わない。）
+    const ctx = ensureAudioCtx();
+    void ctx.decodeAudioData(arrayBuffer).then((buf) => {
+      audioBuffer = buf;
+      const ms = Math.round(buf.duration * 1000);
       if (Number.isFinite(ms) && ms > 0) {
         // 音声長を保持し、再生上限へ反映（以後の setProject でも維持される）。
         set((s) => ({
@@ -397,18 +410,13 @@ export const useDmxStore = create<DmxState>((set, get) => ({
           transport: { ...s.transport, durationMs: Math.max(s.transport.durationMs, ms) },
         }));
       }
-    });
-    el.addEventListener('ended', () => {
-      stopAudioRaf();
-      set((s) => ({ transport: { ...s.transport, playing: false } }));
-    });
+    }).catch(() => {});
   },
 
   unloadAudio: () => {
-    if (audioEl) {
-      audioEl.pause();
-      audioEl = null;
-    }
+    stopSource();
+    audioBuffer = null;
+    startOffsetSec = 0;
     stopAudioRaf();
     // 音声長をクリアし、再生上限を GO 点ベースへ戻す。
     set((s) => ({
@@ -426,7 +434,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     const s = get();
     const dur = s.transport.durationMs;
     if (absMs >= dur) {
-      if (audioEl) audioEl.pause();
+      stopSource();
+      startOffsetSec = dur / 1000;
       stopAudioRaf();
       window.dmx.reportAudioPlayhead(dur);
       set({ transport: { ...s.transport, playheadMs: dur, playing: false } });
@@ -437,12 +446,81 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   },
 }));
 
-// ===== Timeline 内部クロック（~33ms） =====
-// 音声が読み込まれている場合は <audio> をクロック源にし、無い場合は setInterval で進める。
+// ===== Timeline 内部クロック =====
+// 音声がある場合は Web Audio（AudioBufferSourceNode + AudioContext.currentTime）を
+// クロック源にし、無い場合は setInterval で進める。
+// <audio>.currentTime は VBR 等の圧縮音源で非線形・不正確になり、波形・プレイヘッドと
+// 実音がずれるため使わない。デコード済み AudioBuffer を唯一の正確な時間軸とする。
 let clockHandle: ReturnType<typeof setInterval> | null = null;
 let lastTickAt = 0;
-let audioEl: HTMLAudioElement | null = null;
 let audioRaf: number | null = null;
+
+// Web Audio 再生エンジン状態。
+let audioCtx: AudioContext | null = null;
+let audioBuffer: AudioBuffer | null = null;
+let sourceNode: AudioBufferSourceNode | null = null;
+/** 再生開始時の audioCtx.currentTime（秒）。 */
+let startCtxTime = 0;
+/** 再生開始時のバッファ内オフセット（秒）。停止中の現在位置でもある。 */
+let startOffsetSec = 0;
+/** 自前 stop と自然終了を onended で区別するフラグ。 */
+let endedByUs = false;
+
+/** AudioContext を遅延生成して再利用（ブラウザの生成数制限に配慮）。 */
+function ensureAudioCtx(): AudioContext {
+  if (!audioCtx) audioCtx = new AudioContext();
+  return audioCtx;
+}
+
+/** 現在の再生位置（ms）。再生中は AudioContext クロック、停止中はオフセット。 */
+function currentPositionMs(): number {
+  if (audioCtx && sourceNode) {
+    return (startOffsetSec + (audioCtx.currentTime - startCtxTime)) * 1000;
+  }
+  return startOffsetSec * 1000;
+}
+
+/** 指定オフセット（秒）から新しいソースノードで再生開始。 */
+function startSource(offsetSec: number): void {
+  if (!audioBuffer) return;
+  const ctx = ensureAudioCtx();
+  stopSource();
+  void ctx.resume().catch(() => {});
+  const node = ctx.createBufferSource();
+  node.buffer = audioBuffer;
+  node.connect(ctx.destination);
+  node.onended = () => {
+    // 自前で stop した場合は無視。自然終了のみ終端処理。
+    if (endedByUs) return;
+    stopAudioRaf();
+    const dur = useDmxStore.getState().transport.durationMs;
+    startOffsetSec = dur / 1000;
+    window.dmx.reportAudioPlayhead(dur);
+    useDmxStore.setState((s) => ({
+      transport: { ...s.transport, playheadMs: dur, playing: false },
+    }));
+  };
+  startCtxTime = ctx.currentTime;
+  startOffsetSec = offsetSec;
+  endedByUs = false;
+  node.start(0, offsetSec);
+  sourceNode = node;
+}
+
+/** 再生中のソースノードを停止・破棄（onended の終端処理は走らせない）。 */
+function stopSource(): void {
+  if (sourceNode) {
+    endedByUs = true;
+    try {
+      sourceNode.onended = null;
+      sourceNode.stop();
+    } catch {
+      // 未開始ノードの stop 等は無視。
+    }
+    sourceNode.disconnect();
+    sourceNode = null;
+  }
+}
 
 function startClock(): void {
   if (clockHandle !== null) return;
@@ -465,7 +543,8 @@ function stopClock(): void {
 function startAudioRaf(): void {
   if (audioRaf !== null) return;
   const tick = (): void => {
-    if (audioEl) useDmxStore.getState().reportPlayhead(audioEl.currentTime * 1000);
+    // 視覚更新は rAF ペースだが、位置の真値は AudioContext クロック由来。
+    if (sourceNode) useDmxStore.getState().reportPlayhead(currentPositionMs());
     audioRaf = requestAnimationFrame(tick);
   };
   audioRaf = requestAnimationFrame(tick);

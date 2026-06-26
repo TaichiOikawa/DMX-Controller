@@ -18,10 +18,10 @@ import {
   Play,
   Plus,
   X,
-} from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import type { Cue, SequenceEntry } from '../../shared/types';
-import { useDmxStore } from '../store';
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { Cue, SequenceEntry } from "../../shared/types";
+import { useDmxStore } from "../store";
 
 /**
  * ドラッグ並び替えの共有ハンドラ。
@@ -31,7 +31,7 @@ interface Dnd {
   scope: string | null;
   overKey: string | null;
   /** 挿入位置（ホバー行の前 / 後ろ）。線＋矢印の表示位置に使う。 */
-  overPos: 'before' | 'after' | null;
+  overPos: "before" | "after" | null;
   start: (scope: string, id: string, fromIndex: number) => void;
   over: (scope: string, key: string, e: React.DragEvent) => void;
   drop: (scope: string, targetIndex: number, e: React.DragEvent) => void;
@@ -43,13 +43,15 @@ export function PlaybackPanel() {
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const playback = useDmxStore((s) => s.playback);
   const deselectCue = useDmxStore((s) => s.deselectCue);
-  const editable = useDmxStore((s) => s.mode === 'edit');
+  const editable = useDmxStore((s) => s.mode === "edit");
   // ドラッグ並び替え状態（同 scope 内のみ）。フック規則のため早期 return より前で宣言。
-  const [dragging, setDragging] = useState<{ scope: string; id: string; fromIndex: number } | null>(
-    null,
-  );
+  const [dragging, setDragging] = useState<{
+    scope: string;
+    id: string;
+    fromIndex: number;
+  } | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
-  const [overPos, setOverPos] = useState<'before' | 'after' | null>(null);
+  const [overPos, setOverPos] = useState<"before" | "after" | null>(null);
   // CUE が移動したら、現在行（data-current）をスクロール表示する。
   const listRef = useRef<HTMLDivElement>(null);
   const curMainPos = playback?.mainIndex ?? -1;
@@ -57,7 +59,7 @@ export function PlaybackPanel() {
   useEffect(() => {
     if (curMainPos < 0) return;
     const el = listRef.current?.querySelector('[data-current="true"]');
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [curMainPos, curSubPos]);
 
   const activeShow = project?.shows.find((s) => s.id === activeShowId) ?? null;
@@ -66,7 +68,9 @@ export function PlaybackPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center rounded-lg bg-neutral-900/40 text-sm text-neutral-600 ring-1 ring-neutral-800">
         <p>Show が読み込まれていません</p>
-        <p className="mt-1 text-xs">上のバーで Show を選んで「読込」してください</p>
+        <p className="mt-1 text-xs">
+          上のバーで Show を選んで「読込」してください
+        </p>
       </div>
     );
   }
@@ -82,10 +86,11 @@ export function PlaybackPanel() {
     over: (scope, key, e) => {
       if (!dragging || dragging.scope !== scope) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      e.dataTransfer.dropEffect = "move";
       // カーソルが行の上半分なら前へ、下半分なら後ろへ挿入。
       const rect = e.currentTarget.getBoundingClientRect();
-      const pos: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+      const pos: "before" | "after" =
+        e.clientY < rect.top + rect.height / 2 ? "before" : "after";
       if (overKey !== key) setOverKey(key);
       if (overPos !== pos) setOverPos(pos);
     },
@@ -94,9 +99,9 @@ export function PlaybackPanel() {
       e.stopPropagation();
       if (dragging && dragging.scope === scope) {
         // 挿入したいスロット（元配列基準）→ 自身を抜いた後の最終インデックスへ変換。
-        const slot = overPos === 'after' ? targetIndex + 1 : targetIndex;
+        const slot = overPos === "after" ? targetIndex + 1 : targetIndex;
         const toIndex = slot > dragging.fromIndex ? slot - 1 : slot;
-        if (scope === 'top') window.dmx.moveEntry(showId, dragging.id, toIndex);
+        if (scope === "top") window.dmx.moveEntry(showId, dragging.id, toIndex);
         else window.dmx.moveCueInGroup(scope, dragging.id, toIndex);
       }
       setDragging(null);
@@ -148,7 +153,9 @@ export function PlaybackPanel() {
         >
           <X size={15} /> 選択解除
         </button>
-        <span className="text-[10px] text-neutral-600">Space/→: GO ／ ←/Backspace: 戻る</span>
+        <span className="text-[10px] text-neutral-600">
+          Space/→: GO ／ ←/Backspace: 戻る
+        </span>
         <span className="ml-1 text-sm text-neutral-400">{activeShow.name}</span>
         <button
           onClick={() => window.dmx.recordCue(showId)}
@@ -156,7 +163,8 @@ export function PlaybackPanel() {
           className="ml-auto inline-flex items-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-xs text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
           title="現在のキャプチャから CUE をマスター列末尾に記録"
         >
-          <Circle size={11} fill="currentColor" className="text-red-500" /> Record CUE
+          <Circle size={11} fill="currentColor" className="text-red-500" />{" "}
+          Record CUE
         </button>
         <button
           onClick={() => window.dmx.addGroupEntry(showId)}
@@ -201,7 +209,7 @@ export function PlaybackPanel() {
 }
 
 function entryId(entry: SequenceEntry): string {
-  return entry.kind === 'cue' ? entry.cue.id : entry.group.id;
+  return entry.kind === "cue" ? entry.cue.id : entry.group.id;
 }
 
 interface EntryRowProps {
@@ -229,18 +237,19 @@ function EntryRow({
   fadeRemainingMs,
   dnd,
 }: EntryRowProps) {
-  const editable = useDmxStore((s) => s.mode === 'edit');
+  const editable = useDmxStore((s) => s.mode === "edit");
   const moveUp = () => window.dmx.moveEntry(showId, entryId(entry), index - 1);
-  const moveDown = () => window.dmx.moveEntry(showId, entryId(entry), index + 1);
+  const moveDown = () =>
+    window.dmx.moveEntry(showId, entryId(entry), index + 1);
   const del = () => {
     const msg =
-      entry.kind === 'cue'
-        ? `CUE「${entry.cue.name?.trim() || 'Cue'}」を削除しますか？`
-        : `GROUP「${entry.group.name ?? 'Group'}」を削除しますか？\n（中の子 CUE もすべて削除されます）`;
+      entry.kind === "cue"
+        ? `CUE「${entry.cue.name?.trim() || "Cue"}」を削除しますか？`
+        : `GROUP「${entry.group.name ?? "Group"}」を削除しますか？\n（中の子 CUE もすべて削除されます）`;
     if (window.confirm(msg)) window.dmx.deleteEntry(showId, entryId(entry));
   };
 
-  if (entry.kind === 'cue') {
+  if (entry.kind === "cue") {
     const current = curMain === index;
     return (
       <li>
@@ -261,7 +270,9 @@ function EntryRow({
           onMoveDown={editable && index < lastIndex ? moveDown : undefined}
           onDelete={del}
           onDuplicate={() => window.dmx.duplicateEntry(showId, entry.cue.id)}
-          onInsertBelow={() => window.dmx.recordCue(showId, { atIndex: index + 1 })}
+          onInsertBelow={() =>
+            window.dmx.recordCue(showId, { atIndex: index + 1 })
+          }
         />
       </li>
     );
@@ -269,34 +280,48 @@ function EntryRow({
 
   // GROUP エントリ
   const g = entry.group;
-  const groupOver = dnd.scope === 'top' && dnd.overKey === `top:${g.id}`;
+  const groupOver = dnd.scope === "top" && dnd.overKey === `top:${g.id}`;
   return (
     <li
       className="relative rounded bg-neutral-800/30 ring-1 ring-neutral-800"
-      onDragOver={(e) => dnd.over('top', `top:${g.id}`, e)}
-      onDrop={(e) => dnd.drop('top', index, e)}
+      onDragOver={(e) => dnd.over("top", `top:${g.id}`, e)}
+      onDrop={(e) => dnd.drop("top", index, e)}
     >
       {groupOver && dnd.overPos && <DropIndicator pos={dnd.overPos} />}
       {/* GROUP ヘッダ */}
       <div className="flex items-center gap-1.5 px-2 py-1">
-        <Grip scope="top" id={g.id} index={index} dnd={dnd} editable={editable} />
-        <span className="w-6 text-right font-mono text-xs text-neutral-500">{index + 1}</span>
-        <span className="text-xs font-semibold text-sky-300">▣ {g.name ?? 'Group'}</span>
+        <Grip
+          scope="top"
+          id={g.id}
+          index={index}
+          dnd={dnd}
+          editable={editable}
+        />
+        <span className="w-6 text-right font-mono text-xs text-neutral-500">
+          {index + 1}
+        </span>
+        <span className="text-xs font-semibold text-sky-300">
+          ▣ {g.name ?? "Group"}
+        </span>
         <button
           onClick={() => window.dmx.setGroupLoop(g.id, !g.loop)}
           disabled={!editable}
           className={`rounded px-1.5 py-0.5 text-[10px] font-mono disabled:opacity-50 ${
-            g.loop ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-500'
+            g.loop ? "bg-sky-700 text-white" : "bg-neutral-800 text-neutral-500"
           }`}
           title="GROUP 内ループ"
         >
           LOOP
         </button>
-        <span className="text-[10px] text-neutral-600">{g.cues.length} CUE</span>
+        <span className="text-[10px] text-neutral-600">
+          {g.cues.length} CUE
+        </span>
         <div className="ml-auto flex items-center gap-0.5">
           {editable && (
             <button
-              onClick={() => window.dmx.recordCue(showId, { targetGroupId: g.id })}
+              onClick={() =>
+                window.dmx.recordCue(showId, { targetGroupId: g.id })
+              }
               className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
               title="現在のキャプチャから、この GROUP に子 CUE を追加"
             >
@@ -342,7 +367,9 @@ function EntryRow({
                   dndId={cue.id}
                   onClick={() => window.dmx.goTo(index, j)}
                   onMoveUp={
-                    editable && j > 0 ? () => window.dmx.moveCueInGroup(g.id, cue.id, j - 1) : undefined
+                    editable && j > 0
+                      ? () => window.dmx.moveCueInGroup(g.id, cue.id, j - 1)
+                      : undefined
                   }
                   onMoveDown={
                     editable && j < g.cues.length - 1
@@ -350,18 +377,40 @@ function EntryRow({
                       : undefined
                   }
                   onDelete={() => {
-                    if (window.confirm(`CUE「${cue.name?.trim() || 'Cue'}」を削除しますか？`))
+                    if (
+                      window.confirm(
+                        `CUE「${cue.name?.trim() || "Cue"}」を削除しますか？`,
+                      )
+                    )
                       window.dmx.deleteCueFromGroup(g.id, cue.id);
                   }}
-                  onDuplicate={() => window.dmx.duplicateCueInGroup(g.id, cue.id)}
+                  onDuplicate={() =>
+                    window.dmx.duplicateCueInGroup(g.id, cue.id)
+                  }
                   onInsertBelow={() =>
-                    window.dmx.recordCue(showId, { targetGroupId: g.id, atIndex: j + 1 })
+                    window.dmx.recordCue(showId, {
+                      targetGroupId: g.id,
+                      atIndex: j + 1,
+                    })
                   }
                 />
               </li>
             );
           })}
         </ul>
+      )}
+
+      {/* GROUP 外（マスター列）の直下に CUE を追加 */}
+      {editable && (
+        <div className="border-t border-neutral-800 px-2">
+          <button
+            onClick={() => window.dmx.recordCue(showId, { atIndex: index + 1 })}
+            className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
+            title="現在のキャプチャから、この GROUP の外（直下）に CUE を追加"
+          >
+            <Plus size={11} /> CUE
+          </button>
+        </div>
       )}
     </li>
   );
@@ -415,10 +464,14 @@ function CueRow({
   const over = dnd.scope === scope && dnd.overKey === overKey;
   const base = current
     ? fading
-      ? 'bg-amber-700/40'
-      : 'bg-sky-800/50'
-    : 'bg-neutral-800/40 hover:bg-neutral-800';
-  const ring = current ? (fading ? 'ring-1 ring-amber-500' : 'ring-1 ring-sky-600') : '';
+      ? "bg-amber-700/40"
+      : "bg-sky-800/50"
+    : "bg-neutral-800/40 hover:bg-neutral-800";
+  const ring = current
+    ? fading
+      ? "ring-1 ring-amber-500"
+      : "ring-1 ring-sky-600"
+    : "";
   return (
     <div
       data-current={current || undefined}
@@ -429,15 +482,26 @@ function CueRow({
     >
       {over && dnd.overPos && <DropIndicator pos={dnd.overPos} />}
       <div className="flex items-center gap-1.5">
-        <Grip scope={scope} id={dndId} index={dndIndex} dnd={dnd} editable={editable} />
+        <Grip
+          scope={scope}
+          id={dndId}
+          index={dndIndex}
+          dnd={dnd}
+          editable={editable}
+        />
         <span className="w-8 text-right font-mono text-neutral-500">{no}</span>
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <NameField cueId={cue.id} name={cue.name} editable={editable} />
-          <span className="shrink-0 text-[10px] text-neutral-500">{channelCount}ch</span>
+          <span className="shrink-0 text-[10px] text-neutral-500">
+            {channelCount}ch
+          </span>
         </div>
         <FadeFields cue={cue} editable={editable} />
         {inGroup && <FollowField cue={cue} editable={editable} />}
-        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-0.5"
+        >
           <MoveButtons onUp={onMoveUp} onDown={onMoveDown} />
           {editable && onInsertBelow && (
             <button
@@ -467,7 +531,10 @@ function CueRow({
         </div>
       )}
       {fading && (
-        <div className="flex items-center gap-2 pl-9" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="flex items-center gap-2 pl-9"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-neutral-700">
             <div
               className="h-full bg-amber-400 transition-[width] duration-200 ease-linear"
@@ -483,9 +550,17 @@ function CueRow({
   );
 }
 
-function NameField({ cueId, name, editable }: { cueId: string; name?: string; editable: boolean }) {
+function NameField({
+  cueId,
+  name,
+  editable,
+}: {
+  cueId: string;
+  name?: string;
+  editable: boolean;
+}) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
 
   const commit = () => {
     window.dmx.updateCue(cueId, { name: draft.trim() });
@@ -493,7 +568,11 @@ function NameField({ cueId, name, editable }: { cueId: string; name?: string; ed
   };
 
   if (!editable) {
-    return <span className="truncate text-neutral-200">{name?.trim() ? name : 'Cue'}</span>;
+    return (
+      <span className="truncate text-neutral-200">
+        {name?.trim() ? name : "Cue"}
+      </span>
+    );
   }
 
   return editing ? (
@@ -505,8 +584,8 @@ function NameField({ cueId, name, editable }: { cueId: string; name?: string; ed
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit();
-        if (e.key === 'Escape') setEditing(false);
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
       }}
       className="min-w-0 flex-1 rounded bg-neutral-900 px-1 text-neutral-100 outline-none ring-1 ring-sky-500"
     />
@@ -514,7 +593,7 @@ function NameField({ cueId, name, editable }: { cueId: string; name?: string; ed
     <button
       onClick={(e) => {
         e.stopPropagation();
-        setDraft(name ?? '');
+        setDraft(name ?? "");
         setEditing(true);
       }}
       className="min-w-0 truncate rounded px-1 text-left text-neutral-200 hover:bg-neutral-700"
@@ -525,9 +604,17 @@ function NameField({ cueId, name, editable }: { cueId: string; name?: string; ed
   );
 }
 
-function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: string; editable: boolean }) {
+function LyricField({
+  cueId,
+  lyrics,
+  editable,
+}: {
+  cueId: string;
+  lyrics?: string;
+  editable: boolean;
+}) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
 
   const commit = () => {
     window.dmx.updateCue(cueId, { lyrics: draft });
@@ -535,7 +622,11 @@ function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: strin
   };
 
   if (!editable) {
-    return <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-400">{lyrics}</span>;
+    return (
+      <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-400">
+        {lyrics}
+      </span>
+    );
   }
 
   return editing ? (
@@ -547,8 +638,8 @@ function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: strin
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit();
-        if (e.key === 'Escape') setEditing(false);
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
       }}
       className="min-w-0 flex-1 rounded bg-neutral-900 px-1 text-[11px] text-neutral-100 outline-none ring-1 ring-sky-500"
     />
@@ -556,13 +647,17 @@ function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: strin
     <button
       onClick={(e) => {
         e.stopPropagation();
-        setDraft(lyrics ?? '');
+        setDraft(lyrics ?? "");
         setEditing(true);
       }}
       className="min-w-0 flex-1 truncate rounded px-1 text-left text-[11px] text-neutral-400 hover:bg-neutral-700"
       title="歌詞を編集"
     >
-      {lyrics?.trim() ? lyrics : <span className="text-neutral-600">歌詞を入力</span>}
+      {lyrics?.trim() ? (
+        lyrics
+      ) : (
+        <span className="text-neutral-600">歌詞を入力</span>
+      )}
     </button>
   );
 }
@@ -570,7 +665,10 @@ function LyricField({ cueId, lyrics, editable }: { cueId: string; lyrics?: strin
 /** CUE のフェード/ディレイ時間（In / Out / Delay）をまとめて編集する。 */
 function FadeFields({ cue, editable }: { cue: Cue; editable: boolean }) {
   return (
-    <div onClick={(e) => e.stopPropagation()} className="flex shrink-0 items-center gap-0.5">
+    <div
+      onClick={(e) => e.stopPropagation()}
+      className="flex shrink-0 items-center gap-0.5"
+    >
       <MsField
         label="In"
         value={cue.fadeInMs}
@@ -605,12 +703,12 @@ function FadeFields({ cue, editable }: { cue: Cue; editable: boolean }) {
  */
 function FollowField({ cue, editable }: { cue: Cue; editable: boolean }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
   const has = cue.followMs !== undefined;
 
   const commit = () => {
     const t = draft.trim();
-    if (t === '') {
+    if (t === "") {
       window.dmx.updateCue(cue.id, { followMs: null }); // OFF（自動送り解除）
     } else {
       const ms = Math.max(0, Math.round(Number(t)));
@@ -626,7 +724,8 @@ function FollowField({ cue, editable }: { cue: Cue; editable: boolean }) {
         className="inline-flex shrink-0 items-center gap-0.5 px-0.5 font-mono text-[10px] text-emerald-400"
         title={`自動送り: ${cue.followMs}ms 後に次の子 CUE へ`}
       >
-        <FastForward size={10} fill="currentColor" />{cue.followMs}
+        <FastForward size={10} fill="currentColor" />
+        {cue.followMs}
       </span>
     );
   }
@@ -638,11 +737,11 @@ function FollowField({ cue, editable }: { cue: Cue; editable: boolean }) {
       value={draft}
       placeholder="OFF"
       onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit();
-        if (e.key === 'Escape') setEditing(false);
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
       }}
       className="w-12 shrink-0 rounded bg-neutral-900 text-center font-mono text-[10px] text-neutral-100 outline-none ring-1 ring-emerald-500"
     />
@@ -650,15 +749,16 @@ function FollowField({ cue, editable }: { cue: Cue; editable: boolean }) {
     <button
       onClick={(e) => {
         e.stopPropagation();
-        setDraft(has ? String(cue.followMs) : '');
+        setDraft(has ? String(cue.followMs) : "");
         setEditing(true);
       }}
       className={`inline-flex shrink-0 items-center gap-0.5 rounded px-1 font-mono text-[10px] hover:bg-neutral-700 ${
-        has ? 'text-emerald-400' : 'text-neutral-600'
+        has ? "text-emerald-400" : "text-neutral-600"
       }`}
       title="自動送り Delay (ms)。次の子 CUE へ自動で進む。空欄で OFF（手動 GO）"
     >
-      <FastForward size={10} fill="currentColor" />{has ? cue.followMs : 'OFF'}
+      <FastForward size={10} fill="currentColor" />
+      {has ? cue.followMs : "OFF"}
     </button>
   );
 }
@@ -686,12 +786,12 @@ function MsField({
   onClear?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
   const shown = value ?? fallback ?? 0;
   const isDefault = value === undefined;
 
   const commit = () => {
-    if (onClear && draft.trim() === '') {
+    if (onClear && draft.trim() === "") {
       onClear();
       setEditing(false);
       return;
@@ -704,7 +804,10 @@ function MsField({
   if (!editable) {
     if (isDefault) return null; // 既定（In と同じ / 0）の項目は本番表示で省略
     return (
-      <span className="px-0.5 font-mono text-[10px] text-neutral-500" title={title}>
+      <span
+        className="px-0.5 font-mono text-[10px] text-neutral-500"
+        title={title}
+      >
         {label}
         {shown}
       </span>
@@ -717,11 +820,11 @@ function MsField({
       inputMode="numeric"
       value={draft}
       onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit();
-        if (e.key === 'Escape') setEditing(false);
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
       }}
       className="w-12 rounded bg-neutral-900 text-center font-mono text-[10px] text-neutral-100 outline-none ring-1 ring-sky-500"
     />
@@ -733,7 +836,7 @@ function MsField({
         setEditing(true);
       }}
       className={`rounded px-1 font-mono text-[10px] hover:bg-neutral-700 ${
-        isDefault ? 'text-neutral-600' : 'text-neutral-300'
+        isDefault ? "text-neutral-600" : "text-neutral-300"
       }`}
       title={title}
     >
@@ -747,11 +850,11 @@ function MsField({
  * ドロップ先を示す挿入インジケータ（線＋矢印）。
  * ホバー行の前/後ろの境界に水平線を引き、左端の ▶ で挿入位置を示す。
  */
-function DropIndicator({ pos }: { pos: 'before' | 'after' }) {
+function DropIndicator({ pos }: { pos: "before" | "after" }) {
   return (
     <div
       className={`pointer-events-none absolute inset-x-0 z-20 flex items-center ${
-        pos === 'before' ? '-top-1' : '-bottom-1'
+        pos === "before" ? "-top-1" : "-bottom-1"
       }`}
     >
       <ChevronRight size={12} className="-ml-1 shrink-0 text-sky-400" />
@@ -780,7 +883,7 @@ function Grip({
       draggable
       onDragStart={(e) => {
         e.stopPropagation();
-        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.effectAllowed = "move";
         dnd.start(scope, id, index);
       }}
       onDragEnd={dnd.end}
@@ -793,7 +896,13 @@ function Grip({
   );
 }
 
-function MoveButtons({ onUp, onDown }: { onUp?: () => void; onDown?: () => void }) {
+function MoveButtons({
+  onUp,
+  onDown,
+}: {
+  onUp?: () => void;
+  onDown?: () => void;
+}) {
   return (
     <>
       <button
@@ -816,7 +925,13 @@ function MoveButtons({ onUp, onDown }: { onUp?: () => void; onDown?: () => void 
   );
 }
 
-function DeleteButton({ onClick, title }: { onClick: () => void; title: string }) {
+function DeleteButton({
+  onClick,
+  title,
+}: {
+  onClick: () => void;
+  title: string;
+}) {
   return (
     <button
       onClick={onClick}

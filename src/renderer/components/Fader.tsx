@@ -3,6 +3,7 @@
  * 縦スライダー + ch 番号 + 数値表示/直接入力 + クリア(X)。
  *
  * 触ると「キャプチャ中（CUE 記録対象・show上書き §6.1）」になりハイライト。
+ * ch 番号ボタンを押すと現在値のままキャプチャ（値を動かさず握る）。
  * 下部の X でキャプチャ解除（値も 0 に戻し show/0 へ復帰 §6.2）。
  */
 
@@ -74,17 +75,21 @@ export function Fader({
             : 'ring-transparent'
       }`}
     >
-      <div
-        className={`w-8 rounded text-center text-[10px] font-mono ${
+      <button
+        type="button"
+        onClick={() => onChange(value)}
+        disabled={released}
+        className={`w-8 rounded text-center text-[10px] font-mono transition-colors ${
           captured
             ? 'bg-amber-500 font-bold text-neutral-900'
             : cueHi
               ? 'bg-sky-500 font-bold text-neutral-900'
-              : 'text-neutral-500'
+              : 'text-neutral-500 enabled:hover:bg-neutral-800 enabled:hover:text-neutral-300'
         }`}
+        title={released ? `CH${ch + 1}` : `CH${ch + 1} を現在値でキャプチャ`}
       >
         {ch + 1}
-      </div>
+      </button>
 
       {/* ch ラベル（高さ固定でフェーダーの縦位置を揃える） */}
       <div className="flex h-3 w-11 items-center justify-center">

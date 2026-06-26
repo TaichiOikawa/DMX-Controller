@@ -84,23 +84,23 @@ describe('master-sequence GO', () => {
     expect(engine.getState().playback).toMatchObject({ mainIndex: 2, subIndex: 0 });
   });
 
-  it('loops within a loop-group at the end', () => {
+  it('exits a loop-group on GO (loop itself runs via auto-advance)', () => {
     const { engine } = makeEngine();
     engine.loadProject(
-      projectWithSequence([groupEntry('g', [cue('a', { 0: 10 }), cue('b', { 0: 20 })], true)]),
+      projectWithSequence([
+        groupEntry('g', [cue('a', { 0: 10 }), cue('b', { 0: 20 })], true),
+        cueEntry(cue('5', { 0: 50 })),
+      ]),
     );
     engine.loadShow('show1');
 
     engine.go(); // a
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(10);
-    engine.go(); // b
+    engine.go(); // GO はループを抜けて CUE5 へ（子先頭へは戻らない）
     engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(20);
-    engine.go(); // loop -> a
-    engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(10);
-    expect(engine.getState().playback).toMatchObject({ mainIndex: 0, subIndex: 0 });
+    expect(engine.getOutput()[0]).toBe(50);
+    expect(engine.getState().playback).toMatchObject({ mainIndex: 1, subIndex: 0 });
   });
 
   it('goTo jumps to an arbitrary position (loop exit / cueing)', () => {

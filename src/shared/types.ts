@@ -102,7 +102,7 @@ export interface Group {
   name?: string;
   /** 順序付き 子 CUE 列 */
   cues: Cue[];
-  /** GROUP 内ループ（末尾 GO で子先頭へ戻る） */
+  /** GROUP 内ループ（自動送りで子先頭へ戻り続ける。GO はループを抜けて次エントリへ） */
   loop: boolean;
 }
 

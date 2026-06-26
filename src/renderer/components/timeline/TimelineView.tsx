@@ -231,9 +231,10 @@ export function TimelineView({ active }: { active: boolean }) {
           </button>
           {filePath && (
             <button
-              onClick={() =>
-                activeShowId && window.dmx.clearShowAudio(activeShowId)
-              }
+              onClick={() => {
+                if (activeShowId && window.confirm("音声ファイルを削除しますか？"))
+                  window.dmx.clearShowAudio(activeShowId);
+              }}
               className="inline-flex items-center rounded px-1.5 py-1 text-neutral-500 hover:text-red-400"
               title="音声を解除"
             >

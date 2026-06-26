@@ -139,8 +139,9 @@ export function prevPosition(
 /**
  * GO の次位置を計算する。末尾に達したら null（no-op）。
  *   - 未開始(main<0): 最初の再生可能エントリ
- *   - GROUP 内で子が残る: sub+1
- *   - GROUP 末尾: loop なら子先頭(sub=0)、非 loop なら次のマスターエントリ
+ *   - loop GROUP: GO でループを抜けて次のマスターエントリへ（自動送りは nextInGroup が継続）
+ *   - 非 loop GROUP 内で子が残る: sub+1
+ *   - 非 loop GROUP 末尾: 次のマスターエントリ
  *   - CUE: 次のマスターエントリ
  */
 export function nextPosition(
@@ -153,8 +154,8 @@ export function nextPosition(
   const entry = seq[main];
   if (entry?.kind === 'group') {
     const g = entry.group;
+    if (g.loop && g.cues.length > 0) return firstPlayable(seq, main + 1); // ループは GO で抜ける
     if (sub < g.cues.length - 1) return { main, sub: sub + 1 };
-    if (g.loop && g.cues.length > 0) return { main, sub: 0 }; // ループは子先頭へ
     return firstPlayable(seq, main + 1);
   }
   // CUE / 範囲外

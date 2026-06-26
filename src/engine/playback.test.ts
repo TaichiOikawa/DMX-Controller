@@ -96,9 +96,17 @@ describe('nextPosition (master-sequence walk)', () => {
     expect(nextPosition(seq, 3, 0)).toBeNull();
   });
 
-  it('loops within a group at the end when loop is on', () => {
-    const looped = [groupEntry('g', [cue('a', {}), cue('b', {})], true)];
-    expect(nextPosition(looped, 0, 1)).toEqual({ main: 0, sub: 0 });
+  it('exits a loop group on GO (loop continues via auto-advance)', () => {
+    const looped = [
+      groupEntry('g', [cue('a', {}), cue('b', {})], true),
+      cueEntry(cue('after', {})),
+    ];
+    // GO は子の途中・末尾どちらでもループを抜けて次のマスターエントリへ。
+    expect(nextPosition(looped, 0, 0)).toEqual({ main: 1, sub: 0 });
+    expect(nextPosition(looped, 0, 1)).toEqual({ main: 1, sub: 0 });
+    // 末尾の loop GROUP（次が無い）は GO で終端。
+    const onlyLoop = [groupEntry('g', [cue('a', {}), cue('b', {})], true)];
+    expect(nextPosition(onlyLoop, 0, 1)).toBeNull();
   });
 
   it('skips empty groups', () => {

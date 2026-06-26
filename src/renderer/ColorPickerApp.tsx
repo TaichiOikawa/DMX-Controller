@@ -16,6 +16,8 @@ import { UNIVERSE_SIZE } from '../shared/types';
 export function ColorPickerApp() {
   const [fixtures, setFixtures] = useState<RgbFixture[]>([]);
   const [output, setOutput] = useState<number[]>(() => new Array(UNIVERSE_SIZE).fill(0));
+  // 全体一括設定用の選択色（ローカル状態。各フィクスチャの色はバラバラになり得るため独立して保持）。
+  const [allHex, setAllHex] = useState('#ffffff');
 
   useEffect(() => {
     const applyProject = (p: Project) => setFixtures(p.fixtures ?? []);
@@ -40,7 +42,31 @@ export function ColorPickerApp() {
           フィクスチャ未登録です。メインウィンドウの環境設定で RGB フィクスチャを追加してください。
         </div>
       ) : (
-        <div className="grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto p-3">
+        <>
+          <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800 bg-neutral-900/40 px-3 py-2">
+            <input
+              type="color"
+              value={allHex}
+              onChange={(e) => {
+                const nextHex = e.target.value;
+                setAllHex(nextHex);
+                const { r, g, b } = hexToRgb(nextHex);
+                for (const fx of fixtures) {
+                  window.dmx.setFader(fx.r, r);
+                  window.dmx.setFader(fx.g, g);
+                  window.dmx.setFader(fx.b, b);
+                }
+              }}
+              className="h-10 w-10 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+              title="全フィクスチャの色を一括設定"
+            />
+            <div className="flex min-w-0 flex-col leading-tight">
+              <span className="text-xs font-semibold text-neutral-200">全体一括</span>
+              <span className="font-mono text-[9px] uppercase text-neutral-600">{allHex}</span>
+            </div>
+          </div>
+
+          <div className="grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto p-3">
           {fixtures.map((fx) => {
             const hex = rgbToHex(output[fx.r] ?? 0, output[fx.g] ?? 0, output[fx.b] ?? 0);
             const apply = (nextHex: string) => {
@@ -71,7 +97,8 @@ export function ColorPickerApp() {
               </div>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

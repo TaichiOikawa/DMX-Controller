@@ -19,7 +19,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Cue, SequenceEntry } from '../../shared/types';
 import { useDmxStore } from '../store';
 
@@ -50,6 +50,15 @@ export function PlaybackPanel() {
   );
   const [overKey, setOverKey] = useState<string | null>(null);
   const [overPos, setOverPos] = useState<'before' | 'after' | null>(null);
+  // CUE が移動したら、現在行（data-current）をスクロール表示する。
+  const listRef = useRef<HTMLDivElement>(null);
+  const curMainPos = playback?.mainIndex ?? -1;
+  const curSubPos = playback?.subIndex ?? 0;
+  useEffect(() => {
+    if (curMainPos < 0) return;
+    const el = listRef.current?.querySelector('[data-current="true"]');
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [curMainPos, curSubPos]);
 
   const activeShow = project?.shows.find((s) => s.id === activeShowId) ?? null;
 
@@ -159,7 +168,10 @@ export function PlaybackPanel() {
       </div>
 
       {/* マスター列 */}
-      <div className="flex-1 overflow-y-auto rounded-lg bg-neutral-900/60 p-2 ring-1 ring-neutral-800">
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto rounded-lg bg-neutral-900/60 p-2 ring-1 ring-neutral-800"
+      >
         {seq.length === 0 ? (
           <div className="px-2 py-8 text-center text-sm text-neutral-600">
             まだ空です。フェーダーを動かして「Record CUE」で記録してください。
@@ -409,6 +421,7 @@ function CueRow({
   const ring = current ? (fading ? 'ring-1 ring-amber-500' : 'ring-1 ring-sky-600') : '';
   return (
     <div
+      data-current={current || undefined}
       onClick={onClick}
       onDragOver={(e) => dnd.over(scope, overKey, e)}
       onDrop={(e) => dnd.drop(scope, dndIndex, e)}
@@ -621,10 +634,11 @@ function FollowField({ cue, editable }: { cue: Cue; editable: boolean }) {
   return editing ? (
     <input
       autoFocus
+      inputMode="numeric"
       value={draft}
       placeholder="OFF"
       onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') commit();
@@ -700,9 +714,10 @@ function MsField({
   return editing ? (
     <input
       autoFocus
+      inputMode="numeric"
       value={draft}
       onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') commit();

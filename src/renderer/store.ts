@@ -161,7 +161,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   prefsOpen: false,
   showImport: null,
   missingFiles: null,
-  showSort: 'manual',
+  showSort: 'name-asc',
 
   project: null,
   playback: null,

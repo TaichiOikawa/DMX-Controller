@@ -120,8 +120,9 @@ export function Fader({
       {editing ? (
         <input
           autoFocus
+          inputMode="numeric"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
           onBlur={commitDraft}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitDraft();

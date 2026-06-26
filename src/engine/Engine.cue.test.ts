@@ -133,6 +133,53 @@ describe('master-sequence GO', () => {
     expect(engine.getOutput()[0]).toBe(200);
   });
 
+  it('clears fadeOutMs back to In via null patch', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('1', { 0: 200 }, 100))]));
+    const get = () => {
+      const e = engine.getProject().shows[0].sequence[0];
+      return e.kind === 'cue' ? e.cue : null;
+    };
+    engine.updateCue('1', { fadeOutMs: 0 }); // 明示 0（＝即アウト）
+    expect(get()?.fadeOutMs).toBe(0);
+    engine.updateCue('1', { fadeOutMs: null }); // 解除 → In と同じへ
+    expect(get()?.fadeOutMs).toBeUndefined();
+  });
+
+  it('fades down over fadeInMs once fadeOutMs is cleared', () => {
+    const { engine, clock } = makeEngine();
+    engine.loadProject(
+      projectWithSequence([
+        cueEntry(cue('1', { 0: 200 }, 0)), // 即アップ
+        cueEntry(cue('2', { 0: 0 }, 100)), // In=100ms（Out 未設定 → In と同じ）
+      ]),
+    );
+    engine.updateCue('2', { fadeOutMs: 0 }); // 即アウトに固定（バグ再現）
+    engine.loadShow('show1');
+    clock.now = 0;
+    engine.go(); // CUE1: 0ch=200
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(200);
+
+    engine.go(); // CUE2 へ：Out=0 なので即下げ
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(0);
+
+    // Out を解除 → In(100ms) で下降するはず。CUE1 に戻ってから再度 CUE2 へ。
+    engine.updateCue('2', { fadeOutMs: null });
+    engine.goBack(); // CUE1 へ戻す
+    clock.now = 1000;
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(200);
+
+    clock.now = 1000;
+    engine.go(); // 再び CUE2 へ
+    engine.tick(1050); // 50ms 経過 = 50%
+    expect(engine.getOutput()[0]).toBe(100);
+    engine.tick(1100); // 100ms 経過 = 完了
+    expect(engine.getOutput()[0]).toBe(0);
+  });
+
   it('tracks unspecified channels across the walk', () => {
     const { engine } = makeEngine();
     engine.loadProject(

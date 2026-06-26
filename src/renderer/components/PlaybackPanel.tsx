@@ -570,8 +570,9 @@ function FadeFields({ cue, editable }: { cue: Cue; editable: boolean }) {
         value={cue.fadeOutMs}
         fallback={cue.fadeInMs}
         editable={editable}
-        title="フェードアウト時間 (ms・未設定なら In と同じ)"
+        title="フェードアウト時間 (ms・空欄で In と同じに戻す)"
         onCommit={(ms) => window.dmx.updateCue(cue.id, { fadeOutMs: ms })}
+        onClear={() => window.dmx.updateCue(cue.id, { fadeOutMs: null })}
       />
       <MsField
         label="Dly"
@@ -659,6 +660,7 @@ function MsField({
   editable,
   title,
   onCommit,
+  onClear,
 }: {
   label: string;
   value: number | undefined;
@@ -666,6 +668,8 @@ function MsField({
   editable: boolean;
   title: string;
   onCommit: (ms: number) => void;
+  /** 指定時、空欄 commit で「未設定」へ戻す（fallback に従う）。 */
+  onClear?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -673,6 +677,11 @@ function MsField({
   const isDefault = value === undefined;
 
   const commit = () => {
+    if (onClear && draft.trim() === '') {
+      onClear();
+      setEditing(false);
+      return;
+    }
     const n = Math.max(0, Math.round(Number(draft)));
     if (Number.isFinite(n)) onCommit(n);
     setEditing(false);

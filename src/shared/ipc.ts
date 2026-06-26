@@ -194,7 +194,8 @@ export interface CuePatch {
   name?: string;
   lyrics?: string;
   fadeInMs?: number;
-  fadeOutMs?: number;
+  /** フェードアウト時間（ms）。null で解除（In と同じに戻す）。 */
+  fadeOutMs?: number | null;
   delayMs?: number;
   /** 自動送り Delay（ms）。null で解除（自動送りオフ＝手動 GO 待ち）。 */
   followMs?: number | null;

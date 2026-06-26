@@ -759,7 +759,10 @@ export class Engine {
     if (patch.name !== undefined) cue.name = patch.name;
     if (patch.lyrics !== undefined) cue.lyrics = patch.lyrics;
     if (patch.fadeInMs !== undefined) cue.fadeInMs = Math.max(0, patch.fadeInMs);
-    if (patch.fadeOutMs !== undefined) cue.fadeOutMs = Math.max(0, patch.fadeOutMs);
+    if (patch.fadeOutMs !== undefined) {
+      if (patch.fadeOutMs === null) delete cue.fadeOutMs;
+      else cue.fadeOutMs = Math.max(0, patch.fadeOutMs);
+    }
     if (patch.delayMs !== undefined) cue.delayMs = Math.max(0, patch.delayMs);
     if (patch.followMs !== undefined) {
       if (patch.followMs === null) delete cue.followMs;

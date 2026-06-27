@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Circle,
   Copy,
   FastForward,
   GripVertical,
@@ -158,13 +157,12 @@ export function PlaybackPanel() {
         </span>
         <span className="ml-1 text-sm text-neutral-400">{activeShow.name}</span>
         <button
-          onClick={() => window.dmx.recordCue(showId)}
+          onClick={() => window.dmx.addCue(showId)}
           disabled={!editable}
-          className="ml-auto inline-flex items-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-xs text-amber-300 hover:bg-neutral-700 disabled:opacity-40"
-          title="現在のキャプチャから CUE をマスター列末尾に記録"
+          className="ml-auto inline-flex items-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-xs text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
+          title="空の CUE をマスター列末尾に追加して選択（フェーダーで作り込む）"
         >
-          <Circle size={11} fill="currentColor" className="text-red-500" />{" "}
-          Record CUE
+          <Plus size={13} /> CUE
         </button>
         <button
           onClick={() => window.dmx.addGroupEntry(showId)}
@@ -182,7 +180,7 @@ export function PlaybackPanel() {
       >
         {seq.length === 0 ? (
           <div className="px-2 py-8 text-center text-sm text-neutral-600">
-            まだ空です。フェーダーを動かして「Record CUE」で記録してください。
+            まだ空です。「＋CUE」で空の CUE を追加し、選択してフェーダーで作り込んでください。
           </div>
         ) : (
           <ul className="flex flex-col gap-1">
@@ -272,7 +270,7 @@ function EntryRow({
           onDelete={del}
           onDuplicate={() => window.dmx.duplicateEntry(showId, entry.cue.id)}
           onInsertBelow={() =>
-            window.dmx.recordCue(showId, { atIndex: index + 1 })
+            window.dmx.addCue(showId, { atIndex: index + 1 })
           }
         />
       </li>
@@ -321,10 +319,10 @@ function EntryRow({
           {editable && (
             <button
               onClick={() =>
-                window.dmx.recordCue(showId, { targetGroupId: g.id })
+                window.dmx.addCue(showId, { targetGroupId: g.id })
               }
-              className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
-              title="現在のキャプチャから、この GROUP に子 CUE を追加"
+              className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-sky-300 hover:bg-neutral-700"
+              title="この GROUP に空の子 CUE を追加"
             >
               <Plus size={11} /> CUE
             </button>
@@ -382,7 +380,7 @@ function EntryRow({
                     window.dmx.duplicateCueInGroup(g.id, cue.id)
                   }
                   onInsertBelow={() =>
-                    window.dmx.recordCue(showId, {
+                    window.dmx.addCue(showId, {
                       targetGroupId: g.id,
                       atIndex: j + 1,
                     })
@@ -398,9 +396,9 @@ function EntryRow({
       {editable && (
         <div className="border-t border-neutral-800 px-2">
           <button
-            onClick={() => window.dmx.recordCue(showId, { atIndex: index + 1 })}
-            className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-amber-300 hover:bg-neutral-700"
-            title="現在のキャプチャから、この GROUP の外（直下）に CUE を追加"
+            onClick={() => window.dmx.addCue(showId, { atIndex: index + 1 })}
+            className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-sky-300 hover:bg-neutral-700"
+            title="この GROUP の外（直下）に空の CUE を追加"
           >
             <Plus size={11} /> CUE
           </button>

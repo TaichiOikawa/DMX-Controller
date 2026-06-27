@@ -17,7 +17,7 @@ import {
   Cmd,
   Evt,
   type ActionPatch,
-  type CaptureCueOptions,
+  type AddCueOptions,
   type CuePatch,
   type EngineStateSnapshot,
   type FixtureInit,
@@ -265,8 +265,8 @@ export class EngineHost {
     ipcMain.on(Cmd.setShowFolder, (_e, showId: string, folderId: string | null) =>
       this.engine.setShowFolder(showId, folderId),
     );
-    ipcMain.on(Cmd.recordCue, (_e, showId: string, opts?: CaptureCueOptions) =>
-      this.engine.recordCue(showId, opts),
+    ipcMain.on(Cmd.addCue, (_e, showId: string, opts?: AddCueOptions) =>
+      this.engine.addCue(showId, opts),
     );
     ipcMain.on(Cmd.addGroupEntry, (_e, showId: string, name?: string) =>
       this.engine.addGroupEntry(showId, name),

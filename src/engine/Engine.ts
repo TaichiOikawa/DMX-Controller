@@ -54,7 +54,7 @@ import { pointsCrossed } from './timeline';
 import { deserializeProject, serializeProject } from '../shared/persistence';
 import type {
   ActionPatch,
-  CaptureCueOptions,
+  AddCueOptions,
   CuePatch,
   EngineStateSnapshot,
   FixtureInit,
@@ -114,7 +114,7 @@ export class Engine {
     this.runtime = {
       activeShowId: null,
       show: null,
-      captured: new Array(UNIVERSE_SIZE).fill(false),
+      busking: new Array(UNIVERSE_SIZE).fill(false),
       faderLive: this.project.faders.slice(),
       activeActions: [],
       mode: 'edit',
@@ -260,9 +260,10 @@ export class Engine {
   }
 
   /**
-   * フェーダー値を設定する（§5.1, 1:1）。
-   * - Edit モード × show 制御下 ch: 現在 CUE を直接編集（capture しない）。
-   * - それ以外（Show モード / Edit の非制御 ch）: プログラマー＝キャプチャ（§6.1）。
+   * フェーダー値を設定する（§5.1, 1:1）。CUE 先行モデル:
+   * - Edit × CUE 選択中: 選択 CUE へリアルタイム書き込み（全 ch・永続）。
+   * - Edit × CUE 未選択: ライブ直接出力のみ（保存しない・層4 faderLive）。
+   * - Show モード: busking ライブ上書き（保存しない・層2）。
    */
   setFader(ch: number, value: number): void {
     if (ch < 0 || ch >= UNIVERSE_SIZE) return;
@@ -270,19 +271,21 @@ export class Engine {
     this.runtime.faderLive[ch] = v;
 
     const show = this.runtime.show;
-    if (show === null) return; // 解放中: フェーダー直接出力。capture 概念を持たない
-    const controlled = show.mainIndex >= 0 && show.controlled[ch];
-    if (this.runtime.mode === 'edit' && controlled) {
-      this.editCurrentCue(ch, v);
-      this.runtime.captured[ch] = false;
+    if (show === null) return; // 解放中: フェーダー直接出力
+
+    if (this.runtime.mode === 'edit') {
+      // CUE 選択中なら選択 CUE へ取り込み（未制御 ch も含む）。未選択ならライブプレビューのみ。
+      if (show.mainIndex >= 0) this.editCurrentCue(ch, v);
+      this.runtime.busking[ch] = false;
       return;
     }
-    this.runtime.captured[ch] = true;
+    // Show モード: busking ライブ上書き
+    this.runtime.busking[ch] = true;
   }
 
   /**
    * Edit モード: 現在の再生位置の CUE にこの ch を直接書き込む（Update 相当）。
-   * cue.values を更新（永続）し、tracked を即時反映する。
+   * cue.values を更新（永続）し、未制御 ch なら controlled へ加えて tracked を即時反映する。
    */
   private editCurrentCue(ch: number, v: number): void {
     const show = this.activeShow;
@@ -292,6 +295,7 @@ export class Engine {
     if (!cue) return;
     this.pushUndoCoalesced(500); // フェーダー連続編集は1バーストに束ねる
     cue.values[ch] = v; // 現在 CUE に追加/上書き
+    rt.controlled[ch] = true; // 新規 ch を show 制御下へ（層3 で出力・再選択時も保持）
     rt.tracked[ch] = v; // ライブ反映
     if (rt.fade) rt.fade.to[ch] = v; // フェード中なら着地点も更新
     this.scheduleProjectNotify();
@@ -299,24 +303,33 @@ export class Engine {
   }
 
   /**
-   * キャプチャ解除（§6.2 リリース）。指定（省略で全 captured）の ch を
-   * captured=false かつ faderLive=0 にする。
+   * busking 解除（§6.2 リリース）。指定（省略で全 busking）の ch を
+   * busking=false かつ faderLive=0 にする。
    * show 制御下 ch は層3(cue値)へ戻り、非制御 ch は 0 にクリアされる。
    */
   releaseCapture(channels?: number[]): void {
-    const chs = channels ?? this.capturedChannels();
+    const chs = channels ?? this.buskingChannels();
     for (const ch of chs) {
       if (ch < 0 || ch >= UNIVERSE_SIZE) continue;
-      this.runtime.captured[ch] = false;
+      this.runtime.busking[ch] = false;
       this.runtime.faderLive[ch] = 0;
     }
     this.emitState();
   }
 
-  private capturedChannels(): number[] {
+  private buskingChannels(): number[] {
     const out: number[] = [];
     for (let ch = 0; ch < UNIVERSE_SIZE; ch++) {
-      if (this.runtime.captured[ch]) out.push(ch);
+      if (this.runtime.busking[ch]) out.push(ch);
+    }
+    return out;
+  }
+
+  /** 現在のフェーダー位置が非ゼロの ch（Action オーサリングの取り込み元）。 */
+  private liveFaderChannels(): number[] {
+    const out: number[] = [];
+    for (let ch = 0; ch < UNIVERSE_SIZE; ch++) {
+      if (this.runtime.faderLive[ch] > 0) out.push(ch);
     }
     return out;
   }
@@ -433,7 +446,7 @@ export class Engine {
     // 解放前の合成出力（グランドマスター適用前）をフェーダーへ取り込み、出力ジャンプを防ぐ。
     // resolveFrame は ch ごとに独立して書き込むため、出力先に faderLive を直接渡せる。
     resolveFrame(contextFromRuntime(this.runtime), this.runtime.faderLive);
-    this.runtime.captured.fill(false); // 解放中は capture 概念を持たない
+    this.runtime.busking.fill(false); // 解放中は busking 概念を持たない
     this.activeShow = null;
     this.runtime.activeShowId = null;
     this.runtime.show = null;
@@ -510,10 +523,10 @@ export class Engine {
     rt.mainIndex = pos.main;
     rt.subIndex = pos.sub;
     this.scheduleFollow(now);
-    // §6.2: 新 cue が操作対象に含む ch のキャプチャを解除（cue が引き継ぐ）。
+    // §6.2: 新 cue が操作対象に含む ch の busking 上書きを解除（cue が引き継ぐ）。
     for (const k of Object.keys(cue.values)) {
       const ch = Number(k);
-      if (ch >= 0 && ch < UNIVERSE_SIZE) this.runtime.captured[ch] = false;
+      if (ch >= 0 && ch < UNIVERSE_SIZE) this.runtime.busking[ch] = false;
     }
   }
 
@@ -709,27 +722,41 @@ export class Engine {
     this.notifyProject();
   }
 
-  /** 現在のフェーダーから CUE を作成。targetGroupId 指定で GROUP の子へ、無ければマスター列末尾へ。 */
-  recordCue(showId: string, opts?: CaptureCueOptions): void {
+  /**
+   * 空の CUE を追加する。targetGroupId 指定で GROUP の子へ、無ければマスター列末尾へ。
+   * 追加した Show がアクティブなら新 CUE を自動選択し、フェーダーで作り込めるようにする。
+   */
+  addCue(showId: string, opts?: AddCueOptions): void {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     this.pushUndo();
 
-    const cue = this.cueFromFaders(opts);
+    const cue: Cue = { id: genId(), name: opts?.name, values: {}, fadeInMs: opts?.fadeInMs ?? 0 };
     const targetGroupId = opts?.targetGroupId;
     const at = opts?.atIndex;
+
+    let pos: Position | null = null;
     if (targetGroupId) {
       const group = this.findGroupInShow(show, targetGroupId);
       if (!group) return;
-      if (at === undefined) group.cues.push(cue);
-      else group.cues.splice(clampInsert(at, group.cues.length), 0, cue);
+      const sub = at === undefined ? group.cues.length : clampInsert(at, group.cues.length);
+      group.cues.splice(sub, 0, cue);
+      const main = show.sequence.findIndex(
+        (e) => e.kind === 'group' && e.group.id === targetGroupId,
+      );
+      if (main >= 0) pos = { main, sub };
     } else {
       const entry = createCueEntry(cue);
-      if (at === undefined) show.sequence.push(entry);
-      else show.sequence.splice(clampInsert(at, show.sequence.length), 0, entry);
+      const main = at === undefined ? show.sequence.length : clampInsert(at, show.sequence.length);
+      show.sequence.splice(main, 0, entry);
+      pos = { main, sub: 0 };
     }
     this.afterStructureChange(showId);
+
+    if (pos && this.activeShow?.id === showId && this.runtime.show) {
+      this.goTo(pos.main, pos.sub);
+    }
   }
 
   /** 空の GROUP エントリをマスター列末尾に追加。 */
@@ -794,7 +821,7 @@ export class Engine {
         rt.tracked[ch] = 0;
         if (rt.fade) rt.fade.to[ch] = 0;
         this.runtime.faderLive[ch] = 0;
-        this.runtime.captured[ch] = false;
+        this.runtime.busking[ch] = false;
       }
     }
     this.notifyProject();
@@ -911,8 +938,8 @@ export class Engine {
     if (this.runtime.show === null) return; // 解放中はオーサリング不可
     this.pushUndo();
     const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
-    // 現在のフェーダー(captured)を最初の step として取り込む。
-    const values = this.faderValuesFor(this.capturedChannels());
+    // 現在のフェーダー位置（非ゼロ ch）を最初の step として取り込む。
+    const values = this.faderValuesFor(this.liveFaderChannels());
     action.steps.push({ values, fadeInMs: 0, holdMs: 500 });
     this.project.actions.push(action);
     this.notifyProject();
@@ -939,14 +966,14 @@ export class Engine {
     this.emitState();
   }
 
-  /** 現在のフェーダー(captured)を新しい step として追加（チェイス用）。 */
+  /** 現在のフェーダー位置（非ゼロ ch）を新しい step として追加（チェイス用）。 */
   addActionStep(actionId: string, fadeInMs = 0, holdMs = 500): void {
     if (!this.editable) return;
     if (this.runtime.show === null) return; // 解放中はオーサリング不可
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
     this.pushUndo();
-    const values = this.faderValuesFor(this.capturedChannels());
+    const values = this.faderValuesFor(this.liveFaderChannels());
     action.steps.push({ values, fadeInMs: Math.max(0, fadeInMs), holdMs: Math.max(0, holdMs) });
     this.notifyProject();
   }
@@ -1063,20 +1090,6 @@ export class Engine {
 
   // ===== 内部ヘルパ =====
 
-  private cueFromFaders(opts?: CaptureCueOptions): Cue {
-    // 既定はプログラマー（captured 中の ch）を保存。明示指定があればそれを優先。
-    const explicit = opts?.channels;
-    const channels = explicit ?? this.capturedChannels();
-    const includeZero = opts?.includeZero ?? explicit === undefined; // captured は 0 でも保存
-    const values: Record<number, number> = {};
-    for (const ch of channels) {
-      if (ch < 0 || ch >= UNIVERSE_SIZE) continue;
-      const v = this.runtime.faderLive[ch];
-      if (v > 0 || includeZero) values[ch] = v;
-    }
-    return { id: genId(), name: opts?.name, values, fadeInMs: opts?.fadeInMs ?? 0 };
-  }
-
   /** 構造変更後: 読込中 Show ならフットプリント再計算＋プレイヘッド補正し、Project 通知。 */
   private afterStructureChange(showId: string): void {
     if (this.activeShow?.id === showId && this.runtime.show) {
@@ -1147,7 +1160,7 @@ export class Engine {
     const show = this.runtime.show;
     return {
       activeShowId: this.runtime.activeShowId,
-      captured: this.runtime.captured.slice(),
+      busking: this.runtime.busking.slice(),
       artnet: { ...this.artnet },
       measuredHz: this.measuredHz,
       mode: this.runtime.mode,

@@ -227,8 +227,9 @@ export interface ActionRuntime {
 
 /**
  * 操作モード。
- * - 'edit': show 制御下 ch を触ると現在 CUE を直接編集（capture しない）。編集機能 有効。
- * - 'show': 作成系の編集を全ブロック。show 制御下 ch を触るとプログラマー（capture）。
+ * - 'edit': CUE オーサリング。CUE 選択中ならフェーダー操作を選択 CUE へリアルタイム書き込み。
+ *   未選択ならライブ直接出力（保存なし）。編集機能 有効。
+ * - 'show': 作成系の編集を全ブロック。フェーダー操作は busking ライブ上書き（保存なし）。
  */
 export type EngineMode = 'edit' | 'show';
 
@@ -236,8 +237,8 @@ export interface EngineRuntime {
   activeShowId: string | null;
   /** 読込中 Show の再生状態（未読込は null）。 */
   show: ShowRuntime | null;
-  /** 512 */
-  captured: boolean[];
+  /** 512: SHOW モードの busking ライブ上書き中 ch（保存しない一時オーバーライド）。 */
+  busking: boolean[];
   /** 512: 現在のフェーダー位置 */
   faderLive: number[];
   /** アクティブな Action（最優先層）。 */

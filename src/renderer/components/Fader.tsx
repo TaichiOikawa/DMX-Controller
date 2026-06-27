@@ -2,9 +2,9 @@
  * 単一フェーダー = 1 DMX チャンネル（§5.1, 1:1）。
  * 縦スライダー + ch 番号 + 数値表示/直接入力 + クリア(X)。
  *
- * 触ると「キャプチャ中（CUE 記録対象・show上書き §6.1）」になりハイライト。
- * ch 番号ボタンを押すと現在値のままキャプチャ（値を動かさず握る）。
- * 下部の X でキャプチャ解除（値も 0 に戻し show/0 へ復帰 §6.2）。
+ * ハイライト: SHOW モードの busking ライブ上書き中 ch は purple、EDIT で選択中 CUE が
+ * 握る ch は sky。ch 番号ボタンで現在値のまま反映（値を動かさず確定）。
+ * 下部の X は CUE ch なら CUE から削除、busking なら解除（値を 0 に戻す）。
  */
 
 import { X } from 'lucide-react';
@@ -16,13 +16,13 @@ interface FaderProps {
   ch: number;
   /** フェーダー位置 0-255 */
   value: number;
-  /** エンジンの実出力 0-255（キャプチャ/HTP で位置と異なりうる） */
+  /** エンジンの実出力 0-255（busking/HTP で位置と異なりうる） */
   output: number;
-  /** キャプチャ中か（プログラマー・amber ハイライト） */
-  captured: boolean;
+  /** busking ライブ上書き中か（SHOW モード・purple ハイライト） */
+  busking: boolean;
   /** 選択中（current）CUE が握る ch か（sky ハイライト） */
   inSelectedCue: boolean;
-  /** Show 未読込（解放中）か。capture 概念を持たず、X は「値を 0 に」リセット。 */
+  /** Show 未読込（解放中）か。busking 概念を持たず、X は「値を 0 に」リセット。 */
   released?: boolean;
   /** ch ラベル（任意）。 */
   label?: string;
@@ -39,7 +39,7 @@ export function Fader({
   ch,
   value,
   output,
-  captured,
+  busking,
   inSelectedCue,
   released,
   label,
@@ -54,10 +54,10 @@ export function Fader({
   const pct = (value / 255) * 100;
   const outPct = (output / 255) * 100;
   const diverged = output !== value;
-  // ハイライト優先度: captured(amber) > 選択中 CUE(sky) > なし。
-  const cueHi = inSelectedCue && !captured;
-  // 解放中は capture/CUE が無いので、X は「値を 0 に」リセット（値>0 のとき活性）。
-  const clearable = captured || inSelectedCue || (!!released && value > 0);
+  // ハイライト優先度: busking(purple) > 選択中 CUE(sky) > なし。
+  const cueHi = inSelectedCue && !busking;
+  // 解放中は busking/CUE が無いので、X は「値を 0 に」リセット（値>0 のとき活性）。
+  const clearable = busking || inSelectedCue || (!!released && value > 0);
 
   const commitDraft = () => {
     const n = Math.max(0, Math.min(255, Math.round(Number(draft))));
@@ -68,8 +68,8 @@ export function Fader({
   return (
     <div
       className={`flex w-12 shrink-0 flex-col items-center gap-1 rounded-md py-1 ring-1 transition-colors ${
-        captured
-          ? 'bg-amber-500/10 ring-amber-500/70'
+        busking
+          ? 'bg-purple-500/10 ring-purple-500/70'
           : cueHi
             ? 'bg-sky-500/10 ring-sky-500/70'
             : 'ring-transparent'
@@ -80,13 +80,19 @@ export function Fader({
         onClick={() => onChange(value)}
         disabled={released}
         className={`w-8 rounded text-center text-[10px] font-mono transition-colors ${
-          captured
-            ? 'bg-amber-500 font-bold text-neutral-900'
+          busking
+            ? 'bg-purple-500 font-bold text-neutral-900'
             : cueHi
               ? 'bg-sky-500 font-bold text-neutral-900'
               : 'text-neutral-500 enabled:hover:bg-neutral-800 enabled:hover:text-neutral-300'
         }`}
-        title={released ? `CH${ch + 1}` : `CH${ch + 1} を現在値でキャプチャ`}
+        title={
+          released
+            ? `CH${ch + 1}`
+            : cueHi
+              ? `CH${ch + 1} を現在値で CUE に追加`
+              : `CH${ch + 1} を現在値で反映`
+        }
       >
         {ch + 1}
       </button>
@@ -152,8 +158,8 @@ export function Fader({
         onClick={onClear}
         disabled={!clearable}
         className={`flex h-5 w-5 items-center justify-center rounded text-xs ${
-          captured
-            ? 'bg-neutral-800 text-amber-300 hover:bg-red-900/60 hover:text-red-200'
+          busking
+            ? 'bg-neutral-800 text-purple-300 hover:bg-red-900/60 hover:text-red-200'
             : cueHi
               ? 'bg-neutral-800 text-sky-300 hover:bg-red-900/60 hover:text-red-200'
               : clearable
@@ -163,11 +169,11 @@ export function Fader({
         title={
           cueHi
             ? 'この CUE からこの ch を削除'
-            : captured
-              ? 'キャプチャ解除（値を 0 に）'
+            : busking
+              ? 'busking 解除（値を 0 に）'
               : released
                 ? '値を 0 に'
-                : '未キャプチャ'
+                : '—'
         }
       >
         <X size={13} />

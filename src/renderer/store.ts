@@ -3,7 +3,7 @@
  *
  * エンジンが「単一の真実」なので、ここは UI ミラー:
  *   - faders: フェーダー位置（楽観的に即時反映 + エンジンへ送信）
- *   - captured: プログラマー＝キャプチャ中 ch（ハイライト。エンジン由来＋楽観更新）
+ *   - busking: SHOW モードのライブ上書き中 ch（purple ハイライト。エンジン由来＋楽観更新）
  *   - output: エンジンの実出力（可視化用）
  *   - project: Show/マスター列/Action 構造（編集対象、エンジンから受信）
  *   - playback / activeActionIds: 再生・Action の状態（エンジンから受信）
@@ -39,7 +39,7 @@ export type ShowSort = 'manual' | 'name-asc' | 'name-desc';
 interface DmxState {
   faders: number[];
   output: number[];
-  captured: boolean[];
+  busking: boolean[];
   artnet: ArtnetSettings;
   measuredHz: number;
   bank: number;
@@ -155,7 +155,7 @@ function durationForProject(
 export const useDmxStore = create<DmxState>((set, get) => ({
   faders: new Array(UNIVERSE_SIZE).fill(0),
   output: new Array(UNIVERSE_SIZE).fill(0),
-  captured: new Array(UNIVERSE_SIZE).fill(false),
+  busking: new Array(UNIVERSE_SIZE).fill(false),
   artnet: defaultArtnetSettings(),
   measuredHz: 0,
   bank: 0,
@@ -186,15 +186,15 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       const faders = s.faders.slice();
       faders[ch] = value;
       window.dmx.setFader(ch, value);
-      // Show モードかつ show 読込中のみ楽観的にキャプチャ表示。Edit は制御下 ch を capture
-      // しないため楽観更新せず engineState で反映。解放中(未読込)は capture 概念を持たない。
+      // SHOW モードかつ show 読込中のみ楽観的に busking 表示。EDIT は CUE への書き込みが
+      // engineState/project 経由で反映されるため楽観更新しない。解放中(未読込)は busking 無し。
       if (s.mode !== 'show' || s.activeShowId === null) return { faders };
-      let captured = s.captured;
-      if (!captured[ch]) {
-        captured = captured.slice();
-        captured[ch] = true;
+      let busking = s.busking;
+      if (!busking[ch]) {
+        busking = busking.slice();
+        busking[ch] = true;
       }
-      return { faders, captured };
+      return { faders, busking };
     }),
 
   setOutput: (frame) => set({ output: frame }),
@@ -243,7 +243,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       playback: state.playback,
       activeShowId: state.activeShowId,
       activeActionIds: state.activeActionIds,
-      captured: state.captured,
+      busking: state.busking,
       mode: state.mode,
       masterLevel: state.masterLevel,
       blackout: state.blackout,
@@ -279,17 +279,17 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       window.dmx.releaseCapture([ch]);
       const faders = s.faders.slice();
       faders[ch] = 0;
-      const captured = s.captured.slice();
-      captured[ch] = false;
-      return { faders, captured };
+      const busking = s.busking.slice();
+      busking[ch] = false;
+      return { faders, busking };
     }),
 
   releaseAll: () =>
     set((s) => {
       window.dmx.releaseCapture();
       const faders = s.faders.slice();
-      for (let ch = 0; ch < faders.length; ch++) if (s.captured[ch]) faders[ch] = 0;
-      return { faders, captured: new Array(faders.length).fill(false) };
+      for (let ch = 0; ch < faders.length; ch++) if (s.busking[ch]) faders[ch] = 0;
+      return { faders, busking: new Array(faders.length).fill(false) };
     }),
 
   syncFadersToCue: (cueValues) =>
@@ -298,7 +298,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       const faders = new Array(s.faders.length).fill(0);
       for (let ch = 0; ch < faders.length; ch++) {
         const v = cueValues[ch];
-        faders[ch] = v !== undefined ? v : s.captured[ch] ? s.faders[ch] : 0;
+        faders[ch] = v !== undefined ? v : s.busking[ch] ? s.faders[ch] : 0;
       }
       return { faders };
     }),
@@ -308,9 +308,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       window.dmx.deleteCueChannel(cueId, ch);
       const faders = s.faders.slice();
       faders[ch] = 0;
-      const captured = s.captured.slice();
-      captured[ch] = false;
-      return { faders, captured };
+      const busking = s.busking.slice();
+      busking[ch] = false;
+      return { faders, busking };
     }),
 
   deselectCue: () =>
@@ -324,7 +324,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       const faders = s.faders.slice();
       for (const k of Object.keys(cue.values)) {
         const ch = Number(k);
-        if (!s.captured[ch]) faders[ch] = 0;
+        if (!s.busking[ch]) faders[ch] = 0;
       }
       return { faders };
     }),

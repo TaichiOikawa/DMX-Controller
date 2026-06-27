@@ -3,7 +3,7 @@
  * - press-once: クリックで1回再生（自動解除）
  * - hold-once / hold-loop: 押している間アクティブ（離すと解除）
  *
- * オーサリング: 「＋Action」で現在のキャプチャ中フェーダーを1stepとして作成。
+ * オーサリング: 「＋Action」で現在のフェーダー位置（非ゼロ ch）を1stepとして作成。
  * 各 Action は mode 変更 / ＋Step（チェイス用）/ 削除ができる。
  */
 
@@ -20,9 +20,9 @@ const MODE_LABEL: Record<ActionMode, string> = {
 export function ActionPanel() {
   const project = useDmxStore((s) => s.project);
   const activeActionIds = useDmxStore((s) => s.activeActionIds);
-  const capturedCount = useDmxStore((s) => s.captured.reduce((n, b) => (b ? n + 1 : n), 0));
+  const liveFaderCount = useDmxStore((s) => s.faders.reduce((n, v) => (v > 0 ? n + 1 : n), 0));
   const editable = useDmxStore((s) => s.mode === 'edit');
-  // Show 未読込（解放中）は capture 概念が無く、Action オーサリング不可。
+  // Show 未読込（解放中）は Action オーサリング不可。
   const released = useDmxStore((s) => s.activeShowId === null);
 
   const actions = project?.actions ?? [];
@@ -33,12 +33,12 @@ export function ActionPanel() {
         <span className="text-[11px] font-semibold text-sky-400">Action</span>
         <button
           onClick={() => window.dmx.addAction()}
-          disabled={!editable || released || capturedCount === 0}
+          disabled={!editable || released || liveFaderCount === 0}
           className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
           title={
             released
               ? 'Show を読み込むと作成できます'
-              : 'キャプチャ中のフェーダーから Action を作成'
+              : '現在のフェーダー位置から Action を作成'
           }
         >
           <Plus size={11} /> Action
@@ -136,7 +136,7 @@ function ActionCard({
               disabled={released}
               className="inline-flex items-center gap-0.5 rounded px-1 text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
               title={
-                released ? 'Show を読み込むと追加できます' : '現在のキャプチャを step として追加（チェイス）'
+                released ? 'Show を読み込むと追加できます' : '現在のフェーダー位置を step として追加（チェイス）'
               }
             >
               <Plus size={11} /> Step

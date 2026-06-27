@@ -57,7 +57,7 @@ export const Cmd = {
   renameFolder: 'cmd:renameFolder',
   deleteFolder: 'cmd:deleteFolder',
   setShowFolder: 'cmd:setShowFolder',
-  recordCue: 'cmd:recordCue',
+  addCue: 'cmd:addCue',
   addGroupEntry: 'cmd:addGroupEntry',
   setGroupLoop: 'cmd:setGroupLoop',
   updateCue: 'cmd:updateCue',
@@ -111,7 +111,7 @@ export const Cmd = {
 export const Evt = {
   /** 可視化用の出力フレーム（~30Hz に間引き） */
   outputFrame: 'evt:outputFrame',
-  /** 各グループの現在 CUE / captured ch / 再生レート 等 */
+  /** 現在 CUE / busking ch / 再生レート 等 */
   engineState: 'evt:engineState',
   /** Project 構造（編集・読込で更新） */
   project: 'evt:project',
@@ -173,15 +173,11 @@ export interface SetFaderPayload {
   value: number;
 }
 
-/** recordCue（現在フェーダーから CUE 作成）のオプション。 */
-export interface CaptureCueOptions {
-  /** 取り込む ch を限定（省略時は非ゼロのフェーダー全て）。 */
-  channels?: number[];
-  /** 値 0 の ch も含める（既定 false）。 */
-  includeZero?: boolean;
+/** addCue（空の CUE を追加）のオプション。 */
+export interface AddCueOptions {
   /** 生成する cue の名前。 */
   name?: string;
-  /** 生成する cue のフェード時間（ms、既定 1000）。 */
+  /** 生成する cue のフェード時間（ms、既定 0）。 */
   fadeInMs?: number;
   /** 指定すると、その GROUP の子 CUE として追加（省略時はマスター列末尾へ）。 */
   targetGroupId?: string;
@@ -261,8 +257,8 @@ export interface PlaybackStatus {
 /** 可視化用に間引かれた状態スナップショット（§9 `state`）。 */
 export interface EngineStateSnapshot {
   activeShowId: string | null;
-  /** 512: captured フラグ */
-  captured: boolean[];
+  /** 512: busking（SHOW モードのライブ上書き）中フラグ */
+  busking: boolean[];
   artnet: ArtnetSettings;
   /** 実際の送出レート計測値（Hz）。診断用。 */
   measuredHz: number;
@@ -334,7 +330,7 @@ export interface DmxBridge {
   deleteFolder(folderId: string): void;
   /** Show の所属フォルダを設定/解除する（null でルートへ）。 */
   setShowFolder(showId: string, folderId: string | null): void;
-  recordCue(showId: string, opts?: CaptureCueOptions): void;
+  addCue(showId: string, opts?: AddCueOptions): void;
   addGroupEntry(showId: string, name?: string): void;
   setGroupLoop(groupId: string, loop: boolean): void;
   updateCue(cueId: string, patch: CuePatch): void;

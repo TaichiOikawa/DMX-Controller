@@ -10,7 +10,7 @@ import {
   Cmd,
   Evt,
   type ActionPatch,
-  type CaptureCueOptions,
+  type AddCueOptions,
   type CuePatch,
   type DirtyState,
   type DmxBridge,
@@ -123,8 +123,8 @@ const api: DmxBridge = {
   setShowFolder(showId, folderId) {
     ipcRenderer.send(Cmd.setShowFolder, showId, folderId);
   },
-  recordCue(showId, opts?: CaptureCueOptions) {
-    ipcRenderer.send(Cmd.recordCue, showId, opts);
+  addCue(showId, opts?: AddCueOptions) {
+    ipcRenderer.send(Cmd.addCue, showId, opts);
   },
   addGroupEntry(showId, name) {
     ipcRenderer.send(Cmd.addGroupEntry, showId, name);

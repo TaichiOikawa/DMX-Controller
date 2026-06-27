@@ -3,14 +3,14 @@
  *
  * 毎フレーム ch=0..511 について優先スタックで出力を決定する:
  *   1. Action オーバーライド層 … アクティブ中は最優先で上書き
- *   2. 手動キャプチャ層        … captured[ch] なら out = faderLive[ch]（HTP 無視）
+ *   2. busking 層             … busking[ch]（SHOW モードのライブ上書き）なら out = faderLive[ch]（HTP 無視）
  *   3. show 層（グループ間HTP）… いずれかのグループが制御中なら max(各 tracked[ch])
  *   4. フェーダー基準層        … どの CUE も制御しない ch / show 未読込時
  *
  * 今回のマイルストーン（1〜2）では Show / グループ / Action が未実装のため、
  * 層1〜3 は常に「非アクティブ」を返し、出力は層4（faderLive）に落ちる。
  * ただし優先スタックの分岐構造はここに敷いておき、後続マイルストーンでは
- * 各層の述語（actionControls / captured / anyGroupControls）と値取得関数
+ * 各層の述語（actionControls / busking / anyGroupControls）と値取得関数
  * （actionValue / htpOverGroups）を埋めるだけで済むようにする。
  */
 
@@ -22,7 +22,7 @@ import { UNIVERSE_SIZE, type EngineRuntime } from '../shared/types';
  */
 export interface MixContext {
   faderLive: number[];
-  captured: boolean[];
+  busking: boolean[];
   /** 後続実装用フック。未制御なら false / null を返す。 */
   actionControls?: (ch: number) => boolean;
   actionValue?: (ch: number) => number;
@@ -36,8 +36,8 @@ export function resolveChannel(ctx: MixContext, ch: number): number {
   if (ctx.actionControls?.(ch)) {
     return ctx.actionValue ? ctx.actionValue(ch) : 0;
   }
-  // 2. 手動キャプチャ層（HTP 無視・下げれば下がる）
-  if (ctx.captured[ch]) {
+  // 2. busking 層（SHOW モードのライブ上書き・HTP 無視・下げれば下がる）
+  if (ctx.busking[ch]) {
     return ctx.faderLive[ch];
   }
   // 3. show 層・グループ間 HTP
@@ -99,7 +99,7 @@ export function contextFromRuntime(rt: EngineRuntime): MixContext {
 
   return {
     faderLive: rt.faderLive,
-    captured: rt.captured,
+    busking: rt.busking,
     actionControls,
     actionValue,
     anyGroupControls,

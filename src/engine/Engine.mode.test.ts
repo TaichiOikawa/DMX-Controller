@@ -28,7 +28,7 @@ describe('mode', () => {
 });
 
 describe('Edit mode', () => {
-  it('editing a show-controlled ch writes the current cue (no capture)', () => {
+  it('editing a show-controlled ch writes the selected cue (no busking)', () => {
     const engine = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
     engine.loadShow('show1');
@@ -36,12 +36,12 @@ describe('Edit mode', () => {
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(50);
 
-    engine.setFader(0, 200); // edit mode + controlled -> edit cue
+    engine.setFader(0, 200); // edit mode + cue selected -> edit cue
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(200); // live
     const entry = engine.getProject().shows[0].sequence[0];
     if (entry.kind === 'cue') expect(entry.cue.values[0]).toBe(200); // persisted
-    expect(engine.getState().captured[0]).toBe(false); // not captured
+    expect(engine.getState().busking[0]).toBe(false); // not busking
   });
 
   it('editing a tracked ch (not in current cue) adds it to the current cue', () => {
@@ -59,20 +59,34 @@ describe('Edit mode', () => {
     if (c1.kind === 'cue') expect(c1.cue.values[0]).toBe(77);
   });
 
-  it('a non-controlled ch still captures (programmer for new cues)', () => {
+  it('a non-controlled ch is added to the selected cue (no busking in edit)', () => {
     const engine = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
     engine.loadShow('show1');
-    engine.go();
-    engine.setFader(10, 200); // not in footprint -> capture
+    engine.go(); // select c1
+    engine.setFader(10, 200); // edit + selected -> add ch10 to c1
     engine.tick(0);
     expect(engine.getOutput()[10]).toBe(200);
-    expect(engine.getState().captured[10]).toBe(true);
+    expect(engine.getState().busking[10]).toBe(false);
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.values[10]).toBe(200); // persisted into cue
+  });
+
+  it('edits do not persist when no cue is selected (live preview only)', () => {
+    const engine = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
+    engine.loadShow('show1'); // mainIndex = -1（未 GO）
+    engine.setFader(3, 120); // CUE 未選択 -> ライブ出力のみ
+    engine.tick(0);
+    expect(engine.getOutput()[3]).toBe(120); // live
+    expect(engine.getState().busking[3]).toBe(false);
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.values[3]).toBeUndefined(); // 保存されない
   });
 });
 
 describe('Show mode', () => {
-  it('touching a show-controlled ch captures (overrides), does not edit the cue', () => {
+  it('touching a show-controlled ch busks (overrides), does not edit the cue', () => {
     const engine = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
     engine.loadShow('show1');
@@ -80,8 +94,8 @@ describe('Show mode', () => {
     engine.setMode('show');
     engine.setFader(0, 200);
     engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(200); // captured override
-    expect(engine.getState().captured[0]).toBe(true);
+    expect(engine.getOutput()[0]).toBe(200); // busking override
+    expect(engine.getState().busking[0]).toBe(true);
     const entry = engine.getProject().shows[0].sequence[0];
     if (entry.kind === 'cue') expect(entry.cue.values[0]).toBe(50); // cue unchanged
   });
@@ -91,7 +105,7 @@ describe('Show mode', () => {
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 50 }))]));
     engine.setMode('show');
 
-    engine.recordCue('show1');
+    engine.addCue('show1');
     engine.addGroupEntry('show1');
     engine.newShow();
     engine.addAction();
@@ -99,7 +113,7 @@ describe('Show mode', () => {
 
     const p = engine.getProject();
     expect(p.shows).toHaveLength(1); // newShow blocked
-    expect(p.shows[0].sequence).toHaveLength(1); // recordCue/addGroupEntry blocked
+    expect(p.shows[0].sequence).toHaveLength(1); // addCue/addGroupEntry blocked
     expect(p.actions).toHaveLength(0); // addAction blocked
     expect(p.shows[0].timeline).toBeUndefined(); // addTimelinePoint blocked
 
@@ -107,7 +121,7 @@ describe('Show mode', () => {
     expect(engine.getProject().shows).toHaveLength(1);
   });
 
-  it('still allows playback (GO) and capture/release', () => {
+  it('still allows playback (GO) and busking/release', () => {
     const engine = makeEngine();
     engine.loadProject(
       projectWithSequence([cueEntry(cue('c0', { 0: 10 })), cueEntry(cue('c1', { 0: 20 }))]),

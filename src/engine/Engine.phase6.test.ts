@@ -25,17 +25,17 @@ function makeEngine() {
   return { engine, clock };
 }
 
-describe('capture / release (§6.1/6.2)', () => {
-  it('a touched fader captures and overrides the cue (can go below)', () => {
+describe('busking / release (§6.1/6.2)', () => {
+  it('a touched fader busks and overrides the cue in show mode (can go below)', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 200 }))]));
     engine.loadShow('show1');
-    engine.setMode('show'); // capture-on-touch は Show モードの挙動
+    engine.setMode('show'); // busking-on-touch は Show モードの挙動
     engine.go();
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(200);
 
-    engine.setFader(0, 50); // capture, below cue
+    engine.setFader(0, 50); // busking, below cue
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(50);
   });
@@ -55,7 +55,7 @@ describe('capture / release (§6.1/6.2)', () => {
     expect(engine.getOutput()[0]).toBe(200); // back to cue (faderLive ignored)
   });
 
-  it('GO releases capture for channels the new cue specifies (§6.2)', () => {
+  it('GO releases busking for channels the new cue specifies (§6.2)', () => {
     const { engine } = makeEngine();
     engine.loadProject(
       projectWithSequence([cueEntry(cue('c0', { 0: 100 })), cueEntry(cue('c1', { 0: 200 }))]),
@@ -67,20 +67,25 @@ describe('capture / release (§6.1/6.2)', () => {
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(50);
 
-    engine.go(); // cue1 includes ch0 -> capture released
+    engine.go(); // cue1 includes ch0 -> busking released
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(200);
   });
 
-  it('recordCue saves the captured (programmer) channels including zeros', () => {
+  it('addCue inserts an empty cue and selects it; edits write into it (incl zeros)', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
-    engine.loadShow('show1'); // capture は show 読込中のみ（解放中は概念なし）
-    engine.setFader(5, 0); // captured at 0
+    engine.loadShow('show1');
+    engine.addCue('show1'); // 空 CUE を追加 + 自動選択
+    const empty = engine.getProject().shows[0].sequence[0];
+    expect(empty.kind).toBe('cue');
+    if (empty.kind === 'cue') expect(empty.cue.values).toEqual({});
+    expect(engine.getState().playback?.mainIndex).toBe(0); // 自動選択された
+
+    // EDIT × CUE 選択中: フェーダー操作が選択 CUE へリアルタイム書き込み。
+    engine.setFader(5, 0);
     engine.setFader(6, 100);
-    engine.recordCue('show1');
     const entry = engine.getProject().shows[0].sequence[0];
-    expect(entry.kind).toBe('cue');
     if (entry.kind === 'cue') expect(entry.cue.values).toEqual({ 5: 0, 6: 100 });
   });
 });
@@ -164,14 +169,13 @@ describe('holdFade', () => {
 });
 
 describe('undo / redo', () => {
-  it('reverts and reapplies a recordCue', () => {
+  it('reverts and reapplies an addCue', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
     engine.loadShow('show1');
     expect(engine.getState().canUndo).toBe(false);
 
-    engine.setFader(0, 100);
-    engine.recordCue('show1');
+    engine.addCue('show1');
     expect(engine.getProject().shows[0].sequence).toHaveLength(1);
     expect(engine.getState().canUndo).toBe(true);
 
@@ -197,8 +201,7 @@ describe('undo / redo', () => {
   it('is blocked in show mode', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
-    engine.setFader(0, 100);
-    engine.recordCue('show1');
+    engine.addCue('show1');
     engine.setMode('show');
     engine.undo();
     expect(engine.getProject().shows[0].sequence).toHaveLength(1); // 変化なし
@@ -207,8 +210,7 @@ describe('undo / redo', () => {
   it('clears history when a project is loaded', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
-    engine.setFader(0, 100);
-    engine.recordCue('show1');
+    engine.addCue('show1');
     expect(engine.getState().canUndo).toBe(true);
 
     engine.loadProject(projectWithSequence([]));
@@ -397,7 +399,7 @@ function actionButton(mode: ActionButton['mode'], values: Record<number, number>
 }
 
 describe('Action layer (§5.6, layer 1)', () => {
-  it('hold action overrides cue and capture; release returns to cue', () => {
+  it('hold action overrides cue and busking; release returns to cue', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([cueEntry(cue('c1', { 0: 100 }))]);
     p.actions = [actionButton('hold-once', { 0: 255 })];

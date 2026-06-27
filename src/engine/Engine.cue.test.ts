@@ -219,13 +219,13 @@ describe('fader vs show composition (§6)', () => {
 });
 
 describe('authoring', () => {
-  it('records a cue from faders to the master list', () => {
+  it('adds an empty cue to the master list and fader edits write into it', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
-    engine.loadShow('show1'); // capture は show 読込中のみ（解放中は概念なし）
+    engine.loadShow('show1');
+    engine.addCue('show1'); // 空 CUE 追加 + 自動選択
     engine.setFader(0, 255);
     engine.setFader(3, 128);
-    engine.recordCue('show1');
 
     const seq = engine.getProject().shows[0].sequence;
     expect(seq).toHaveLength(1);
@@ -233,12 +233,12 @@ describe('authoring', () => {
     if (seq[0].kind === 'cue') expect(seq[0].cue.values).toEqual({ 0: 255, 3: 128 });
   });
 
-  it('records a cue into a target group', () => {
+  it('adds an empty cue into a target group and edits write into it', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([groupEntry('g', [])]));
     engine.loadShow('show1');
+    engine.addCue('show1', { targetGroupId: 'g' }); // 子 CUE を追加 + 自動選択
     engine.setFader(5, 99);
-    engine.recordCue('show1', { targetGroupId: 'g' });
 
     const entry = engine.getProject().shows[0].sequence[0];
     expect(entry.kind).toBe('group');
@@ -248,16 +248,17 @@ describe('authoring', () => {
     }
   });
 
-  it('records and plays back an authored cue end-to-end', () => {
+  it('authors a cue then plays it back end-to-end', () => {
     const { engine } = makeEngine();
     engine.loadProject(projectWithSequence([]));
     engine.loadShow('show1');
-    engine.setFader(7, 99);
-    engine.recordCue('show1', { fadeInMs: 0 });
-    engine.setFader(7, 0);
+    engine.addCue('show1', { fadeInMs: 0 });
+    engine.setFader(7, 99); // 選択中 CUE へ書き込み
+    engine.deselectCue(); // 頭出しし直すため選択解除
+    engine.setFader(7, 0); // 未選択 → ライブのみ（CUE 値は不変）
     engine.go();
     engine.tick(0);
-    expect(engine.getOutput()[7]).toBe(99);
+    expect(engine.getOutput()[7]).toBe(99); // CUE 値で再生（faderLive は無視）
   });
 
   it('addGroupEntry then setGroupLoop', () => {
@@ -273,18 +274,19 @@ describe('authoring', () => {
     }
   });
 
-  it('inserts a recorded cue at a given index', () => {
+  it('inserts an empty cue at a given index and edits write into it', () => {
     const { engine } = makeEngine();
     engine.loadProject(
       projectWithSequence([cueEntry(cue('a', { 0: 1 })), cueEntry(cue('b', { 0: 2 }))]),
     );
     engine.loadShow('show1');
+    engine.addCue('show1', { atIndex: 1 }); // [a, new, b]、new を自動選択
     engine.setFader(0, 50);
-    engine.recordCue('show1', { atIndex: 1 });
     const seq = engine.getProject().shows[0].sequence;
     expect(seq).toHaveLength(3);
-    if (seq[0].kind === 'cue' && seq[2].kind === 'cue') {
+    if (seq[0].kind === 'cue' && seq[1].kind === 'cue' && seq[2].kind === 'cue') {
       expect(seq[0].cue.id).toBe('a');
+      expect(seq[1].cue.values).toEqual({ 0: 50 }); // 挿入 CUE へ書き込み
       expect(seq[2].cue.id).toBe('b'); // 既存は後ろへ
     }
   });

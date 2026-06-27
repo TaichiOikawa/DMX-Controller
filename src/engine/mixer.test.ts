@@ -5,7 +5,7 @@ import { UNIVERSE_SIZE } from '../shared/types';
 function baseCtx(overrides: Partial<MixContext> = {}): MixContext {
   return {
     faderLive: new Array(UNIVERSE_SIZE).fill(0),
-    captured: new Array(UNIVERSE_SIZE).fill(false),
+    busking: new Array(UNIVERSE_SIZE).fill(false),
     ...overrides,
   };
 }
@@ -17,18 +17,18 @@ describe('resolveChannel priority stack (§6)', () => {
     expect(resolveChannel(ctx, 10)).toBe(200);
   });
 
-  it('captured channel outputs the fader value (HTP ignored, can go down)', () => {
+  it('busking channel outputs the fader value (HTP ignored, can go down)', () => {
     const ctx = baseCtx({
       anyGroupControls: () => true,
       htpOverGroups: () => 255,
     });
     ctx.faderLive[3] = 40;
-    ctx.captured[3] = true;
-    // captured 層が show(HTP) 層より優先 → 40（下げれば下がる）。
+    ctx.busking[3] = true;
+    // busking 層が show(HTP) 層より優先 → 40（下げれば下がる）。
     expect(resolveChannel(ctx, 3)).toBe(40);
   });
 
-  it('show layer HTP applies when a group controls the channel and not captured', () => {
+  it('show layer HTP applies when a group controls the channel and not busking', () => {
     const ctx = baseCtx({
       anyGroupControls: (ch) => ch === 5,
       htpOverGroups: () => 180,
@@ -45,7 +45,7 @@ describe('resolveChannel priority stack (§6)', () => {
       htpOverGroups: () => 255,
     });
     ctx.faderLive[7] = 5;
-    ctx.captured[7] = true;
+    ctx.busking[7] = true;
     expect(resolveChannel(ctx, 7)).toBe(99);
   });
 });

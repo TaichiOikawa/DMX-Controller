@@ -1,6 +1,6 @@
 /**
  * フェーダーバンク（§5.1）。512ch を 32 本ずつ 16 ページに分けて表示し、
- * ページ切替タブでバンクを移動する。キャプチャ中 ch（プログラマー）をハイライト。
+ * ページ切替タブでバンクを移動する。SHOW モードの busking 上書き中 ch を purple ハイライト。
  */
 
 import { ChevronDown, ChevronRight, Palette } from 'lucide-react';
@@ -15,7 +15,7 @@ export function FaderBank() {
   const setBank = useDmxStore((s) => s.setBank);
   const faders = useDmxStore((s) => s.faders);
   const output = useDmxStore((s) => s.output);
-  const captured = useDmxStore((s) => s.captured);
+  const busking = useDmxStore((s) => s.busking);
   const setFader = useDmxStore((s) => s.setFader);
   const releaseChannel = useDmxStore((s) => s.releaseChannel);
   const releaseAll = useDmxStore((s) => s.releaseAll);
@@ -49,9 +49,11 @@ export function FaderBank() {
 
   const start = bank * FADERS_PER_BANK;
   const channels = Array.from({ length: FADERS_PER_BANK }, (_, i) => start + i);
-  const capturedCount = captured.reduce((n, b) => (b ? n + 1 : n), 0);
-  // Show 未読込（解放中）は capture/release の概念を持たず、フェーダーが 1:1 で直接出力。
+  const buskingCount = busking.reduce((n, b) => (b ? n + 1 : n), 0);
+  // Show 未読込（解放中）は busking/release の概念を持たず、フェーダーが 1:1 で直接出力。
   const released = activeShowId === null;
+  // busking は SHOW モードのみ（EDIT は CUE オーサリング）。
+  const showBusking = !released && !editable;
 
   // 折りたたみ時はスリムバーのみ（高さは App 側で解放）。
   if (collapsed) {
@@ -66,19 +68,19 @@ export function FaderBank() {
         </button>
         {released ? (
           <span className="text-[11px] text-neutral-500">直接出力（Show 未読込）</span>
-        ) : (
+        ) : showBusking ? (
           <span className="text-[11px] text-neutral-400">
-            キャプチャ中: <span className="font-mono text-amber-300">{capturedCount}</span> ch
+            busking: <span className="font-mono text-purple-300">{buskingCount}</span> ch
           </span>
-        )}
+        ) : null}
         <div className="ml-auto flex items-center gap-1">
           <PickerButton />
-          {!released && (
+          {showBusking && (
             <button
               onClick={releaseAll}
-              disabled={capturedCount === 0}
+              disabled={buskingCount === 0}
               className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-              title="全キャプチャを解除（値を 0 に戻す）"
+              title="busking を全解除（値を 0 に戻す）"
             >
               RELEASE 全
             </button>
@@ -104,9 +106,9 @@ export function FaderBank() {
           const to = (b + 1) * FADERS_PER_BANK;
           const active = b === bank;
           const name = bankLabels?.[b];
-          const hasCaptured =
-            !released &&
-            captured.slice(b * FADERS_PER_BANK, (b + 1) * FADERS_PER_BANK).some(Boolean);
+          const hasBusking =
+            showBusking &&
+            busking.slice(b * FADERS_PER_BANK, (b + 1) * FADERS_PER_BANK).some(Boolean);
           return (
             <button
               key={b}
@@ -119,8 +121,8 @@ export function FaderBank() {
               title={name ? `${name}（CH ${from}–${to}）` : `CH ${from}–${to}`}
             >
               {name ?? `${from}-${to}`}
-              {hasCaptured && (
-                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {hasBusking && (
+                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-purple-400" />
               )}
             </button>
           );
@@ -144,21 +146,21 @@ export function FaderBank() {
           <PickerButton />
           {released ? (
             <span className="text-[11px] text-neutral-500">直接出力（Show 未読込）</span>
-          ) : (
+          ) : showBusking ? (
             <>
               <span className="text-[11px] text-neutral-400">
-                キャプチャ中: <span className="font-mono text-amber-300">{capturedCount}</span> ch
+                busking: <span className="font-mono text-purple-300">{buskingCount}</span> ch
               </span>
               <button
                 onClick={releaseAll}
-                disabled={capturedCount === 0}
+                disabled={buskingCount === 0}
                 className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-                title="全キャプチャを解除（値を 0 に戻す）"
+                title="busking を全解除（値を 0 に戻す）"
               >
                 RELEASE 全
               </button>
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -172,7 +174,7 @@ export function FaderBank() {
               ch={ch}
               value={faders[ch]}
               output={output[ch]}
-              captured={!released && captured[ch]}
+              busking={showBusking && busking[ch]}
               inSelectedCue={inSelectedCue}
               released={released}
               label={channelLabels?.[ch]}

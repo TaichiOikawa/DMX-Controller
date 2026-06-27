@@ -19,6 +19,10 @@ import {
   type RgbFixture,
   type SequenceEntry,
   type Show,
+  type Timeline,
+  type TimelinePoint,
+  type AudioTrack,
+  type AudioClip,
 } from './types';
 
 /** Project を整形 JSON 文字列へ。 */
@@ -255,8 +259,7 @@ function normalizeShow(raw: Record<string, unknown>, validFolderIds: Set<string>
     show.audio = { filePath: raw.audio.filePath };
   }
   if (isObject(raw.timeline)) {
-    // Timeline はロードマップ7。構造はそのまま温存（検証は後続で）。
-    show.timeline = raw.timeline as unknown as Show['timeline'];
+    show.timeline = normalizeTimeline(raw.timeline);
   }
   return show;
 }
@@ -331,6 +334,49 @@ function normalizeValues(raw: unknown): Record<number, number> {
 }
 
 // ===== ヘルパ =====
+
+/**
+ * Timeline を正規化する。points は従来どおり温存し、追加オーディオトラック（audioTracks）を検証・補修する。
+ * トラック本数の補完（ensureAudioTracks）は編集時にエンジン側で行うため、ここでは存在分のみ整える。
+ */
+function normalizeTimeline(raw: Record<string, unknown>): Timeline {
+  const points = (Array.isArray(raw.points) ? raw.points : []) as TimelinePoint[];
+  const timeline: Timeline = { points };
+  if (Array.isArray(raw.audioTracks)) {
+    timeline.audioTracks = (raw.audioTracks.filter(isObject) as Record<string, unknown>[]).map(
+      normalizeAudioTrack,
+    );
+  }
+  return timeline;
+}
+
+function normalizeAudioTrack(raw: Record<string, unknown>): AudioTrack {
+  const clips = Array.isArray(raw.clips)
+    ? (raw.clips.filter(isObject) as Record<string, unknown>[])
+        .map(normalizeAudioClip)
+        .filter((c): c is AudioClip => c !== null)
+    : [];
+  const track: AudioTrack = {
+    id: str(raw.id, fallbackId()),
+    clips,
+    volume: clampInt(num(raw.volume, 1) * 100, 0, 100) / 100,
+    muted: raw.muted === true,
+    solo: raw.solo === true,
+  };
+  if (typeof raw.name === 'string') track.name = raw.name;
+  return track;
+}
+
+function normalizeAudioClip(raw: Record<string, unknown>): AudioClip | null {
+  const filePath = str(raw.filePath, '');
+  if (!filePath) return null;
+  return {
+    id: str(raw.id, fallbackId()),
+    filePath,
+    startMs: Math.max(0, num(raw.startMs, 0)),
+    durationMs: Math.max(0, num(raw.durationMs, 0)),
+  };
+}
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);

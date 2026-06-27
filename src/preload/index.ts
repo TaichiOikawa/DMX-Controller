@@ -12,6 +12,7 @@ import {
   type ActionPatch,
   type AddCueOptions,
   type CuePatch,
+  type AudioLevels,
   type DirtyState,
   type DmxBridge,
   type EngineStateSnapshot,
@@ -67,6 +68,9 @@ const api: DmxBridge = {
   },
   openColorPicker() {
     ipcRenderer.send(Cmd.openColorPicker);
+  },
+  openMonitor() {
+    ipcRenderer.send(Cmd.openMonitor);
   },
   notifyUiState(state: UiState) {
     ipcRenderer.send(Cmd.uiState, state);
@@ -227,6 +231,26 @@ const api: DmxBridge = {
     >;
   },
 
+  // 追加オーディオトラック / クリップ
+  pickAudioClip() {
+    return ipcRenderer.invoke(Cmd.pickAudioClip) as ReturnType<DmxBridge['pickAudioClip']>;
+  },
+  addAudioClip(showId, trackIndex, filePath, startMs, durationMs) {
+    ipcRenderer.send(Cmd.addAudioClip, showId, trackIndex, filePath, startMs, durationMs);
+  },
+  moveAudioClip(showId, trackIndex, clipId, startMs) {
+    ipcRenderer.send(Cmd.moveAudioClip, showId, trackIndex, clipId, startMs);
+  },
+  removeAudioClip(showId, trackIndex, clipId) {
+    ipcRenderer.send(Cmd.removeAudioClip, showId, trackIndex, clipId);
+  },
+  setAudioTrackProps(showId, trackIndex, props) {
+    ipcRenderer.send(Cmd.setAudioTrackProps, showId, trackIndex, props);
+  },
+  reportAudioLevels(levels) {
+    ipcRenderer.send(Cmd.reportAudioLevels, levels);
+  },
+
   // 永続化
   newProject() {
     ipcRenderer.send(Cmd.newProject);
@@ -269,6 +293,9 @@ const api: DmxBridge = {
   },
   onMenuAction(cb) {
     return subscribe<MenuAction>(Evt.menuAction, cb);
+  },
+  onAudioLevels(cb) {
+    return subscribe<AudioLevels>(Evt.audioLevels, cb);
   },
 };
 

@@ -32,11 +32,37 @@ function toPortablePath(filePath: string, projectDir: string): string {
  */
 export function toPortableProject(project: Project, projectDir: string): Project {
   const shows = project.shows.map((show) => {
-    const filePath = show.audio?.filePath;
-    if (!filePath) return show;
-    const portable = toPortablePath(filePath, projectDir);
-    if (portable === filePath) return show;
-    return { ...show, audio: { filePath: portable } };
+    // メイン音声。
+    let nextAudio = show.audio;
+    if (show.audio?.filePath) {
+      const portable = toPortablePath(show.audio.filePath, projectDir);
+      if (portable !== show.audio.filePath) nextAudio = { filePath: portable };
+    }
+
+    // 追加トラックのクリップ。
+    let tracksChanged = false;
+    const tracks = show.timeline?.audioTracks;
+    let nextTracks = tracks;
+    if (tracks) {
+      nextTracks = tracks.map((track) => {
+        let clipsChanged = false;
+        const nextClips = track.clips.map((clip) => {
+          const portable = toPortablePath(clip.filePath, projectDir);
+          if (portable === clip.filePath) return clip;
+          clipsChanged = true;
+          return { ...clip, filePath: portable };
+        });
+        if (!clipsChanged) return track;
+        tracksChanged = true;
+        return { ...track, clips: nextClips };
+      });
+    }
+
+    if (nextAudio === show.audio && !tracksChanged) return show;
+    const next = { ...show };
+    if (nextAudio !== show.audio) next.audio = nextAudio;
+    if (tracksChanged && show.timeline) next.timeline = { ...show.timeline, audioTracks: nextTracks };
+    return next;
   });
   return { ...project, shows };
 }
@@ -50,6 +76,16 @@ export function resolveProjectAudioPaths(project: Project, projectDir: string): 
     const filePath = show.audio?.filePath;
     if (filePath && !path.isAbsolute(filePath)) {
       show.audio = { filePath: path.resolve(projectDir, filePath) };
+    }
+    const tracks = show.timeline?.audioTracks;
+    if (tracks) {
+      for (const track of tracks) {
+        for (const clip of track.clips) {
+          if (!path.isAbsolute(clip.filePath)) {
+            clip.filePath = path.resolve(projectDir, clip.filePath);
+          }
+        }
+      }
     }
   }
 }

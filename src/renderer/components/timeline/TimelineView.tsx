@@ -9,12 +9,14 @@
  * トランスポート（再生/シーク/停止）と音声クロックはストアが所有する。
  */
 
-import { Music, Pause, Play, Plus, Square, X } from "lucide-react";
+import { Music, Pause, Play, Plus, Square, Volume2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cueAt } from "../../../engine/playback";
+import { AUDIO_TRACK_COUNT } from "../../../shared/types";
 import { useDmxStore } from "../../store";
 import { AudioRelinkModal } from "./AudioRelinkModal";
 import { AudioTrack } from "./AudioTrack";
+import { AudioTrackLane } from "./AudioTrackLane";
 import { GoMarkers } from "./GoMarkers";
 import { Playhead } from "./Playhead";
 import { TimeRuler } from "./TimeRuler";
@@ -56,6 +58,7 @@ export function TimelineView({ active }: { active: boolean }) {
   const unloadAudio = useDmxStore((s) => s.unloadAudio);
   const playback = useDmxStore((s) => s.playback);
   const editable = useDmxStore((s) => s.mode === "edit");
+  const audioFileStatus = useDmxStore((s) => s.audioFileStatus);
 
   const [zoom, setZoom] = useState(1);
   const [labelMode, setLabelMode] = useState<CueLabelMode>("lyrics");
@@ -71,6 +74,7 @@ export function TimelineView({ active }: { active: boolean }) {
 
   const show = project?.shows.find((s) => s.id === activeShowId) ?? null;
   const points = show?.timeline?.points ?? [];
+  const audioTracks = show?.timeline?.audioTracks ?? [];
   const filePath = show?.audio?.filePath ?? null;
   const loaded = show !== null;
   const cues = useMemo(
@@ -218,6 +222,14 @@ export function TimelineView({ active }: { active: boolean }) {
         </button>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* 音量モニター（別ウインドウ） */}
+          <button
+            onClick={() => window.dmx.openMonitor()}
+            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700"
+            title="音量モニターを別ウインドウで開く"
+          >
+            <Volume2 size={12} /> モニター
+          </button>
           {/* 音声 */}
           <button
             onClick={() =>
@@ -292,7 +304,7 @@ export function TimelineView({ active }: { active: boolean }) {
             />
           </div>
 
-          {/* 音声トラック */}
+          {/* メイン音声トラック（時刻0固定・マスター） */}
           <div className="relative p-1">
             <AudioTrack
               audioUrl={audioUrl}
@@ -311,6 +323,21 @@ export function TimelineView({ active }: { active: boolean }) {
               </div>
             )}
           </div>
+
+          {/* 追加オーディオトラック（複数クリップ・個別音量/ミュート/ソロ） */}
+          {Array.from({ length: AUDIO_TRACK_COUNT }, (_, i) => (
+            <AudioTrackLane
+              key={i}
+              showId={activeShowId ?? ""}
+              trackIndex={i}
+              track={audioTracks[i]}
+              scale={scale}
+              editable={editable}
+              playheadMs={transport.playheadMs}
+              audioFileStatus={audioFileStatus}
+              onSeek={seek}
+            />
+          ))}
 
           {/* プレイヘッド（全高オーバーレイ） */}
           <Playhead

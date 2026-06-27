@@ -18,6 +18,8 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 let mainWindow: BrowserWindow | null = null;
 /** RGB カラーピッカーの別ウィンドウ（未表示は null）。 */
 let pickerWindow: BrowserWindow | null = null;
+/** 音量モニターの別ウィンドウ（未表示は null）。 */
+let monitorWindow: BrowserWindow | null = null;
 let host: EngineHost | null = null;
 /** 終了確認を通過した（または不要）ことを示すフラグ。再入防止。 */
 let allowClose = false;
@@ -83,8 +85,9 @@ function createWindow(): void {
   });
 
   mainWindow.on('closed', () => {
-    // メインを閉じたら付随するピッカーも閉じる。
+    // メインを閉じたら付随するサブウィンドウも閉じる。
     pickerWindow?.close();
+    monitorWindow?.close();
     mainWindow = null;
   });
 }
@@ -128,6 +131,44 @@ function openColorPickerWindow(): void {
   });
 }
 
+/** 音量モニターを別ウィンドウで開く（既に開いていれば前面化）。 */
+function openMonitorWindow(): void {
+  if (monitorWindow) {
+    if (monitorWindow.isMinimized()) monitorWindow.restore();
+    monitorWindow.focus();
+    return;
+  }
+
+  monitorWindow = new BrowserWindow({
+    width: 280,
+    height: 460,
+    minWidth: 200,
+    minHeight: 240,
+    backgroundColor: '#0a0a0a',
+    title: '音量モニター',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  monitorWindow.setMenu(null);
+
+  if (VITE_DEV_SERVER_URL) {
+    monitorWindow.loadURL(`${VITE_DEV_SERVER_URL}#monitor`);
+  } else {
+    monitorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'monitor' });
+  }
+
+  const wc = monitorWindow.webContents;
+  wc.on('did-finish-load', () => host?.addClient(wc));
+  monitorWindow.on('closed', () => {
+    host?.removeClient(wc);
+    monitorWindow = null;
+  });
+}
+
 app.whenReady().then(() => {
   host = new EngineHost();
   host.registerIpc();
@@ -156,6 +197,8 @@ app.whenReady().then(() => {
 
   // RGB カラーピッカーを別ウィンドウで開く要求（renderer → main）。
   ipcMain.on(Cmd.openColorPicker, () => openColorPickerWindow());
+  // 音量モニターを別ウィンドウで開く要求（renderer → main）。
+  ipcMain.on(Cmd.openMonitor, () => openMonitorWindow());
 
   host.start();
 

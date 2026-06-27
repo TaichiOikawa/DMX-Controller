@@ -65,3 +65,39 @@ describe('相対 ⇄ 絶対 の往復', () => {
     expect(portable.shows[0].audio?.filePath).toBe(abs);
   });
 });
+
+/** 追加トラックに1クリップを持つ Show を組む。 */
+function projectWithClip(filePath: string): Project {
+  const show: Show = {
+    id: 's1',
+    name: 'Act 1',
+    sequence: [],
+    timeline: {
+      points: [],
+      audioTracks: [
+        { id: 't1', clips: [{ id: 'c1', filePath, startMs: 0, durationMs: 1000 }], volume: 1, muted: false, solo: false },
+      ],
+    },
+  };
+  const p = createDefaultProject();
+  p.shows = [show];
+  return p;
+}
+
+describe('追加トラックのクリップパス', () => {
+  it('配下の絶対パスを相対化し、resolve で絶対へ戻す', () => {
+    const abs = path.join(projectDir, 'clips', 'c.wav');
+    const portable = toPortableProject(projectWithClip(abs), projectDir);
+    expect(portable.shows[0].timeline?.audioTracks?.[0].clips[0].filePath).toBe('clips/c.wav');
+    resolveProjectAudioPaths(portable, projectDir);
+    expect(portable.shows[0].timeline?.audioTracks?.[0].clips[0].filePath).toBe(abs);
+  });
+
+  it('クリップ書き換え時もライブ Project を変更しない', () => {
+    const abs = path.join(projectDir, 'clips', 'c.wav');
+    const p = projectWithClip(abs);
+    const out = toPortableProject(p, projectDir);
+    expect(p.shows[0].timeline?.audioTracks?.[0].clips[0].filePath).toBe(abs); // 元は不変
+    expect(out.shows[0]).not.toBe(p.shows[0]);
+  });
+});

@@ -150,6 +150,39 @@ export interface ActionButton {
 // ===== Timeline =====
 export interface Timeline {
   points: TimelinePoint[];
+  /**
+   * 追加オーディオトラック（メイン音声 Show.audio とは別）。各トラックに複数クリップを任意位置へ配置できる。
+   * 未定義/不足時は読込・編集時に固定 {@link AUDIO_TRACK_COUNT} 本へ補完する（ensureAudioTracks）。
+   */
+  audioTracks?: AudioTrack[];
+}
+
+/** 追加オーディオトラックの本数（メイン音声とは別の固定数）。 */
+export const AUDIO_TRACK_COUNT = 3;
+
+/** 追加トラック上の音声クリップ。任意位置へ配置・ドラッグ移動できる。 */
+export interface AudioClip {
+  id: string;
+  /**
+   * 音声ファイルパス。メモリ上は常に絶対パス。保存時、Project ファイル配下なら相対（POSIX）で書き出し、
+   * 読込時に絶対へ戻す（src/main/projectPaths.ts）。Show.audio と同じ規約。
+   */
+  filePath: string;
+  /** タイムライン上の開始位置（ms）。 */
+  startMs: number;
+  /** クリップ尺（ms）。デコード/loadedmetadata 時に確定し永続化。ブロック幅算出に使用。 */
+  durationMs: number;
+}
+
+/** 追加オーディオトラック（複数クリップ + 個別音量/ミュート/ソロ）。 */
+export interface AudioTrack {
+  id: string;
+  name?: string;
+  clips: AudioClip[];
+  /** 0..1。 */
+  volume: number;
+  muted: boolean;
+  solo: boolean;
 }
 
 export interface TimelinePoint {

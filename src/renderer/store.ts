@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import {
   UNIVERSE_SIZE,
   type ArtnetSettings,
+  type AudioTrack,
   type EngineMode,
   type Project,
   defaultArtnetSettings,
@@ -64,6 +65,8 @@ interface DmxState {
   transport: TransportState;
   /** 読込中音声の長さ（ms）。Timeline の再生上限に反映（0=未読込）。 */
   audioDurationMs: number;
+  /** 追加トラック・クリップ音源の読込状態（filePath 単位）。UI の欠損表示に使う。 */
+  audioFileStatus: Record<string, 'loading' | 'ready' | 'missing'>;
   /** 操作モード（'edit' / 'show'）。 */
   mode: EngineMode;
   /** グランドマスター（全体調光 0-255）。 */
@@ -133,6 +136,11 @@ interface DmxState {
   unloadAudio: () => void;
   /** 絶対位置で playhead を反映しエンジンへ報告（音声クロックから・私用）。 */
   reportPlayhead: (absMs: number) => void;
+  /**
+   * アクティブ Show の追加トラック音源を同期する（クリップのデコード + トラック音量/ミュート/ソロ反映）。
+   * project / activeShowId が変化したら呼ぶ。
+   */
+  syncShowAudio: () => void;
 }
 
 export const FADERS_PER_BANK = 32;
@@ -165,6 +173,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   showImport: null,
   missingFiles: null,
   showSort: 'name-asc',
+
+  audioFileStatus: {},
 
   project: null,
   playback: null,
@@ -219,7 +229,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   setShowSort: (sort) => set({ showSort: sort }),
 
-  setProject: (project) =>
+  setProject: (project) => {
     set((s) => {
       const stillExists = project.shows.some((sh) => sh.id === s.selectedShowId);
       const selectedShowId = stillExists
@@ -235,9 +245,13 @@ export const useDmxStore = create<DmxState>((set, get) => ({
           durationMs: durationForProject(project, s.activeShowId, s.audioDurationMs),
         },
       };
-    }),
+    });
+    // クリップのデコード・トラック音量を最新の Project へ追従させる。
+    get().syncShowAudio();
+  },
 
-  setEngineState: (state) =>
+  setEngineState: (state) => {
+    const prevShowId = get().activeShowId;
     set({
       measuredHz: state.measuredHz,
       playback: state.playback,
@@ -249,7 +263,10 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       blackout: state.blackout,
       canUndo: state.canUndo,
       canRedo: state.canRedo,
-    }),
+    });
+    // アクティブ Show が変わったら追加トラック音源を切り替える。
+    if (prevShowId !== state.activeShowId) get().syncShowAudio();
+  },
 
   selectShow: (showId) => set({ selectedShowId: showId }),
 
@@ -331,8 +348,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPlay: () =>
     set((s) => {
-      if (audioBuffer) {
-        startSource(startOffsetSec);
+      if (hasAudioContent()) {
+        scheduleAll(startOffsetSec);
         startAudioRaf();
       } else {
         startClock();
@@ -342,11 +359,12 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPause: () =>
     set((s) => {
-      if (audioBuffer) {
+      if (audioPlaying) {
         // 現在位置を確定してから停止（次回再生はここから）。
         startOffsetSec = currentPositionMs() / 1000;
-        stopSource();
+        stopAllSources();
         stopAudioRaf();
+        sendZeroLevels();
       } else {
         stopClock();
       }
@@ -355,13 +373,14 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportStop: () =>
     set((s) => {
-      if (audioBuffer) {
-        stopSource();
-        startOffsetSec = 0;
+      if (audioPlaying) {
+        stopAllSources();
         stopAudioRaf();
+        sendZeroLevels();
       } else {
         stopClock();
       }
+      startOffsetSec = 0;
       window.dmx.timelineStop();
       return { transport: { ...s.transport, playing: false, playheadMs: 0 } };
     }),
@@ -369,10 +388,11 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   transportSeek: (ms) =>
     set((s) => {
       const playheadMs = Math.max(0, Math.min(s.transport.durationMs, ms));
-      if (audioBuffer) {
-        startOffsetSec = playheadMs / 1000;
-        // AudioBufferSourceNode は再利用不可。再生中なら新オフセットで作り直す。
-        if (s.transport.playing) startSource(startOffsetSec);
+      startOffsetSec = playheadMs / 1000;
+      // AudioBufferSourceNode は再利用不可。音声クロックで再生中なら全ソースを作り直す。
+      if (s.transport.playing && audioPlaying) {
+        stopAllSources();
+        scheduleAll(startOffsetSec);
       }
       window.dmx.timelineSeek(playheadMs);
       return { transport: { ...s.transport, playheadMs } };
@@ -393,15 +413,15 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   },
 
   loadAudio: (_url, arrayBuffer) => {
-    stopSource();
-    stopAudioRaf();
-    audioBuffer = null;
-    startOffsetSec = 0;
-    // ファイルを一度だけ PCM デコードし、これを唯一の時間軸・再生源にする。
+    // 既存メイン音源だけ破棄（クリップ・クロックは触らない）。
+    stopMainSource();
+    mainBuffer = null;
+    // ファイルを一度だけ PCM デコードし、メインの時間軸・再生源にする。
     // （<audio>.currentTime は VBR 等で非線形・不正確になるため使わない。）
     const ctx = ensureAudioCtx();
+    ensureGraph();
     void ctx.decodeAudioData(arrayBuffer).then((buf) => {
-      audioBuffer = buf;
+      mainBuffer = buf;
       const ms = Math.round(buf.duration * 1000);
       if (Number.isFinite(ms) && ms > 0) {
         // 音声長を保持し、再生上限へ反映（以後の setProject でも維持される）。
@@ -410,14 +430,16 @@ export const useDmxStore = create<DmxState>((set, get) => ({
           transport: { ...s.transport, durationMs: Math.max(s.transport.durationMs, ms) },
         }));
       }
+      // 再生中にメインを後から読み込んだ場合は、現在位置から鳴らし始める。
+      if (audioPlaying && mainGain) {
+        mainSource = scheduleSource(mainBuffer, mainGain, 0, currentPositionMs() / 1000);
+      }
     }).catch(() => {});
   },
 
   unloadAudio: () => {
-    stopSource();
-    audioBuffer = null;
-    startOffsetSec = 0;
-    stopAudioRaf();
+    stopMainSource();
+    mainBuffer = null;
     // 音声長をクリアし、再生上限を GO 点ベースへ戻す。
     set((s) => ({
       audioDurationMs: 0,
@@ -434,37 +456,65 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     const s = get();
     const dur = s.transport.durationMs;
     if (absMs >= dur) {
-      stopSource();
+      stopAllSources();
       startOffsetSec = dur / 1000;
       stopAudioRaf();
       window.dmx.reportAudioPlayhead(dur);
+      sendZeroLevels();
       set({ transport: { ...s.transport, playheadMs: dur, playing: false } });
       return;
     }
     window.dmx.reportAudioPlayhead(absMs);
     set({ transport: { ...s.transport, playheadMs: absMs } });
   },
+
+  syncShowAudio: () => {
+    const s = get();
+    const show = s.project?.shows.find((sh) => sh.id === s.activeShowId) ?? null;
+    reconcileShowAudio(show?.timeline?.audioTracks ?? []);
+  },
 }));
 
-// ===== Timeline 内部クロック =====
-// 音声がある場合は Web Audio（AudioBufferSourceNode + AudioContext.currentTime）を
+// ===== Timeline 内部クロック + マルチソース・オーディオエンジン =====
+// 音声（メイン or クリップ）がある場合は Web Audio（AudioContext.currentTime）を
 // クロック源にし、無い場合は setInterval で進める。
 // <audio>.currentTime は VBR 等の圧縮音源で非線形・不正確になり、波形・プレイヘッドと
 // 実音がずれるため使わない。デコード済み AudioBuffer を唯一の正確な時間軸とする。
+//
+// グラフ: 各ソース → trackGain(クリップ) / mainGain(メイン) → masterGain → destination
+//         masterGain → splitter → analyserL / analyserR（メータータップ、destination とは別経路）
 let clockHandle: ReturnType<typeof setInterval> | null = null;
 let lastTickAt = 0;
 let audioRaf: number | null = null;
+let lastLevelSentAt = 0;
 
-// Web Audio 再生エンジン状態。
+// Web Audio エンジン状態。
 let audioCtx: AudioContext | null = null;
-let audioBuffer: AudioBuffer | null = null;
-let sourceNode: AudioBufferSourceNode | null = null;
+let masterGain: GainNode | null = null;
+let analyserL: AnalyserNode | null = null;
+let analyserR: AnalyserNode | null = null;
+let levelBufL: Float32Array<ArrayBuffer> | null = null;
+let levelBufR: Float32Array<ArrayBuffer> | null = null;
+
+// メイン音声（Show.audio）。
+let mainBuffer: AudioBuffer | null = null;
+let mainGain: GainNode | null = null;
+let mainSource: AudioBufferSourceNode | null = null;
+
+// 追加トラック。クリップは filePath 単位でデコードをキャッシュ（同一ファイル共有）。
+const trackGains = new Map<string, GainNode>();
+const clipBuffers = new Map<string, AudioBuffer>();
+const decodingFiles = new Set<string>();
+let activeClipNodes: AudioBufferSourceNode[] = [];
+/** 直近 reconcile したトラック定義（スケジュール・ゲイン適用に使う最新スナップショット）。 */
+let currentTracks: AudioTrack[] = [];
+
+/** 再生中フラグ（音声クロック使用時のみ true）。 */
+let audioPlaying = false;
 /** 再生開始時の audioCtx.currentTime（秒）。 */
 let startCtxTime = 0;
-/** 再生開始時のバッファ内オフセット（秒）。停止中の現在位置でもある。 */
+/** 再生開始時のタイムライン位置（秒）。停止中の現在位置でもある。 */
 let startOffsetSec = 0;
-/** 自前 stop と自然終了を onended で区別するフラグ。 */
-let endedByUs = false;
 
 /** AudioContext を遅延生成して再利用（ブラウザの生成数制限に配慮）。 */
 function ensureAudioCtx(): AudioContext {
@@ -472,54 +522,214 @@ function ensureAudioCtx(): AudioContext {
   return audioCtx;
 }
 
+/** 出力バス（masterGain + メータータップ）とメイン用 gain を生成（冪等）。 */
+function ensureGraph(): void {
+  const ctx = ensureAudioCtx();
+  if (!masterGain) {
+    masterGain = ctx.createGain();
+    masterGain.gain.value = 1;
+    masterGain.connect(ctx.destination);
+    // ステレオのメータータップ（destination とは別系統で解析のみ）。
+    const splitter = ctx.createChannelSplitter(2);
+    masterGain.connect(splitter);
+    analyserL = ctx.createAnalyser();
+    analyserR = ctx.createAnalyser();
+    analyserL.fftSize = 1024;
+    analyserR.fftSize = 1024;
+    splitter.connect(analyserL, 0);
+    splitter.connect(analyserR, 1);
+    levelBufL = new Float32Array(analyserL.fftSize);
+    levelBufR = new Float32Array(analyserR.fftSize);
+  }
+  if (!mainGain) {
+    mainGain = ctx.createGain();
+    mainGain.gain.value = 1;
+    mainGain.connect(masterGain);
+  }
+}
+
+/** いずれかの音声（メイン or クリップ定義）が存在するか＝音声クロックを使うか。 */
+function hasAudioContent(): boolean {
+  if (mainBuffer) return true;
+  for (const t of currentTracks) if (t.clips.length > 0) return true;
+  return false;
+}
+
 /** 現在の再生位置（ms）。再生中は AudioContext クロック、停止中はオフセット。 */
 function currentPositionMs(): number {
-  if (audioCtx && sourceNode) {
+  if (audioPlaying && audioCtx) {
     return (startOffsetSec + (audioCtx.currentTime - startCtxTime)) * 1000;
   }
   return startOffsetSec * 1000;
 }
 
-/** 指定オフセット（秒）から新しいソースノードで再生開始。 */
-function startSource(offsetSec: number): void {
-  if (!audioBuffer) return;
+/**
+ * 1 つのバッファを clipStartSec（タイムライン上の開始秒）で鳴らすソースを生成・開始する。
+ * playheadSec が既にクリップ末尾を過ぎていれば生成しない（null）。
+ */
+function scheduleSource(
+  buffer: AudioBuffer | null,
+  destNode: AudioNode | null,
+  clipStartSec: number,
+  playheadSec: number,
+): AudioBufferSourceNode | null {
+  if (!buffer || !destNode) return null;
   const ctx = ensureAudioCtx();
-  stopSource();
-  void ctx.resume().catch(() => {});
+  const endSec = clipStartSec + buffer.duration;
+  if (playheadSec >= endSec) return null;
   const node = ctx.createBufferSource();
-  node.buffer = audioBuffer;
-  node.connect(ctx.destination);
-  node.onended = () => {
-    // 自前で stop した場合は無視。自然終了のみ終端処理。
-    if (endedByUs) return;
-    stopAudioRaf();
-    const dur = useDmxStore.getState().transport.durationMs;
-    startOffsetSec = dur / 1000;
-    window.dmx.reportAudioPlayhead(dur);
-    useDmxStore.setState((s) => ({
-      transport: { ...s.transport, playheadMs: dur, playing: false },
-    }));
-  };
-  startCtxTime = ctx.currentTime;
-  startOffsetSec = offsetSec;
-  endedByUs = false;
-  node.start(0, offsetSec);
-  sourceNode = node;
+  node.buffer = buffer;
+  node.connect(destNode);
+  let when: number;
+  let offset: number;
+  if (playheadSec <= clipStartSec) {
+    when = startCtxTime + (clipStartSec - playheadSec);
+    offset = 0;
+  } else {
+    when = startCtxTime;
+    offset = playheadSec - clipStartSec;
+  }
+  if (when < ctx.currentTime) when = ctx.currentTime;
+  node.start(when, offset);
+  return node;
 }
 
-/** 再生中のソースノードを停止・破棄（onended の終端処理は走らせない）。 */
-function stopSource(): void {
-  if (sourceNode) {
-    endedByUs = true;
+/** メイン + 全クリップを playheadSec 基準でスケジュールする。 */
+function scheduleAll(playheadSec: number): void {
+  const ctx = ensureAudioCtx();
+  void ctx.resume().catch(() => {});
+  ensureGraph();
+  startCtxTime = ctx.currentTime;
+  startOffsetSec = playheadSec;
+  audioPlaying = true;
+  if (mainBuffer) mainSource = scheduleSource(mainBuffer, mainGain, 0, playheadSec);
+  applyTrackGains();
+  for (const track of currentTracks) {
+    const gain = trackGains.get(track.id);
+    if (!gain) continue;
+    for (const clip of track.clips) {
+      const node = scheduleSource(clipBuffers.get(clip.filePath) ?? null, gain, clip.startMs / 1000, playheadSec);
+      if (node) activeClipNodes.push(node);
+    }
+  }
+}
+
+/** メイン音源のみ停止・破棄。 */
+function stopMainSource(): void {
+  if (mainSource) {
     try {
-      sourceNode.onended = null;
-      sourceNode.stop();
+      mainSource.onended = null;
+      mainSource.stop();
     } catch {
       // 未開始ノードの stop 等は無視。
     }
-    sourceNode.disconnect();
-    sourceNode = null;
+    mainSource.disconnect();
+    mainSource = null;
   }
+}
+
+/** 再生中の全ソース（メイン + クリップ）を停止・破棄する。 */
+function stopAllSources(): void {
+  audioPlaying = false;
+  stopMainSource();
+  for (const node of activeClipNodes) {
+    try {
+      node.stop();
+    } catch {
+      // 無視。
+    }
+    node.disconnect();
+  }
+  activeClipNodes = [];
+}
+
+/** ソロ/ミュート/音量からトラックの実効ゲインを反映する（必要なら gain を生成）。 */
+function applyTrackGains(): void {
+  if (!masterGain) ensureGraph();
+  const ctx = ensureAudioCtx();
+  const anySolo = currentTracks.some((t) => t.solo);
+  for (const t of currentTracks) {
+    let g = trackGains.get(t.id);
+    if (!g) {
+      g = ctx.createGain();
+      g.connect(masterGain!);
+      trackGains.set(t.id, g);
+    }
+    g.gain.value = t.muted || (anySolo && !t.solo) ? 0 : t.volume;
+  }
+}
+
+/** アクティブ Show のトラック群へ追従（クリップのデコード + 音量反映）。 */
+function reconcileShowAudio(tracks: AudioTrack[]): void {
+  currentTracks = tracks;
+  const hasClips = tracks.some((t) => t.clips.length > 0);
+  // グラフ未生成かつクリップも無い Show では AudioContext を作らない（無音 GO のみのとき）。
+  if (hasClips || masterGain) applyTrackGains();
+  if (hasClips) {
+    for (const t of tracks) for (const c of t.clips) decodeClipFile(c.filePath);
+  }
+}
+
+/** クリップ音源を読み込み・デコードしてキャッシュ（filePath 単位・状態を store へ反映）。 */
+function decodeClipFile(filePath: string): void {
+  if (clipBuffers.has(filePath) || decodingFiles.has(filePath)) return;
+  decodingFiles.add(filePath);
+  setFileStatus(filePath, 'loading');
+  window.dmx
+    .readAudioFile(filePath)
+    .then((res) => {
+      if (!res.ok || !res.data) {
+        decodingFiles.delete(filePath);
+        setFileStatus(filePath, 'missing');
+        return;
+      }
+      ensureAudioCtx()
+        .decodeAudioData(res.data)
+        .then((buf) => {
+          clipBuffers.set(filePath, buf);
+          decodingFiles.delete(filePath);
+          setFileStatus(filePath, 'ready');
+        })
+        .catch(() => {
+          decodingFiles.delete(filePath);
+          setFileStatus(filePath, 'missing');
+        });
+    })
+    .catch(() => {
+      decodingFiles.delete(filePath);
+      setFileStatus(filePath, 'missing');
+    });
+}
+
+function setFileStatus(filePath: string, status: 'loading' | 'ready' | 'missing'): void {
+  useDmxStore.setState((s) => ({
+    audioFileStatus: { ...s.audioFileStatus, [filePath]: status },
+  }));
+}
+
+/** analyser からステレオの peak/RMS（0..1）を読み出し main へ送る（モニターへ中継）。 */
+function emitLevels(): void {
+  if (!analyserL || !analyserR || !levelBufL || !levelBufR) return;
+  const l = readLevel(analyserL, levelBufL);
+  const r = readLevel(analyserR, levelBufR);
+  window.dmx.reportAudioLevels({ peakL: l.peak, peakR: r.peak, rmsL: l.rms, rmsR: r.rms });
+}
+
+function readLevel(analyser: AnalyserNode, buf: Float32Array<ArrayBuffer>): { peak: number; rms: number } {
+  analyser.getFloatTimeDomainData(buf);
+  let peak = 0;
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = buf[i];
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+    sum += v * v;
+  }
+  return { peak, rms: Math.sqrt(sum / buf.length) };
+}
+
+function sendZeroLevels(): void {
+  window.dmx.reportAudioLevels({ peakL: 0, peakR: 0, rmsL: 0, rmsR: 0 });
 }
 
 function startClock(): void {
@@ -543,9 +753,18 @@ function stopClock(): void {
 function startAudioRaf(): void {
   if (audioRaf !== null) return;
   const tick = (): void => {
+    if (!audioPlaying) {
+      audioRaf = null;
+      return;
+    }
     // 視覚更新は rAF ペースだが、位置の真値は AudioContext クロック由来。
-    if (sourceNode) useDmxStore.getState().reportPlayhead(currentPositionMs());
-    audioRaf = requestAnimationFrame(tick);
+    useDmxStore.getState().reportPlayhead(currentPositionMs());
+    const now = performance.now();
+    if (now - lastLevelSentAt >= 33) {
+      lastLevelSentAt = now;
+      emitLevels();
+    }
+    audioRaf = audioPlaying ? requestAnimationFrame(tick) : null;
   };
   audioRaf = requestAnimationFrame(tick);
 }

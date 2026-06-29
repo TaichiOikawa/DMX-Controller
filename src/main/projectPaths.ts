@@ -36,7 +36,7 @@ export function toPortableProject(project: Project, projectDir: string): Project
     let nextAudio = show.audio;
     if (show.audio?.filePath) {
       const portable = toPortablePath(show.audio.filePath, projectDir);
-      if (portable !== show.audio.filePath) nextAudio = { filePath: portable };
+      if (portable !== show.audio.filePath) nextAudio = { ...show.audio, filePath: portable };
     }
 
     // 追加トラックのクリップ。

@@ -92,6 +92,7 @@ export const Cmd = {
   setTimelinePointCue: 'cmd:setTimelinePointCue',
   pickShowAudio: 'cmd:pickShowAudio',
   clearShowAudio: 'cmd:clearShowAudio',
+  setMainAudioProps: 'cmd:setMainAudioProps',
   readAudioFile: 'cmd:readAudioFile',
   relinkAudioFromFolder: 'cmd:relinkAudioFromFolder',
   checkMissingFiles: 'cmd:checkMissingFiles',
@@ -101,6 +102,7 @@ export const Cmd = {
   addAudioClip: 'cmd:addAudioClip',
   moveAudioClip: 'cmd:moveAudioClip',
   removeAudioClip: 'cmd:removeAudioClip',
+  clearAudioTrack: 'cmd:clearAudioTrack',
   setAudioTrackProps: 'cmd:setAudioTrackProps',
   reportAudioLevels: 'cmd:reportAudioLevels',
 
@@ -387,6 +389,11 @@ export interface DmxBridge {
   pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }>;
   /** Show の音声を解除。 */
   clearShowAudio(showId: string): void;
+  /** メイン音声の音量(0..1)/ミュート/ソロを更新。 */
+  setMainAudioProps(
+    showId: string,
+    props: { volume?: number; muted?: boolean; solo?: boolean },
+  ): void;
   /** 音声ファイルのバイト列を読み出す（Blob URL 化して再生/波形に使う）。 */
   readAudioFile(filePath: string): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }>;
   /**
@@ -412,6 +419,8 @@ export interface DmxBridge {
   moveAudioClip(showId: string, trackIndex: number, clipId: string, startMs: number): void;
   /** クリップを削除。 */
   removeAudioClip(showId: string, trackIndex: number, clipId: string): void;
+  /** トラック（index 0..2）の全クリップを削除。 */
+  clearAudioTrack(showId: string, trackIndex: number): void;
   /** トラック（index 0..2）の音量(0..1)/ミュート/ソロを更新。 */
   setAudioTrackProps(
     showId: string,

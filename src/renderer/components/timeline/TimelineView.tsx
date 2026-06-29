@@ -9,7 +9,7 @@
  * トランスポート（再生/シーク/停止）と音声クロックはストアが所有する。
  */
 
-import { Music, Pause, Play, Plus, Square, Volume2, X } from "lucide-react";
+import { Pause, Play, Plus, Square, Volume2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cueAt } from "../../../engine/playback";
 import { AUDIO_TRACK_COUNT } from "../../../shared/types";
@@ -18,14 +18,19 @@ import { AudioRelinkModal } from "./AudioRelinkModal";
 import { AudioTrack } from "./AudioTrack";
 import { AudioTrackLane } from "./AudioTrackLane";
 import { GoMarkers } from "./GoMarkers";
+import { MixerHeader } from "./MixerHeader";
 import { Playhead } from "./Playhead";
 import { TimeRuler } from "./TimeRuler";
 import {
   cueOptions,
   formatTimecode,
+  snapMs,
   timeToPx,
   type CueLabelMode,
 } from "./utils";
+
+/** 左ヘッダ列の幅（px）。全トラックの t=0 をここで揃える。 */
+const HEADER_W = 144;
 
 function mimeFor(path: string): string {
   const ext = path.toLowerCase().split(".").pop();
@@ -92,6 +97,39 @@ export function TimelineView({ active }: { active: boolean }) {
   const scale = useMemo(() => ({ zoom }), [zoom]);
   const durationMs = Math.max(transport.durationMs, audioMs);
 
+  // メイン音声のミキサー値（音量/ミュート/ソロ）。
+  const mainVol = show?.audio?.volume ?? 1;
+  const mainMuted = show?.audio?.muted ?? false;
+  const mainSolo = show?.audio?.solo ?? false;
+  const setMainProps = (props: { volume?: number; muted?: boolean; solo?: boolean }) => {
+    if (activeShowId) window.dmx.setMainAudioProps(activeShowId, props);
+  };
+  const setTrackProps = (
+    i: number,
+    props: { volume?: number; muted?: boolean; solo?: boolean },
+  ) => {
+    if (activeShowId) window.dmx.setAudioTrackProps(activeShowId, i, props);
+  };
+
+  // ＋音声: ファイルを選び、尺をデコードで確定してから現在位置へクリップ追加。
+  const addClipToTrack = async (i: number) => {
+    if (!activeShowId) return;
+    const res = await window.dmx.pickAudioClip();
+    if (!res.ok || !res.path) return;
+    const file = await window.dmx.readAudioFile(res.path);
+    if (!file.ok || !file.data) return;
+    let clipMs: number;
+    try {
+      const ctx = new AudioContext();
+      const buf = await ctx.decodeAudioData(file.data);
+      clipMs = Math.round(buf.duration * 1000);
+      void ctx.close();
+    } catch {
+      return;
+    }
+    window.dmx.addAudioClip(activeShowId, i, res.path, snapMs(transport.playheadMs), clipMs);
+  };
+
   // 音声ファイルが設定されたらバイト列を取得して Blob URL 化、ストアの <audio> へ読み込む。
   // setState は非同期コールバックと cleanup でのみ呼ぶ（同期 setState によるカスケード再描画を回避）。
   useEffect(() => {
@@ -132,7 +170,8 @@ export function TimelineView({ active }: { active: boolean }) {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !transport.playing) return;
-    const headPx = timeToPx(transport.playheadMs, scale);
+    // 左ヘッダ列ぶんオフセットした実 x 座標で判定する。
+    const headPx = HEADER_W + timeToPx(transport.playheadMs, scale);
     const right = el.scrollLeft + el.clientWidth;
     if (headPx > right - 80 || headPx < el.scrollLeft) {
       el.scrollLeft = Math.max(0, headPx - el.clientWidth * 0.5);
@@ -230,29 +269,6 @@ export function TimelineView({ active }: { active: boolean }) {
           >
             <Volume2 size={12} /> モニター
           </button>
-          {/* 音声 */}
-          <button
-            onClick={() =>
-              activeShowId && window.dmx.pickShowAudio(activeShowId)
-            }
-            disabled={!loaded}
-            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-emerald-300 hover:bg-neutral-700 disabled:opacity-40"
-            title="音声ファイルを選択"
-          >
-            <Music size={12} /> 音声
-          </button>
-          {filePath && (
-            <button
-              onClick={() => {
-                if (activeShowId && window.confirm("音声ファイルを削除しますか？"))
-                  window.dmx.clearShowAudio(activeShowId);
-              }}
-              className="inline-flex items-center rounded px-1.5 py-1 text-neutral-500 hover:text-red-400"
-              title="音声を解除"
-            >
-              <X size={12} />
-            </button>
-          )}
           {/* ズーム */}
           <span className="text-[10px] text-neutral-500">zoom</span>
           <input
@@ -267,85 +283,143 @@ export function TimelineView({ active }: { active: boolean }) {
         </div>
       </div>
 
-      {/* トラックビュー（横スクロール） */}
+      {/* トラックビュー（左ヘッダ列 + 横スクロールの時間軸エリア。t=0 を全トラックで揃える） */}
       <div
         ref={scrollRef}
         onScroll={(e) => {
           savedScrollLeft.current = e.currentTarget.scrollLeft;
         }}
-        className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800"
+        className="min-h-0 flex-1 overflow-auto rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800"
       >
-        <div
-          className="relative"
-          style={{ width: contentWidth, minWidth: "100%" }}
-        >
-          <TimeRuler
-            durationMs={durationMs}
-            scale={scale}
-            onSeek={seek}
-            playing={transport.playing}
-          />
+        <div className="flex" style={{ width: HEADER_W + contentWidth, minWidth: "100%" }}>
+          {/* 左ヘッダ列（横スクロールでも左端に固定） */}
+          <div
+            className="sticky left-0 z-40 shrink-0 border-r border-neutral-800 bg-neutral-900"
+            style={{ width: HEADER_W }}
+          >
+            {/* ルーラー分のスペーサ */}
+            <div className="h-7 border-b border-neutral-700 bg-neutral-800" />
+            {/* GO */}
+            <div className="flex h-12 items-center border-b border-neutral-800 px-2 text-[11px] font-medium text-neutral-400">
+              GO
+            </div>
+            {/* メイン音声 */}
+            <div className="h-16 border-b border-neutral-800">
+              <MixerHeader
+                name="メイン"
+                volume={mainVol}
+                muted={mainMuted}
+                solo={mainSolo}
+                onVolume={(v) => setMainProps({ volume: v })}
+                onToggleMute={() => setMainProps({ muted: !mainMuted })}
+                onToggleSolo={() => setMainProps({ solo: !mainSolo })}
+                onAdd={() => activeShowId && void window.dmx.pickShowAudio(activeShowId)}
+                addDisabled={!loaded}
+                onDelete={() => {
+                  if (activeShowId && window.confirm("メイン音声を削除しますか？"))
+                    window.dmx.clearShowAudio(activeShowId);
+                }}
+                canDelete={!!filePath}
+                disabled={!filePath}
+              />
+            </div>
+            {/* 追加トラック */}
+            {Array.from({ length: AUDIO_TRACK_COUNT }, (_, i) => (
+              <div key={i} className="h-16 border-b border-neutral-800">
+                <MixerHeader
+                  name={audioTracks[i]?.name ?? `Track ${i + 1}`}
+                  volume={audioTracks[i]?.volume ?? 1}
+                  muted={audioTracks[i]?.muted ?? false}
+                  solo={audioTracks[i]?.solo ?? false}
+                  onVolume={(v) => setTrackProps(i, { volume: v })}
+                  onToggleMute={() => setTrackProps(i, { muted: !(audioTracks[i]?.muted ?? false) })}
+                  onToggleSolo={() => setTrackProps(i, { solo: !(audioTracks[i]?.solo ?? false) })}
+                  onAdd={() => void addClipToTrack(i)}
+                  addDisabled={!editable}
+                  onDelete={() => {
+                    if (
+                      activeShowId &&
+                      window.confirm(
+                        `${audioTracks[i]?.name ?? `Track ${i + 1}`} の音声を全て削除しますか？`,
+                      )
+                    )
+                      window.dmx.clearAudioTrack(activeShowId, i);
+                  }}
+                  canDelete={editable && (audioTracks[i]?.clips.length ?? 0) > 0}
+                />
+              </div>
+            ))}
+          </div>
 
-          {/* GO トラック */}
-          <div className="relative h-12 border-b border-neutral-800 bg-neutral-900/40">
-            {!loaded && (
-              <span className="absolute left-2 top-1.5 text-[11px] text-neutral-600">
-                Show を読み込むと GO 点を編集できます
-              </span>
-            )}
-            <GoMarkers
-              showId={activeShowId ?? ""}
-              points={points}
-              cues={cues}
+          {/* 時間軸エリア（クリップ・マーカー・波形・プレイヘッド。relative=配置基準） */}
+          <div className="relative shrink-0" style={{ width: contentWidth }}>
+            <TimeRuler
               durationMs={durationMs}
               scale={scale}
-              editable={editable}
               onSeek={seek}
+              playing={transport.playing}
             />
-          </div>
 
-          {/* メイン音声トラック（時刻0固定・マスター） */}
-          <div className="relative p-1">
-            <AudioTrack
-              audioUrl={audioUrl}
-              scale={scale}
-              onDurationMs={setAudioMs}
-            />
-            {audioMissing && (
-              <div className="absolute inset-1 flex items-center gap-2 rounded bg-neutral-900/80 px-2 text-[11px] text-red-400 ring-1 ring-red-500/40">
-                <span>音声ファイルが見つかりません</span>
-                <button
-                  onClick={() => setRelinkDismissed(false)}
-                  className="rounded bg-neutral-800 px-2 py-0.5 text-sky-300 hover:bg-neutral-700"
-                >
-                  再リンク
-                </button>
-              </div>
-            )}
-          </div>
+            {/* GO トラック */}
+            <div className="relative h-12 border-b border-neutral-800 bg-neutral-900/40">
+              {!loaded && (
+                <span className="absolute left-2 top-1.5 text-[11px] text-neutral-600">
+                  Show を読み込むと GO 点を編集できます
+                </span>
+              )}
+              <GoMarkers
+                showId={activeShowId ?? ""}
+                points={points}
+                cues={cues}
+                durationMs={durationMs}
+                scale={scale}
+                editable={editable}
+                onSeek={seek}
+              />
+            </div>
 
-          {/* 追加オーディオトラック（複数クリップ・個別音量/ミュート/ソロ） */}
-          {Array.from({ length: AUDIO_TRACK_COUNT }, (_, i) => (
-            <AudioTrackLane
-              key={i}
-              showId={activeShowId ?? ""}
-              trackIndex={i}
-              track={audioTracks[i]}
-              scale={scale}
-              editable={editable}
+            {/* メイン音声トラック（時刻0固定・マスター） */}
+            <div className="relative flex h-16 items-center border-b border-neutral-800 p-1">
+              <AudioTrack
+                audioUrl={audioUrl}
+                scale={scale}
+                onDurationMs={setAudioMs}
+              />
+              {audioMissing && (
+                <div className="absolute inset-1 flex items-center gap-2 rounded bg-neutral-900/80 px-2 text-[11px] text-red-400 ring-1 ring-red-500/40">
+                  <span>音声ファイルが見つかりません</span>
+                  <button
+                    onClick={() => setRelinkDismissed(false)}
+                    className="rounded bg-neutral-800 px-2 py-0.5 text-sky-300 hover:bg-neutral-700"
+                  >
+                    再リンク
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 追加オーディオトラック（複数クリップ） */}
+            {Array.from({ length: AUDIO_TRACK_COUNT }, (_, i) => (
+              <AudioTrackLane
+                key={i}
+                showId={activeShowId ?? ""}
+                trackIndex={i}
+                track={audioTracks[i]}
+                scale={scale}
+                editable={editable}
+                audioFileStatus={audioFileStatus}
+                onSeek={seek}
+              />
+            ))}
+
+            {/* プレイヘッド（時間軸エリアの全高オーバーレイ） */}
+            <Playhead
               playheadMs={transport.playheadMs}
-              audioFileStatus={audioFileStatus}
+              durationMs={durationMs}
+              scale={scale}
               onSeek={seek}
             />
-          ))}
-
-          {/* プレイヘッド（全高オーバーレイ） */}
-          <Playhead
-            playheadMs={transport.playheadMs}
-            durationMs={durationMs}
-            scale={scale}
-            onSeek={seek}
-          />
+          </div>
         </div>
       </div>
 

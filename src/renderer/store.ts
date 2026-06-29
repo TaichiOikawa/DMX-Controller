@@ -420,6 +420,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     // （<audio>.currentTime は VBR 等で非線形・不正確になるため使わない。）
     const ctx = ensureAudioCtx();
     ensureGraph();
+    // 生成直後の mainGain に現在のメインミキサー値（音量/ミュート/ソロ）を反映する。
+    applyTrackGains();
     void ctx.decodeAudioData(arrayBuffer).then((buf) => {
       mainBuffer = buf;
       const ms = Math.round(buf.duration * 1000);
@@ -471,7 +473,11 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   syncShowAudio: () => {
     const s = get();
     const show = s.project?.shows.find((sh) => sh.id === s.activeShowId) ?? null;
-    reconcileShowAudio(show?.timeline?.audioTracks ?? []);
+    reconcileShowAudio(show?.timeline?.audioTracks ?? [], {
+      volume: show?.audio?.volume ?? 1,
+      muted: show?.audio?.muted ?? false,
+      solo: show?.audio?.solo ?? false,
+    });
   },
 }));
 
@@ -508,6 +514,12 @@ const decodingFiles = new Set<string>();
 let activeClipNodes: AudioBufferSourceNode[] = [];
 /** 直近 reconcile したトラック定義（スケジュール・ゲイン適用に使う最新スナップショット）。 */
 let currentTracks: AudioTrack[] = [];
+/** メイン音声のミキサー値（追加トラックと同じ扱い。ソロ判定にも参加）。 */
+let currentMainProps: { volume: number; muted: boolean; solo: boolean } = {
+  volume: 1,
+  muted: false,
+  solo: false,
+};
 
 /** 再生中フラグ（音声クロック使用時のみ true）。 */
 let audioPlaying = false;
@@ -643,11 +655,20 @@ function stopAllSources(): void {
   activeClipNodes = [];
 }
 
-/** ソロ/ミュート/音量からトラックの実効ゲインを反映する（必要なら gain を生成）。 */
+/**
+ * ソロ/ミュート/音量からメイン + 各トラックの実効ゲインを反映する（必要なら gain を生成）。
+ * ソロはメインと追加トラックを横断して判定する（どれかソロなら非ソロは無音）。
+ */
 function applyTrackGains(): void {
   if (!masterGain) ensureGraph();
   const ctx = ensureAudioCtx();
-  const anySolo = currentTracks.some((t) => t.solo);
+  const anySolo = currentMainProps.solo || currentTracks.some((t) => t.solo);
+  // メイン音声。
+  if (mainGain) {
+    const m = currentMainProps;
+    mainGain.gain.value = m.muted || (anySolo && !m.solo) ? 0 : m.volume;
+  }
+  // 追加トラック。
   for (const t of currentTracks) {
     let g = trackGains.get(t.id);
     if (!g) {
@@ -659,9 +680,13 @@ function applyTrackGains(): void {
   }
 }
 
-/** アクティブ Show のトラック群へ追従（クリップのデコード + 音量反映）。 */
-function reconcileShowAudio(tracks: AudioTrack[]): void {
+/** アクティブ Show のメイン音声 + トラック群へ追従（クリップのデコード + 音量反映）。 */
+function reconcileShowAudio(
+  tracks: AudioTrack[],
+  main: { volume: number; muted: boolean; solo: boolean },
+): void {
   currentTracks = tracks;
+  currentMainProps = main;
   const hasClips = tracks.some((t) => t.clips.length > 0);
   // グラフ未生成かつクリップも無い Show では AudioContext を作らない（無音 GO のみのとき）。
   if (hasClips || masterGain) applyTrackGains();

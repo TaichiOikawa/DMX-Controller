@@ -57,6 +57,14 @@ describe('追加オーディオトラック / クリップ', () => {
     expect(tracks(engine)[0].clips).toHaveLength(0);
   });
 
+  it('clearAudioTrack はトラックの全クリップを削除する', () => {
+    const engine = makeEngine();
+    engine.addAudioClip('show1', 0, '/a.wav', 0, 1000);
+    engine.addAudioClip('show1', 0, '/b.wav', 2000, 1000);
+    engine.clearAudioTrack('show1', 0);
+    expect(tracks(engine)[0].clips).toHaveLength(0);
+  });
+
   it('setAudioTrackProps は音量(0..1クランプ)/ミュート/ソロを反映し、トラックを生成する', () => {
     const engine = makeEngine();
     engine.setAudioTrackProps('show1', 2, { volume: 1.5, muted: true, solo: true });
@@ -75,5 +83,34 @@ describe('追加オーディオトラック / クリップ', () => {
     // 音量/ミュート/ソロは SHOW 中でも反映される。
     engine.setAudioTrackProps('show1', 0, { volume: 0.5 });
     expect(tracks(engine)[0].volume).toBe(0.5);
+  });
+});
+
+describe('メイン音声のミキサー操作', () => {
+  it('setMainAudioProps は音量(0..1クランプ)/ミュート/ソロを反映する', () => {
+    const engine = makeEngine();
+    engine.setShowAudio('show1', '/main.wav');
+    engine.setMainAudioProps('show1', { volume: 2, muted: true, solo: true });
+    const audio = engine.getProject().shows[0].audio!;
+    expect(audio.volume).toBe(1);
+    expect(audio.muted).toBe(true);
+    expect(audio.solo).toBe(true);
+  });
+
+  it('音声未設定なら setMainAudioProps は無視する', () => {
+    const engine = makeEngine();
+    engine.setMainAudioProps('show1', { volume: 0.5 });
+    expect(engine.getProject().shows[0].audio).toBeUndefined();
+  });
+
+  it('setShowAudio はファイル変更時も音量/ミュート/ソロを保持する', () => {
+    const engine = makeEngine();
+    engine.setShowAudio('show1', '/a.wav');
+    engine.setMainAudioProps('show1', { volume: 0.3, muted: true });
+    engine.setShowAudio('show1', '/b.wav');
+    const audio = engine.getProject().shows[0].audio!;
+    expect(audio.filePath).toBe('/b.wav');
+    expect(audio.volume).toBe(0.3);
+    expect(audio.muted).toBe(true);
   });
 });

@@ -217,6 +217,9 @@ const api: DmxBridge = {
   clearShowAudio(showId) {
     ipcRenderer.send(Cmd.clearShowAudio, showId);
   },
+  setMainAudioProps(showId, props) {
+    ipcRenderer.send(Cmd.setMainAudioProps, showId, props);
+  },
   readAudioFile(filePath) {
     return ipcRenderer.invoke(Cmd.readAudioFile, filePath) as ReturnType<DmxBridge['readAudioFile']>;
   },
@@ -243,6 +246,9 @@ const api: DmxBridge = {
   },
   removeAudioClip(showId, trackIndex, clipId) {
     ipcRenderer.send(Cmd.removeAudioClip, showId, trackIndex, clipId);
+  },
+  clearAudioTrack(showId, trackIndex) {
+    ipcRenderer.send(Cmd.clearAudioTrack, showId, trackIndex);
   },
   setAudioTrackProps(showId, trackIndex, props) {
     ipcRenderer.send(Cmd.setAudioTrackProps, showId, trackIndex, props);

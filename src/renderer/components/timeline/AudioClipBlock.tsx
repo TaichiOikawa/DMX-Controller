@@ -6,9 +6,28 @@
  */
 
 import { X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import WaveSurfer from 'wavesurfer.js';
 import type { AudioClip } from '../../../shared/types';
 import { pxToTime, snapMs, timeToPx, type TimeScale } from './utils';
+
+function mimeFor(p: string): string {
+  switch (p.toLowerCase().split('.').pop()) {
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'm4a':
+    case 'aac':
+      return 'audio/aac';
+    case 'flac':
+      return 'audio/flac';
+    default:
+      return 'audio/*';
+  }
+}
 
 interface AudioClipBlockProps {
   showId: string;
@@ -36,6 +55,36 @@ export function AudioClipBlock({
   const [dragMs, setDragMs] = useState<number | null>(null);
   const moved = useRef(false);
   const startMs = dragMs ?? clip.startMs;
+
+  // クリップ内に波形を表示する（メイン音声と同様 WaveSurfer・表示専用）。
+  // 実バイトを読み出し Blob URL 化してロードする。再生位置の同期は不要（実再生はストア）。
+  const waveRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    let ws: WaveSurfer | null = null;
+    window.dmx.readAudioFile(clip.filePath).then((res) => {
+      if (cancelled || !waveRef.current || !res.ok || !res.data) return;
+      createdUrl = URL.createObjectURL(new Blob([res.data], { type: mimeFor(clip.filePath) }));
+      ws = WaveSurfer.create({
+        container: waveRef.current,
+        waveColor: 'rgba(167, 243, 208, 0.55)',
+        progressColor: 'rgba(167, 243, 208, 0.55)',
+        cursorWidth: 0,
+        height: 36,
+        normalize: true,
+        interact: false,
+        hideScrollbar: true,
+        fillParent: true,
+      });
+      void ws.load(createdUrl).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      ws?.destroy();
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [clip.filePath]);
 
   // 衝突回避：自分の左右隣の固定位置から、跨がない開始位置の範囲を求める。
   const idx = clips.findIndex((c) => c.id === clip.id);
@@ -92,8 +141,19 @@ export function AudioClipBlock({
       onMouseDown={handleMouseDown}
       title={`${fileName}${missing ? '（音源が見つかりません）' : ''}`}
     >
-      <div className="flex items-center gap-1 px-1 pt-0.5 text-[10px] leading-tight">
-        <span className={`truncate ${missing ? 'text-red-300' : 'text-emerald-100'}`}>
+      {/* 波形（背面・操作はブロックへ素通り）。欠損時は表示しない。 */}
+      {!missing && (
+        <div
+          ref={waveRef}
+          className="pointer-events-none absolute inset-x-0 bottom-0 top-3 opacity-90"
+        />
+      )}
+      <div className="relative flex items-center gap-1 px-1 pt-0.5 text-[10px] leading-tight">
+        <span
+          className={`truncate rounded bg-neutral-900/50 px-0.5 ${
+            missing ? 'text-red-300' : 'text-emerald-50'
+          }`}
+        >
           {status === 'loading' ? '読込中… ' : ''}
           {fileName}
         </span>

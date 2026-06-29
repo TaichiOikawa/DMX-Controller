@@ -257,6 +257,11 @@ function normalizeShow(raw: Record<string, unknown>, validFolderIds: Set<string>
   }
   if (isObject(raw.audio) && typeof raw.audio.filePath === 'string') {
     show.audio = { filePath: raw.audio.filePath };
+    if (typeof raw.audio.volume === 'number') {
+      show.audio.volume = clampInt(raw.audio.volume * 100, 0, 100) / 100;
+    }
+    if (raw.audio.muted === true) show.audio.muted = true;
+    if (raw.audio.solo === true) show.audio.solo = true;
   }
   if (isObject(raw.timeline)) {
     show.timeline = normalizeTimeline(raw.timeline);

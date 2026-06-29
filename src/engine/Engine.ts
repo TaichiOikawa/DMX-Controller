@@ -1074,11 +1074,27 @@ export class Engine {
     this.notifyProject();
   }
 
-  /** Show に音声ファイル（絶対パス）を設定。 */
+  /** Show に音声ファイル（絶対パス）を設定。音量/ミュート/ソロは保持する。 */
   setShowAudio(showId: string, filePath: string): void {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
-    show.audio = { filePath };
+    show.audio = { ...show.audio, filePath };
+    this.notifyProject();
+  }
+
+  /**
+   * メイン音声の音量(0..1)/ミュート/ソロを更新（追加トラックと同じミキサー操作）。
+   * SHOW 中も操作したいので editable ゲートせず、Undo にも積まない。
+   */
+  setMainAudioProps(
+    showId: string,
+    props: { volume?: number; muted?: boolean; solo?: boolean },
+  ): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show?.audio) return;
+    if (typeof props.volume === 'number') show.audio.volume = Math.max(0, Math.min(1, props.volume));
+    if (typeof props.muted === 'boolean') show.audio.muted = props.muted;
+    if (typeof props.solo === 'boolean') show.audio.solo = props.solo;
     this.notifyProject();
   }
 
@@ -1157,6 +1173,17 @@ export class Engine {
     if (idx < 0) return;
     this.pushUndo();
     track.clips.splice(idx, 1);
+    this.notifyProject();
+  }
+
+  /** トラック（index 0..2）の全クリップを削除。 */
+  clearAudioTrack(showId: string, trackIndex: number): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    const track = show?.timeline?.audioTracks?.[trackIndex];
+    if (!track || track.clips.length === 0) return;
+    this.pushUndo();
+    track.clips = [];
     this.notifyProject();
   }
 

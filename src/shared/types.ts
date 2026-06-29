@@ -84,10 +84,11 @@ export interface Show {
    */
   sequence: SequenceEntry[];
   /**
-   * 音声ファイルパス。メモリ上は常に絶対パス。保存時、Project ファイルの配下にある場合のみ
+   * メイン音声。filePath はメモリ上は常に絶対パス。保存時、Project ファイルの配下にある場合のみ
    * 相対パス（POSIX 区切り）でディスクへ書き出し、読込時に絶対パスへ戻す（src/main/projectPaths.ts）。
+   * volume(0..1)/muted/solo は追加トラックと同じミキサー操作（省略時は volume=1・false）。
    */
-  audio?: { filePath: string };
+  audio?: { filePath: string; volume?: number; muted?: boolean; solo?: boolean };
   timeline?: Timeline;
 }
 

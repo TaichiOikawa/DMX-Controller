@@ -340,6 +340,11 @@ export class EngineHost {
     );
     ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
+    ipcMain.on(
+      Cmd.setMainAudioProps,
+      (_e, showId: string, props: { volume?: number; muted?: boolean; solo?: boolean }) =>
+        this.engine.setMainAudioProps(showId, props),
+    );
     ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
     ipcMain.handle(Cmd.relinkAudioFromFolder, () => this.relinkAudioFromFolder());
     ipcMain.handle(Cmd.checkMissingFiles, () => this.findMissingFiles());
@@ -356,6 +361,9 @@ export class EngineHost {
     );
     ipcMain.on(Cmd.removeAudioClip, (_e, showId: string, trackIndex: number, clipId: string) =>
       this.engine.removeAudioClip(showId, trackIndex, clipId),
+    );
+    ipcMain.on(Cmd.clearAudioTrack, (_e, showId: string, trackIndex: number) =>
+      this.engine.clearAudioTrack(showId, trackIndex),
     );
     ipcMain.on(
       Cmd.setAudioTrackProps,

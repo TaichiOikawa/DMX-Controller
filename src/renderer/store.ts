@@ -140,6 +140,23 @@ export const BANK_COUNT = UNIVERSE_SIZE / FADERS_PER_BANK; // 16
 
 const DEFAULT_DURATION_MS = 60_000;
 
+/**
+ * 選択中 CUE の値からフェーダー表示位置を作る（表示専用）。
+ * CUE が持つ ch はその値、busking 中 ch は現状維持、それ以外は 0。
+ */
+function fadersFromCue(
+  cueValues: Record<number, number>,
+  current: number[],
+  busking: boolean[],
+): number[] {
+  const faders = new Array(current.length).fill(0);
+  for (let ch = 0; ch < faders.length; ch++) {
+    const v = cueValues[ch];
+    faders[ch] = v !== undefined ? v : busking[ch] ? current[ch] : 0;
+  }
+  return faders;
+}
+
 function durationForProject(
   project: Project,
   activeShowId: string | null,
@@ -225,9 +242,24 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       const selectedShowId = stillExists
         ? s.selectedShowId
         : (project.shows[0]?.id ?? null);
+
+      // EDIT × CUE 選択中は、フェーダー表示の真実は選択 CUE 値（syncFadersToCue 由来）。
+      // ここで project.faders(=faderLive) を採用すると、別 CUE 編集で残った faderLive へ
+      // 非選択 ch が飛ぶ（編集中ブロードキャスト毎に他フェーダーが動く）。CUE から作り直す。
+      const activeShow = project.shows.find((sh) => sh.id === s.activeShowId) ?? null;
+      const mainIndex = s.playback?.mainIndex ?? -1;
+      const subIndex = s.playback?.subIndex ?? 0;
+      const selectedCue =
+        s.mode === 'edit' && activeShow && mainIndex >= 0
+          ? cueAt(activeShow.sequence, { main: mainIndex, sub: subIndex })
+          : null;
+      const faders = selectedCue
+        ? fadersFromCue(selectedCue.values, s.faders, s.busking)
+        : project.faders.slice();
+
       return {
         project,
-        faders: project.faders.slice(),
+        faders,
         artnet: project.settings.artnet,
         selectedShowId,
         transport: {
@@ -295,12 +327,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   syncFadersToCue: (cueValues) =>
     set((s) => {
       if (!cueValues) return {};
-      const faders = new Array(s.faders.length).fill(0);
-      for (let ch = 0; ch < faders.length; ch++) {
-        const v = cueValues[ch];
-        faders[ch] = v !== undefined ? v : s.busking[ch] ? s.faders[ch] : 0;
-      }
-      return { faders };
+      return { faders: fadersFromCue(cueValues, s.faders, s.busking) };
     }),
 
   deleteCueChannel: (cueId, ch) =>

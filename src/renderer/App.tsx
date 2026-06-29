@@ -35,6 +35,12 @@ export default function App() {
   const setDirty = useDmxStore((s) => s.setDirty);
   const fadersCollapsed = useDmxStore((s) => s.fadersCollapsed);
   const sidebarCollapsed = useDmxStore((s) => s.sidebarCollapsed);
+  // ウィンドウタイトル用：Project 名・対象 Show 名・未保存状態。
+  const project = useDmxStore((s) => s.project);
+  const projectPath = useDmxStore((s) => s.projectPath);
+  const activeShowId = useDmxStore((s) => s.activeShowId);
+  const selectedShowId = useDmxStore((s) => s.selectedShowId);
+  const dirty = useDmxStore((s) => s.dirty);
   const [tab, setTab] = useState<Tab>('cue');
   // キーハンドラ（[] 依存で固定）から現在タブを参照するための ref。
   const tabRef = useRef(tab);
@@ -186,6 +192,20 @@ export default function App() {
   useEffect(() => {
     window.dmx.notifyUiState({ tab, sidebarCollapsed, fadersCollapsed });
   }, [tab, sidebarCollapsed, fadersCollapsed]);
+
+  // ウィンドウタイトルへ「Project名 — Show名」を反映する（Electron はウィンドウ
+  // タイトルを document.title に追従させる）。project.name は "Untitled" 固定のため、
+  // 保存済みはファイル名（拡張子なし）を Project 名として用いる（ProjectSidebar と同様）。
+  // 対象 Show は読込中（active）を優先し、未読込なら編集中に選択している Show を表示する。
+  // 未保存時は先頭に ● を付ける。
+  useEffect(() => {
+    const fileName = projectPath ? projectPath.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '') : '';
+    const projectName = fileName || '無題';
+    const showId = activeShowId ?? selectedShowId;
+    const showName = showId ? project?.shows.find((s) => s.id === showId)?.name : undefined;
+    const base = showName ? `${projectName} — ${showName}` : projectName;
+    document.title = `${dirty ? '● ' : ''}${base} — DMX Console`;
+  }, [project, projectPath, activeShowId, selectedShowId, dirty]);
 
   return (
     <div className="flex h-screen gap-2 bg-neutral-950 p-2 text-neutral-100">

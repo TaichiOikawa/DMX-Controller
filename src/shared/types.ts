@@ -88,7 +88,14 @@ export interface Show {
    * 相対パス（POSIX 区切り）でディスクへ書き出し、読込時に絶対パスへ戻す（src/main/projectPaths.ts）。
    * volume(0..1)/muted/solo は追加トラックと同じミキサー操作（省略時は volume=1・false）。
    */
-  audio?: { filePath: string; volume?: number; muted?: boolean; solo?: boolean };
+  audio?: {
+    filePath: string;
+    volume?: number;
+    muted?: boolean;
+    solo?: boolean;
+    /** 出力先デバイス（deviceId）。未指定/空 = OS 既定。マシン固有・非可搬。 */
+    outputDeviceId?: string;
+  };
   timeline?: Timeline;
 }
 
@@ -184,6 +191,8 @@ export interface AudioTrack {
   volume: number;
   muted: boolean;
   solo: boolean;
+  /** 出力先デバイス（enumerateDevices の deviceId）。未指定/空 = OS 既定。マシン固有・非可搬。 */
+  outputDeviceId?: string;
 }
 
 export interface TimelinePoint {

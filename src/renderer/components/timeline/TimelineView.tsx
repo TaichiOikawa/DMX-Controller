@@ -19,6 +19,7 @@ import { AudioTrack } from "./AudioTrack";
 import { AudioTrackLane } from "./AudioTrackLane";
 import { GoMarkers } from "./GoMarkers";
 import { MixerHeader } from "./MixerHeader";
+import { useAudioOutputDevices } from "./useAudioOutputDevices";
 import { Playhead } from "./Playhead";
 import { TimeRuler } from "./TimeRuler";
 import {
@@ -64,6 +65,7 @@ export function TimelineView({ active }: { active: boolean }) {
   const playback = useDmxStore((s) => s.playback);
   const editable = useDmxStore((s) => s.mode === "edit");
   const audioFileStatus = useDmxStore((s) => s.audioFileStatus);
+  const audioDevices = useAudioOutputDevices();
 
   const [zoom, setZoom] = useState(1);
   const [labelMode, setLabelMode] = useState<CueLabelMode>("lyrics");
@@ -101,12 +103,17 @@ export function TimelineView({ active }: { active: boolean }) {
   const mainVol = show?.audio?.volume ?? 1;
   const mainMuted = show?.audio?.muted ?? false;
   const mainSolo = show?.audio?.solo ?? false;
-  const setMainProps = (props: { volume?: number; muted?: boolean; solo?: boolean }) => {
+  const setMainProps = (props: {
+    volume?: number;
+    muted?: boolean;
+    solo?: boolean;
+    outputDeviceId?: string | null;
+  }) => {
     if (activeShowId) window.dmx.setMainAudioProps(activeShowId, props);
   };
   const setTrackProps = (
     i: number,
-    props: { volume?: number; muted?: boolean; solo?: boolean },
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
   ) => {
     if (activeShowId) window.dmx.setAudioTrackProps(activeShowId, i, props);
   };
@@ -304,7 +311,7 @@ export function TimelineView({ active }: { active: boolean }) {
               GO
             </div>
             {/* メイン音声 */}
-            <div className="h-16 border-b border-neutral-800">
+            <div className="h-20 border-b border-neutral-800">
               <MixerHeader
                 name="メイン"
                 volume={mainVol}
@@ -320,12 +327,15 @@ export function TimelineView({ active }: { active: boolean }) {
                     window.dmx.clearShowAudio(activeShowId);
                 }}
                 canDelete={!!filePath}
+                devices={audioDevices}
+                deviceId={show?.audio?.outputDeviceId ?? ""}
+                onDevice={(id) => setMainProps({ outputDeviceId: id || null })}
                 disabled={!filePath}
               />
             </div>
             {/* 追加トラック */}
             {Array.from({ length: AUDIO_TRACK_COUNT }, (_, i) => (
-              <div key={i} className="h-16 border-b border-neutral-800">
+              <div key={i} className="h-20 border-b border-neutral-800">
                 <MixerHeader
                   name={audioTracks[i]?.name ?? `Track ${i + 1}`}
                   volume={audioTracks[i]?.volume ?? 1}
@@ -346,6 +356,9 @@ export function TimelineView({ active }: { active: boolean }) {
                       window.dmx.clearAudioTrack(activeShowId, i);
                   }}
                   canDelete={editable && (audioTracks[i]?.clips.length ?? 0) > 0}
+                  devices={audioDevices}
+                  deviceId={audioTracks[i]?.outputDeviceId ?? ""}
+                  onDevice={(id) => setTrackProps(i, { outputDeviceId: id || null })}
                 />
               </div>
             ))}
@@ -379,7 +392,7 @@ export function TimelineView({ active }: { active: boolean }) {
             </div>
 
             {/* メイン音声トラック（時刻0固定・マスター） */}
-            <div className="relative flex h-16 items-center border-b border-neutral-800 p-1">
+            <div className="relative flex h-20 items-center border-b border-neutral-800 p-1">
               <AudioTrack
                 audioUrl={audioUrl}
                 scale={scale}

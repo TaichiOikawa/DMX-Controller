@@ -114,3 +114,22 @@ describe('メイン音声のミキサー操作', () => {
     expect(audio.muted).toBe(true);
   });
 });
+
+describe('出力デバイス（outputDeviceId）', () => {
+  it('setAudioTrackProps で deviceId を設定・空文字で既定へ戻す', () => {
+    const engine = makeEngine();
+    engine.setAudioTrackProps('show1', 0, { outputDeviceId: 'dev-A' });
+    expect(tracks(engine)[0].outputDeviceId).toBe('dev-A');
+    engine.setAudioTrackProps('show1', 0, { outputDeviceId: '' });
+    expect(tracks(engine)[0].outputDeviceId).toBeUndefined();
+  });
+
+  it('setMainAudioProps で deviceId を設定・null で既定へ戻す', () => {
+    const engine = makeEngine();
+    engine.setShowAudio('show1', '/main.wav');
+    engine.setMainAudioProps('show1', { outputDeviceId: 'dev-B' });
+    expect(engine.getProject().shows[0].audio!.outputDeviceId).toBe('dev-B');
+    engine.setMainAudioProps('show1', { outputDeviceId: null });
+    expect(engine.getProject().shows[0].audio!.outputDeviceId).toBeUndefined();
+  });
+});

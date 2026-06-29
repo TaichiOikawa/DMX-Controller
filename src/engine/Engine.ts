@@ -1088,13 +1088,17 @@ export class Engine {
    */
   setMainAudioProps(
     showId: string,
-    props: { volume?: number; muted?: boolean; solo?: boolean },
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
   ): void {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show?.audio) return;
     if (typeof props.volume === 'number') show.audio.volume = Math.max(0, Math.min(1, props.volume));
     if (typeof props.muted === 'boolean') show.audio.muted = props.muted;
     if (typeof props.solo === 'boolean') show.audio.solo = props.solo;
+    if (props.outputDeviceId !== undefined) {
+      if (props.outputDeviceId) show.audio.outputDeviceId = props.outputDeviceId;
+      else delete show.audio.outputDeviceId;
+    }
     this.notifyProject();
   }
 
@@ -1194,7 +1198,7 @@ export class Engine {
   setAudioTrackProps(
     showId: string,
     trackIndex: number,
-    props: { volume?: number; muted?: boolean; solo?: boolean },
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
   ): void {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
@@ -1203,6 +1207,10 @@ export class Engine {
     if (typeof props.volume === 'number') track.volume = Math.max(0, Math.min(1, props.volume));
     if (typeof props.muted === 'boolean') track.muted = props.muted;
     if (typeof props.solo === 'boolean') track.solo = props.solo;
+    if (props.outputDeviceId !== undefined) {
+      if (props.outputDeviceId) track.outputDeviceId = props.outputDeviceId;
+      else delete track.outputDeviceId;
+    }
     this.notifyProject();
   }
 

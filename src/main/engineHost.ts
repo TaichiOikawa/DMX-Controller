@@ -342,7 +342,7 @@ export class EngineHost {
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
     ipcMain.on(
       Cmd.setMainAudioProps,
-      (_e, showId: string, props: { volume?: number; muted?: boolean; solo?: boolean }) =>
+      (_e, showId: string, props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null }) =>
         this.engine.setMainAudioProps(showId, props),
     );
     ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
@@ -367,7 +367,7 @@ export class EngineHost {
     );
     ipcMain.on(
       Cmd.setAudioTrackProps,
-      (_e, showId: string, trackIndex: number, props: { volume?: number; muted?: boolean; solo?: boolean }) =>
+      (_e, showId: string, trackIndex: number, props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null }) =>
         this.engine.setAudioTrackProps(showId, trackIndex, props),
     );
     // メイン renderer のミックスレベルを全ウインドウ（モニター）へ中継。

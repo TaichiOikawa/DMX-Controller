@@ -31,7 +31,7 @@ export function AudioTrackLane({
 }: AudioTrackLaneProps) {
   const clips = track?.clips ?? [];
   return (
-    <div className="relative h-16 border-b border-neutral-800 bg-neutral-900/40">
+    <div className="relative h-20 border-b border-neutral-800 bg-neutral-900/40">
       {clips.map((clip) => (
         <AudioClipBlock
           key={clip.id}

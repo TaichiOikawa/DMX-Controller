@@ -3,7 +3,7 @@
  * BrowserWindow のライフサイクル管理と EngineHost の起動を担う。
  */
 
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { EngineHost } from './engineHost';
@@ -170,6 +170,17 @@ function openMonitorWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // オーディオ出力デバイスの列挙でデバイス「名」を露出するには media 権限が要る。
+  // 信頼済みの自前アプリなので media 系はプロンプトなしで許可する（マイクは名前解放のため一瞬使うのみ）。
+  const allowMedia = (permission: string): boolean =>
+    permission === 'media' || permission === 'audioCapture' || permission === 'mediaKeySystem';
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
+    cb(allowMedia(permission)),
+  );
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowMedia(permission));
+  // 出力デバイス選択（setSinkId）を許可する。
+  session.defaultSession.setDevicePermissionHandler(() => true);
+
   host = new EngineHost();
   host.registerIpc();
 

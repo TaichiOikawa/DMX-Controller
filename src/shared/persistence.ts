@@ -262,6 +262,9 @@ function normalizeShow(raw: Record<string, unknown>, validFolderIds: Set<string>
     }
     if (raw.audio.muted === true) show.audio.muted = true;
     if (raw.audio.solo === true) show.audio.solo = true;
+    if (typeof raw.audio.outputDeviceId === 'string') {
+      show.audio.outputDeviceId = raw.audio.outputDeviceId;
+    }
   }
   if (isObject(raw.timeline)) {
     show.timeline = normalizeTimeline(raw.timeline);
@@ -369,6 +372,7 @@ function normalizeAudioTrack(raw: Record<string, unknown>): AudioTrack {
     solo: raw.solo === true,
   };
   if (typeof raw.name === 'string') track.name = raw.name;
+  if (typeof raw.outputDeviceId === 'string') track.outputDeviceId = raw.outputDeviceId;
   return track;
 }
 

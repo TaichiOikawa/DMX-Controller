@@ -392,7 +392,7 @@ export interface DmxBridge {
   /** メイン音声の音量(0..1)/ミュート/ソロを更新。 */
   setMainAudioProps(
     showId: string,
-    props: { volume?: number; muted?: boolean; solo?: boolean },
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
   ): void;
   /** 音声ファイルのバイト列を読み出す（Blob URL 化して再生/波形に使う）。 */
   readAudioFile(filePath: string): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }>;
@@ -425,7 +425,7 @@ export interface DmxBridge {
   setAudioTrackProps(
     showId: string,
     trackIndex: number,
-    props: { volume?: number; muted?: boolean; solo?: boolean },
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
   ): void;
   /** ミックス済みオーディオ出力レベルを main へ送る（main が全ウインドウへ中継）。 */
   reportAudioLevels(levels: AudioLevels): void;

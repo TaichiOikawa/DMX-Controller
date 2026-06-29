@@ -4,6 +4,7 @@
  */
 
 import { Plus, Trash2 } from 'lucide-react';
+import type { AudioOutputDevice } from './useAudioOutputDevices';
 
 interface MixerHeaderProps {
   name: string;
@@ -21,6 +22,12 @@ interface MixerHeaderProps {
   onDelete?: () => void;
   /** 音声削除を有効化する条件（音声/クリップがある等）。false で非表示。 */
   canDelete?: boolean;
+  /** 出力デバイス一覧（先頭は既定デバイス）。 */
+  devices: AudioOutputDevice[];
+  /** 現在の出力デバイス（'' = 既定）。 */
+  deviceId: string;
+  /** 出力デバイス変更（'' = 既定へ戻す）。 */
+  onDevice: (deviceId: string) => void;
   /** 全コントロールを無効化（メイン音声未設定など）。 */
   disabled?: boolean;
 }
@@ -37,6 +44,9 @@ export function MixerHeader({
   addDisabled,
   onDelete,
   canDelete,
+  devices,
+  deviceId,
+  onDevice,
   disabled,
 }: MixerHeaderProps) {
   return (
@@ -100,6 +110,20 @@ export function MixerHeader({
           S
         </button>
       </div>
+      {/* 出力デバイス選択 */}
+      <select
+        value={deviceId}
+        disabled={disabled}
+        onChange={(e) => onDevice(e.target.value)}
+        className="h-5 w-full min-w-0 truncate rounded bg-neutral-800 px-1 text-[10px] text-neutral-300 outline-none ring-1 ring-neutral-700 focus:ring-sky-500 disabled:opacity-40"
+        title="出力デバイス"
+      >
+        {devices.map((d) => (
+          <option key={d.deviceId || 'default'} value={d.deviceId}>
+            {d.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

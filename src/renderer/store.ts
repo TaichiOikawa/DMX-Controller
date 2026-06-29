@@ -420,7 +420,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     // （<audio>.currentTime は VBR 等で非線形・不正確になるため使わない。）
     const ctx = ensureAudioCtx();
     ensureGraph();
-    // 生成直後の mainGain に現在のメインミキサー値（音量/ミュート/ソロ）を反映する。
+    // 生成直後の gain に現在のメインミキサー値（音量/ミュート/ソロ）を反映する。
     applyTrackGains();
     void ctx.decodeAudioData(arrayBuffer).then((buf) => {
       mainBuffer = buf;
@@ -433,8 +433,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
         }));
       }
       // 再生中にメインを後から読み込んだ場合は、現在位置から鳴らし始める。
-      if (audioPlaying && mainGain) {
-        mainSource = scheduleSource(mainBuffer, mainGain, 0, currentPositionMs() / 1000);
+      if (audioPlaying && mainGainEntry) {
+        const bus = ensureBus(mainGainEntry.deviceId);
+        mainSource = scheduleSource(mainBuffer, bus, mainGainEntry.gain, 0, currentPositionMs() / 1000);
       }
     }).catch(() => {});
   },
@@ -488,42 +489,54 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 // <audio>.currentTime は VBR 等の圧縮音源で非線形・不正確になり、波形・プレイヘッドと
 // 実音がずれるため使わない。デコード済み AudioBuffer を唯一の正確な時間軸とする。
 //
-// グラフ: 各ソース → trackGain/mainGain ─┬─► meterBus → splitter → analyserL/R（解析のみ）
-//                                        └─► （既定）masterGain → destination
-//                                            （指定）deviceOutputs[id].dest → <audio sinkId=id>
-// トラックごとに出力デバイスを変えられるよう、出力先を gain 単位で差し替える（routeGain）。
+// 出力デバイスごとに独立した AudioContext（OutputBus）を持ち、AudioContext.setSinkId で
+// デバイスへ直結する。MediaStream 経由（MediaStreamAudioDestinationNode + <audio>.setSinkId）
+// だと、ストリームが既定デバイスのサンプルレートで固定され、ネイティブレートの異なる
+// デバイスへ流したとき再生速度・ピッチがずれるため、これを避ける。
+// 既定デバイス（deviceId=''）のバスがクロック源（audioCtx）。デコード済みバッファは
+// 各 context で共有でき、ソースノードが各 context のレートへ自動リサンプリングする。
+//
+// グラフ（各バス内）: 各ソース → trackGain/mainGain ─┬─► meterBus → splitter → analyserL/R（解析のみ）
+//                                                     └─► masterGain → ctx.destination
+// メーターは全バスの analyser を合成（peak/rms は最大）してマスターメーターに反映する。
 let clockHandle: ReturnType<typeof setInterval> | null = null;
 let lastTickAt = 0;
 let audioRaf: number | null = null;
 let lastLevelSentAt = 0;
 
 // Web Audio エンジン状態。
-let audioCtx: AudioContext | null = null;
-/** 既定デバイス出力（→ ctx.destination）。 */
-let masterGain: GainNode | null = null;
-/** メータリング用バス（全ソースが常時ここへも分岐。destination へは無音で接続して描画を保証）。 */
-let meterBus: GainNode | null = null;
-let analyserL: AnalyserNode | null = null;
-let analyserR: AnalyserNode | null = null;
-let levelBufL: Float32Array<ArrayBuffer> | null = null;
-let levelBufR: Float32Array<ArrayBuffer> | null = null;
+/** 出力デバイス1つ分の AudioContext とメーター系。 */
+interface OutputBus {
+  deviceId: string; // '' = OS 既定。
+  ctx: AudioContext;
+  masterGain: GainNode; // → ctx.destination（このデバイスへの可聴出力）。
+  meterBus: GainNode; // → splitter → analyserL/R（解析のみ。無音で destination へも接続）。
+  analyserL: AnalyserNode;
+  analyserR: AnalyserNode;
+  bufL: Float32Array<ArrayBuffer>;
+  bufR: Float32Array<ArrayBuffer>;
+  /** 再生開始時の ctx.currentTime（秒）。このバス上のスケジュール基準。 */
+  startCtxTime: number;
+}
 
-// 出力デバイス別の終端（deviceId → MediaStreamDest + 隠し <audio>.setSinkId）。
-const deviceOutputs = new Map<string, { dest: MediaStreamAudioDestinationNode; el: HTMLAudioElement }>();
-/** 各 gain の現在の出力先ノード（差し替え時に disconnect する対象）。 */
-const trackOutNode = new Map<string, AudioNode>();
-let mainOutNode: AudioNode | null = null;
+/** deviceId → OutputBus（'' は既定＝クロック源）。 */
+const buses = new Map<string, OutputBus>();
+/** 既定バスの AudioContext（クロック源）。buses.get('')?.ctx と同一。 */
+let audioCtx: AudioContext | null = null;
 
 // メイン音声（Show.audio）。
 let mainBuffer: AudioBuffer | null = null;
-let mainGain: GainNode | null = null;
+/** メイン用 gain と現在の出力デバイス（どのバスにいるかの判定用）。 */
+let mainGainEntry: { gain: GainNode; deviceId: string } | null = null;
 let mainSource: AudioBufferSourceNode | null = null;
 
 // 追加トラック。クリップは filePath 単位でデコードをキャッシュ（同一ファイル共有）。
-const trackGains = new Map<string, GainNode>();
+/** trackId → gain と現在の出力デバイス。 */
+const trackGainEntries = new Map<string, { gain: GainNode; deviceId: string }>();
 const clipBuffers = new Map<string, AudioBuffer>();
 const decodingFiles = new Set<string>();
-let activeClipNodes: AudioBufferSourceNode[] = [];
+/** trackId → 再生中のクリップソース（デバイス変更時の張り替えに使う）。 */
+const activeClipNodes = new Map<string, AudioBufferSourceNode[]>();
 /** 直近 reconcile したトラック定義（スケジュール・ゲイン適用に使う最新スナップショット）。 */
 let currentTracks: AudioTrack[] = [];
 /** メイン音声のミキサー値（追加トラックと同じ扱い。ソロ判定にも参加）。 */
@@ -535,90 +548,92 @@ let currentMainProps: { volume: number; muted: boolean; solo: boolean; outputDev
 
 /** 再生中フラグ（音声クロック使用時のみ true）。 */
 let audioPlaying = false;
-/** 再生開始時の audioCtx.currentTime（秒）。 */
-let startCtxTime = 0;
 /** 再生開始時のタイムライン位置（秒）。停止中の現在位置でもある。 */
 let startOffsetSec = 0;
 
-/** AudioContext を遅延生成して再利用（ブラウザの生成数制限に配慮）。 */
+/** deviceId のバス（AudioContext + メーター系）を遅延生成。'' は既定＝クロック源。 */
+function ensureBus(deviceId: string): OutputBus {
+  const existing = buses.get(deviceId);
+  if (existing) return existing;
+  const ctx = new AudioContext();
+  // 既定以外はデバイスへ直結（MediaStream 経由のレート不整合＝速度ズレを避ける要）。
+  if (deviceId !== '') {
+    const sinkable = ctx as unknown as { setSinkId?: (id: string) => Promise<void> };
+    void sinkable.setSinkId?.(deviceId).catch(() => {});
+  }
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = 1;
+  masterGain.connect(ctx.destination);
+
+  // メーターバス。無音(0)で destination へも繋ぎ、解析が確実にレンダリングされるようにする。
+  const meterBus = ctx.createGain();
+  meterBus.gain.value = 1;
+  const splitter = ctx.createChannelSplitter(2);
+  meterBus.connect(splitter);
+  const analyserL = ctx.createAnalyser();
+  const analyserR = ctx.createAnalyser();
+  analyserL.fftSize = 1024;
+  analyserR.fftSize = 1024;
+  splitter.connect(analyserL, 0);
+  splitter.connect(analyserR, 1);
+  const silent = ctx.createGain();
+  silent.gain.value = 0;
+  meterBus.connect(silent);
+  silent.connect(ctx.destination);
+
+  const bus: OutputBus = {
+    deviceId,
+    ctx,
+    masterGain,
+    meterBus,
+    analyserL,
+    analyserR,
+    bufL: new Float32Array(analyserL.fftSize),
+    bufR: new Float32Array(analyserR.fftSize),
+    startCtxTime: 0,
+  };
+  buses.set(deviceId, bus);
+  if (deviceId === '') audioCtx = ctx;
+  // 再生中に作られたバス（デバイス変更等）はクロック基準を現在位置へ揃える。
+  if (audioPlaying) {
+    void ctx.resume().catch(() => {});
+    bus.startCtxTime = ctx.currentTime - (currentPositionMs() / 1000 - startOffsetSec);
+  }
+  return bus;
+}
+
+/** 既定バスの AudioContext（クロック源）を遅延生成。 */
 function ensureAudioCtx(): AudioContext {
-  if (!audioCtx) audioCtx = new AudioContext();
-  return audioCtx;
+  return ensureBus('').ctx;
 }
 
-/** 出力バス（masterGain）・メーターバス・メイン用 gain を生成（冪等）。 */
+/** 既定バス + メイン用 gain を生成（冪等）。 */
 function ensureGraph(): void {
-  const ctx = ensureAudioCtx();
-  if (!masterGain) {
-    masterGain = ctx.createGain();
-    masterGain.gain.value = 1;
-    masterGain.connect(ctx.destination);
-  }
-  if (!meterBus) {
-    meterBus = ctx.createGain();
-    meterBus.gain.value = 1;
-    // ステレオのメータータップ。
-    const splitter = ctx.createChannelSplitter(2);
-    meterBus.connect(splitter);
-    analyserL = ctx.createAnalyser();
-    analyserR = ctx.createAnalyser();
-    analyserL.fftSize = 1024;
-    analyserR.fftSize = 1024;
-    splitter.connect(analyserL, 0);
-    splitter.connect(analyserR, 1);
-    levelBufL = new Float32Array(analyserL.fftSize);
-    levelBufR = new Float32Array(analyserR.fftSize);
-    // メーターバスを無音(0)で destination へ繋ぎ、解析が確実にレンダリングされるようにする。
-    const silent = ctx.createGain();
-    silent.gain.value = 0;
-    meterBus.connect(silent);
-    silent.connect(ctx.destination);
-  }
-  if (!mainGain) {
-    mainGain = ctx.createGain();
-    mainGain.gain.value = 1;
-    mainGain.connect(meterBus); // メーターには常時分岐（出力先は routeGain で別途）。
-  }
+  ensureBus('');
+  if (!mainGainEntry) mainGainEntry = gainForDevice(null, '');
 }
 
-/** 出力デバイス（deviceId）の終端を遅延生成。空文字は使わない（既定は masterGain）。 */
-function ensureDeviceOutput(deviceId: string): { dest: MediaStreamAudioDestinationNode; el: HTMLAudioElement } {
-  let out = deviceOutputs.get(deviceId);
-  if (!out) {
-    const ctx = ensureAudioCtx();
-    const dest = ctx.createMediaStreamDestination();
-    const el = new Audio();
-    el.srcObject = dest.stream;
-    void el.setSinkId(deviceId).catch(() => {});
-    void el.play().catch(() => {});
-    out = { dest, el };
-    deviceOutputs.set(deviceId, out);
-  }
-  return out;
-}
-
-/** deviceId（空=既定）に対応する出力先ノードを返す。 */
-function outputNodeFor(deviceId: string): AudioNode {
-  if (!deviceId) {
-    ensureGraph();
-    return masterGain!;
-  }
-  return ensureDeviceOutput(deviceId).dest;
-}
-
-/** gain の出力先を deviceId のノードへ差し替える。前の接続のみ切り、メーター分岐は維持。 */
-function routeGain(gain: GainNode, prev: AudioNode | null, deviceId: string): AudioNode {
-  const next = outputNodeFor(deviceId);
-  if (prev === next) return next;
-  if (prev) {
+/**
+ * deviceId のバス上に gain を用意する。current が別デバイスなら作り直す（古い gain は切断）。
+ * gain は「メーターバス」と「masterGain（可聴出力）」の双方へ接続する。
+ */
+function gainForDevice(
+  current: { gain: GainNode; deviceId: string } | null,
+  deviceId: string,
+): { gain: GainNode; deviceId: string } {
+  if (current && current.deviceId === deviceId) return current;
+  const bus = ensureBus(deviceId);
+  const gain = bus.ctx.createGain();
+  gain.connect(bus.meterBus); // メーターへ常時分岐（無音タップ経由でレンダリング）。
+  gain.connect(bus.masterGain); // 当該デバイスへの可聴出力。
+  if (current) {
     try {
-      gain.disconnect(prev);
+      current.gain.disconnect();
     } catch {
       // 既に切れている等は無視。
     }
   }
-  gain.connect(next);
-  return next;
+  return { gain, deviceId };
 }
 
 /** いずれかの音声（メイン or クリップ定義）が存在するか＝音声クロックを使うか。 */
@@ -628,64 +643,74 @@ function hasAudioContent(): boolean {
   return false;
 }
 
-/** 現在の再生位置（ms）。再生中は AudioContext クロック、停止中はオフセット。 */
+/** 現在の再生位置（ms）。再生中は既定バスの AudioContext クロック、停止中はオフセット。 */
 function currentPositionMs(): number {
-  if (audioPlaying && audioCtx) {
-    return (startOffsetSec + (audioCtx.currentTime - startCtxTime)) * 1000;
+  const def = buses.get('');
+  if (audioPlaying && def) {
+    return (startOffsetSec + (def.ctx.currentTime - def.startCtxTime)) * 1000;
   }
   return startOffsetSec * 1000;
 }
 
 /**
- * 1 つのバッファを clipStartSec（タイムライン上の開始秒）で鳴らすソースを生成・開始する。
- * playheadSec が既にクリップ末尾を過ぎていれば生成しない（null）。
+ * 1 つのバッファを clipStartSec（タイムライン上の開始秒）で、指定バス上の gain へ鳴らす
+ * ソースを生成・開始する。playheadSec が既にクリップ末尾を過ぎていれば生成しない（null）。
+ * when はそのバス自身のクロック（bus.startCtxTime）基準で算出する。
  */
 function scheduleSource(
   buffer: AudioBuffer | null,
-  destNode: AudioNode | null,
+  bus: OutputBus,
+  gain: GainNode,
   clipStartSec: number,
   playheadSec: number,
 ): AudioBufferSourceNode | null {
-  if (!buffer || !destNode) return null;
-  const ctx = ensureAudioCtx();
+  if (!buffer) return null;
   const endSec = clipStartSec + buffer.duration;
   if (playheadSec >= endSec) return null;
-  const node = ctx.createBufferSource();
+  const node = bus.ctx.createBufferSource();
   node.buffer = buffer;
-  node.connect(destNode);
+  node.connect(gain);
   let when: number;
   let offset: number;
   if (playheadSec <= clipStartSec) {
-    when = startCtxTime + (clipStartSec - playheadSec);
+    when = bus.startCtxTime + (clipStartSec - playheadSec);
     offset = 0;
   } else {
-    when = startCtxTime;
+    when = bus.startCtxTime;
     offset = playheadSec - clipStartSec;
   }
-  if (when < ctx.currentTime) when = ctx.currentTime;
+  if (when < bus.ctx.currentTime) when = bus.ctx.currentTime;
   node.start(when, offset);
   return node;
 }
 
 /** メイン + 全クリップを playheadSec 基準でスケジュールする。 */
 function scheduleAll(playheadSec: number): void {
-  const ctx = ensureAudioCtx();
-  void ctx.resume().catch(() => {});
   ensureGraph();
-  startCtxTime = ctx.currentTime;
   startOffsetSec = playheadSec;
-  audioPlaying = true;
-  if (mainBuffer) mainSource = scheduleSource(mainBuffer, mainGain, 0, playheadSec);
+  // 先に gain（＝各トラックの所属バス）を確定させる。audioPlaying はまだ false にしておき、
+  // applyTrackGains 内の「デバイス変更による張り替え」が初回スケジュールと二重に走らないようにする。
   applyTrackGains();
-  // デバイス出力 <audio> は autoplay 制限で停止していることがあるため、再生開始（ユーザ操作）で再開する。
-  for (const { el } of deviceOutputs.values()) void el.play().catch(() => {});
+  audioPlaying = true;
+  // 全バスのクロック基準を揃える。
+  for (const bus of buses.values()) {
+    void bus.ctx.resume().catch(() => {});
+    bus.startCtxTime = bus.ctx.currentTime;
+  }
+  if (mainBuffer && mainGainEntry) {
+    const bus = ensureBus(mainGainEntry.deviceId);
+    mainSource = scheduleSource(mainBuffer, bus, mainGainEntry.gain, 0, playheadSec);
+  }
   for (const track of currentTracks) {
-    const gain = trackGains.get(track.id);
-    if (!gain) continue;
+    const entry = trackGainEntries.get(track.id);
+    if (!entry) continue;
+    const bus = ensureBus(entry.deviceId);
+    const nodes: AudioBufferSourceNode[] = [];
     for (const clip of track.clips) {
-      const node = scheduleSource(clipBuffers.get(clip.filePath) ?? null, gain, clip.startMs / 1000, playheadSec);
-      if (node) activeClipNodes.push(node);
+      const node = scheduleSource(clipBuffers.get(clip.filePath) ?? null, bus, entry.gain, clip.startMs / 1000, playheadSec);
+      if (node) nodes.push(node);
     }
+    if (nodes.length > 0) activeClipNodes.set(track.id, nodes);
   }
 }
 
@@ -707,15 +732,17 @@ function stopMainSource(): void {
 function stopAllSources(): void {
   audioPlaying = false;
   stopMainSource();
-  for (const node of activeClipNodes) {
-    try {
-      node.stop();
-    } catch {
-      // 無視。
+  for (const nodes of activeClipNodes.values()) {
+    for (const node of nodes) {
+      try {
+        node.stop();
+      } catch {
+        // 無視。
+      }
+      node.disconnect();
     }
-    node.disconnect();
   }
-  activeClipNodes = [];
+  activeClipNodes.clear();
 }
 
 /**
@@ -724,25 +751,54 @@ function stopAllSources(): void {
  */
 function applyTrackGains(): void {
   ensureGraph();
-  const ctx = ensureAudioCtx();
   const anySolo = currentMainProps.solo || currentTracks.some((t) => t.solo);
-  // メイン音声。
-  if (mainGain) {
-    const m = currentMainProps;
-    mainGain.gain.value = m.muted || (anySolo && !m.solo) ? 0 : m.volume;
-    mainOutNode = routeGain(mainGain, mainOutNode, m.outputDeviceId ?? '');
+
+  // メイン音声。出力デバイスが変わっていたら gain を別バスへ作り直す。
+  const m = currentMainProps;
+  const mainDev = m.outputDeviceId ?? '';
+  const mainPrev = mainGainEntry;
+  mainGainEntry = gainForDevice(mainGainEntry, mainDev);
+  mainGainEntry.gain.gain.value = m.muted || (anySolo && !m.solo) ? 0 : m.volume;
+  // 再生中にデバイスが変わったメインは、現在位置から新バスへ張り替える。
+  if (mainPrev && mainPrev.deviceId !== mainDev && audioPlaying && mainBuffer) {
+    stopMainSource();
+    const bus = ensureBus(mainDev);
+    mainSource = scheduleSource(mainBuffer, bus, mainGainEntry.gain, 0, currentPositionMs() / 1000);
   }
+
   // 追加トラック。
   for (const t of currentTracks) {
-    let g = trackGains.get(t.id);
-    if (!g) {
-      g = ctx.createGain();
-      g.connect(meterBus!); // メーターには常時分岐。
-      trackGains.set(t.id, g);
-    }
-    g.gain.value = t.muted || (anySolo && !t.solo) ? 0 : t.volume;
-    trackOutNode.set(t.id, routeGain(g, trackOutNode.get(t.id) ?? null, t.outputDeviceId ?? ''));
+    const dev = t.outputDeviceId ?? '';
+    const prev = trackGainEntries.get(t.id) ?? null;
+    const entry = gainForDevice(prev, dev);
+    entry.gain.gain.value = t.muted || (anySolo && !t.solo) ? 0 : t.volume;
+    trackGainEntries.set(t.id, entry);
+    // 再生中にデバイスが変わったトラックは、現在位置から新バスへ張り替える。
+    if (prev && prev.deviceId !== dev && audioPlaying) rescheduleTrack(t, entry);
   }
+}
+
+/** 1 トラックのクリップ群を、現在位置から entry のバスへ張り替える（デバイス変更時）。 */
+function rescheduleTrack(track: AudioTrack, entry: { gain: GainNode; deviceId: string }): void {
+  const old = activeClipNodes.get(track.id);
+  if (old) {
+    for (const n of old) {
+      try {
+        n.stop();
+      } catch {
+        // 無視。
+      }
+      n.disconnect();
+    }
+  }
+  const bus = ensureBus(entry.deviceId);
+  const playhead = currentPositionMs() / 1000;
+  const nodes: AudioBufferSourceNode[] = [];
+  for (const clip of track.clips) {
+    const node = scheduleSource(clipBuffers.get(clip.filePath) ?? null, bus, entry.gain, clip.startMs / 1000, playhead);
+    if (node) nodes.push(node);
+  }
+  activeClipNodes.set(track.id, nodes);
 }
 
 /** アクティブ Show のメイン音声 + トラック群へ追従（クリップのデコード + 音量反映）。 */
@@ -754,7 +810,7 @@ function reconcileShowAudio(
   currentMainProps = main;
   const hasClips = tracks.some((t) => t.clips.length > 0);
   // グラフ未生成かつクリップも無い Show では AudioContext を作らない（無音 GO のみのとき）。
-  if (hasClips || masterGain) applyTrackGains();
+  if (hasClips || buses.size > 0) applyTrackGains();
   if (hasClips) {
     for (const t of tracks) for (const c of t.clips) decodeClipFile(c.filePath);
   }
@@ -799,10 +855,20 @@ function setFileStatus(filePath: string, status: 'loading' | 'ready' | 'missing'
 
 /** analyser からステレオの peak/RMS（0..1）を読み出し main へ送る（モニターへ中継）。 */
 function emitLevels(): void {
-  if (!analyserL || !analyserR || !levelBufL || !levelBufR) return;
-  const l = readLevel(analyserL, levelBufL);
-  const r = readLevel(analyserR, levelBufR);
-  window.dmx.reportAudioLevels({ peakL: l.peak, peakR: r.peak, rmsL: l.rms, rmsR: r.rms });
+  // 全バス（出力デバイス別）の analyser を合成してマスターメーターへ反映（peak/rms は最大）。
+  let peakL = 0;
+  let peakR = 0;
+  let rmsL = 0;
+  let rmsR = 0;
+  for (const bus of buses.values()) {
+    const l = readLevel(bus.analyserL, bus.bufL);
+    const r = readLevel(bus.analyserR, bus.bufR);
+    if (l.peak > peakL) peakL = l.peak;
+    if (r.peak > peakR) peakR = r.peak;
+    if (l.rms > rmsL) rmsL = l.rms;
+    if (r.rms > rmsR) rmsR = r.rms;
+  }
+  window.dmx.reportAudioLevels({ peakL, peakR, rmsL, rmsR });
 }
 
 function readLevel(analyser: AnalyserNode, buf: Float32Array<ArrayBuffer>): { peak: number; rms: number } {

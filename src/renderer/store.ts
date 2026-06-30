@@ -11,14 +11,7 @@
  */
 
 import { create } from 'zustand';
-import {
-  UNIVERSE_SIZE,
-  type ArtnetSettings,
-  type AudioTrack,
-  type EngineMode,
-  type Project,
-  defaultArtnetSettings,
-} from '../shared/types';
+import { cueAt } from '../engine/playback';
 import type {
   DirtyState,
   EngineStateSnapshot,
@@ -26,7 +19,14 @@ import type {
   PlaybackStatus,
   ShowFilePayload,
 } from '../shared/ipc';
-import { cueAt } from '../engine/playback';
+import {
+  defaultArtnetSettings,
+  UNIVERSE_SIZE,
+  type ArtnetSettings,
+  type AudioTrack,
+  type EngineMode,
+  type Project,
+} from '../shared/types';
 
 interface TransportState {
   playing: boolean;
@@ -657,8 +657,6 @@ interface OutputBus {
 
 /** deviceId → OutputBus（'' は既定＝クロック源）。 */
 const buses = new Map<string, OutputBus>();
-/** 既定バスの AudioContext（クロック源）。buses.get('')?.ctx と同一。 */
-let audioCtx: AudioContext | null = null;
 
 // メイン音声（Show.audio）。
 let mainBuffer: AudioBuffer | null = null;
@@ -729,7 +727,6 @@ function ensureBus(deviceId: string): OutputBus {
     startCtxTime: 0,
   };
   buses.set(deviceId, bus);
-  if (deviceId === '') audioCtx = ctx;
   // 再生中に作られたバス（デバイス変更等）はクロック基準を現在位置へ揃える。
   if (audioPlaying) {
     void ctx.resume().catch(() => {});

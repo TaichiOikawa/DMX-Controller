@@ -61,6 +61,12 @@ export async function fileExportShow(showId: string): Promise<void> {
   if (r.error) alert(`書き出しに失敗しました: ${r.error}`);
 }
 
+/** 指定 Show の CUE 歌詞をテキスト（歌詞シート）として書き出す。 */
+export async function fileExportLyrics(showId: string): Promise<void> {
+  const r = await window.dmx.exportLyrics(showId);
+  if (r.error) alert(`歌詞の書き出しに失敗しました: ${r.error}`);
+}
+
 /**
  * .dmxshow を選んで解析し、成功すればパッチモーダルを開く。
  * 実際の取り込みはモーダル確定時に行う（ここでは Project を変更しない）。

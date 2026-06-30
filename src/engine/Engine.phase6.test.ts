@@ -394,43 +394,182 @@ describe('deselectCue', () => {
   });
 });
 
-function actionButton(mode: ActionButton['mode'], values: Record<number, number>, holdMs = 1000): ActionButton {
-  return { id: 'act', name: 'A', mode, steps: [{ values, fadeInMs: 0, holdMs }] };
+function actionButton(values: Record<number, number>): ActionButton {
+  return { id: 'act', name: 'A', steps: [{ values, fadeInMs: 0, holdMs: 1000 }] };
 }
 
-describe('Action layer (§5.6, layer 1)', () => {
-  it('hold action overrides cue and busking; release returns to cue', () => {
-    const { engine } = makeEngine();
-    const p = projectWithSequence([cueEntry(cue('c1', { 0: 100 }))]);
-    p.actions = [actionButton('hold-once', { 0: 255 })];
-    engine.loadProject(p);
-    engine.loadShow('show1');
-    engine.go();
-    engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(100);
-
-    engine.actionDown('act');
-    engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(255); // action overrides
-
-    engine.actionUp('act');
-    engine.tick(0);
-    expect(engine.getOutput()[0]).toBe(100); // back to cue
-  });
-
-  it('press-once auto-releases after its hold time', () => {
+describe('Action 発火（look を programmer へ取り込んで保持）', () => {
+  it('actionDown は look をフェーダーへ確定し、解除されず保持される（オーバーライドではない）', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([]);
-    p.actions = [actionButton('press-once', { 0: 255 }, 100)];
+    p.actions = [actionButton({ 0: 255 })];
     engine.loadProject(p);
     engine.actionDown('act');
     engine.tick(0);
     expect(engine.getOutput()[0]).toBe(255);
-    expect(engine.getState().activeActionIds).toEqual(['act']);
+    expect(engine.getProject().faders[0]).toBe(255);
 
-    engine.tick(100); // hold elapsed -> auto release
-    expect(engine.getOutput()[0]).toBe(0);
-    expect(engine.getState().activeActionIds).toEqual([]);
+    engine.tick(1000); // 時間が経っても解除されず保持される。
+    expect(engine.getOutput()[0]).toBe(255);
+  });
+
+  it('SHOW モードでは busking で CUE を上書きして保持する', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c1', { 0: 100 }))]);
+    p.actions = [actionButton({ 0: 255 })];
+    engine.loadProject(p);
+    engine.loadShow('show1');
+    engine.setMode('show');
+    engine.go();
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(100); // cue
+
+    engine.actionDown('act');
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(255); // フェーダー(busking)が cue を上書きして保持
+    expect(engine.getState().busking[0]).toBe(true);
+
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(255); // 保持し続ける
+  });
+
+  it('actionDown with fadeMs fades the look in over time (no show)', () => {
+    const { engine, clock } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [actionButton({ 0: 200 })];
+    engine.loadProject(p);
+    clock.now = 0;
+    engine.actionDown('act', 1000); // 0 -> 200 over 1000ms
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(0); // 起点（現在出力）
+
+    clock.now = 500;
+    engine.tick(500);
+    expect(engine.getOutput()[0]).toBe(100); // 中間
+
+    clock.now = 1000;
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(200); // 完了して保持
+    clock.now = 2000;
+    engine.tick(2000);
+    expect(engine.getOutput()[0]).toBe(200);
+  });
+
+  it('fade crossfades from the current cue value in SHOW (busking)', () => {
+    const { engine, clock } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c1', { 0: 100 }))]);
+    p.actions = [actionButton({ 0: 200 })];
+    engine.loadProject(p);
+    engine.loadShow('show1');
+    engine.setMode('show');
+    engine.go();
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(100); // cue
+
+    clock.now = 0;
+    engine.actionDown('act', 1000);
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(100); // 現在の cue 値を起点に開始（段差なし）
+
+    clock.now = 500;
+    engine.tick(500);
+    expect(engine.getOutput()[0]).toBe(150); // 100 -> 200 の中間
+
+    clock.now = 1000;
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(200);
+    expect(engine.getState().busking[0]).toBe(true);
+  });
+});
+
+describe('Action authoring (global / overwrite)', () => {
+  it('addAction creates an empty, selected Action; faders then write its look (no show)', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([])); // 未 loadShow（解放中）
+    engine.addAction('A1');
+    const id = engine.getProject().actions[0].id;
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({}); // 空 look
+    expect(engine.getState().editingActionId).toBe(id); // 追加と同時に編集対象へ
+
+    // CUE 編集と同じく、フェーダー操作が選択中 Action の look へ書き込まれる。
+    engine.setFader(0, 100);
+    engine.setFader(5, 200);
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 0: 100, 5: 200 });
+
+    // 0 にするとその ch は look から外れる。
+    engine.setFader(0, 0);
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 5: 200 });
+  });
+
+  it('selecting a cue deselects the editing Action (faders go back to the cue)', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([cueEntry(cue('c1', { 0: 10 }))]));
+    engine.loadShow('show1');
+    engine.addAction('A1');
+    expect(engine.getState().editingActionId).not.toBeNull();
+    engine.goTo(0, 0); // CUE 選択
+    expect(engine.getState().editingActionId).toBeNull();
+
+    // フェーダーは Action ではなく CUE へ書き込まれる。
+    engine.setFader(3, 77);
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({}); // Action は不変
+    const entry = engine.getProject().shows[0].sequence[0];
+    if (entry.kind === 'cue') expect(entry.cue.values[3]).toBe(77);
+  });
+
+  it('deleting the editing Action clears the selection', () => {
+    const { engine } = makeEngine();
+    engine.loadProject(projectWithSequence([]));
+    engine.addAction('A1');
+    const id = engine.getProject().actions[0].id;
+    engine.deleteAction(id);
+    expect(engine.getState().editingActionId).toBeNull();
+  });
+
+  it('captureAction loads the look into faders + busking (show loaded) and deselects the cue', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([cueEntry(cue('c1', { 0: 100 }))]);
+    p.actions = [actionButton({ 5: 200 })];
+    engine.loadProject(p);
+    engine.loadShow('show1');
+    engine.goTo(0, 0); // CUE 選択
+    engine.captureAction('act');
+    expect(engine.getState().playback?.mainIndex).toBe(-1); // CUE 選択解除
+    expect(engine.getProject().faders[5]).toBe(200); // programmer へ取り込み
+    expect(engine.getState().busking[5]).toBe(true); // busking で保持
+  });
+
+  it('captureAction without a show writes faders only (no busking)', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [actionButton({ 3: 150 })];
+    engine.loadProject(p);
+    engine.captureAction('act');
+    expect(engine.getProject().faders[3]).toBe(150);
+    expect(engine.getState().busking[3]).toBe(false);
+  });
+
+  it('overwriteAction re-captures faders into step 0, even in SHOW mode', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [actionButton({ 0: 50 })];
+    engine.loadProject(p);
+    engine.loadShow('show1');
+    engine.setMode('show'); // SHOW 中でも上書きできる
+    engine.setFader(3, 200);
+    engine.overwriteAction('act');
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 3: 200 });
+  });
+
+  it('overwriteAction creates step 0 for an action with no steps', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [{ id: 'act', name: 'A', steps: [] }];
+    engine.loadProject(p);
+    engine.setFader(1, 80);
+    engine.overwriteAction('act');
+    expect(engine.getProject().actions[0].steps).toHaveLength(1);
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 1: 80 });
   });
 });
 

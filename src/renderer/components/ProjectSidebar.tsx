@@ -20,6 +20,7 @@ import { useEffect, useState } from 'react';
 import { useDmxStore, type ShowSort } from '../store';
 import { InlineText } from './InlineText';
 import {
+  fileExportLyrics,
   fileExportShow,
   fileImportShow,
   fileNewProject,
@@ -425,6 +426,15 @@ export function ProjectSidebar() {
                 className="block w-full px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-700"
               >
                 書き出し
+              </button>
+              <button
+                onClick={() => {
+                  void fileExportLyrics(menu.id);
+                  setMenu(null);
+                }}
+                className="block w-full px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-700"
+              >
+                歌詞を書き出し
               </button>
               <button
                 onClick={deleteShow}

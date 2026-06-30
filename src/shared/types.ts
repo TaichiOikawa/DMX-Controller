@@ -130,20 +130,17 @@ export interface Cue {
 }
 
 // ===== Action ボタン =====
-export type ActionMode = 'hold-once' | 'hold-loop' | 'press-once';
-
+// Action は単一の look（programmer の ch 値スナップショット）。step[0] を look として使う。
 export interface ActionStep {
   values: Record<number, number>;
   fadeInMs: number;
-  /** チェイス時の各ステップ保持時間 */
   holdMs?: number;
 }
 
 export interface ActionButton {
   id: string;
   name?: string;
-  mode: ActionMode;
-  /** once=単一でも可 / loop=チェイス列 */
+  /** look 本体。step[0] のみ使用（モード/チェイスは廃止）。 */
   steps: ActionStep[];
 }
 
@@ -206,26 +203,6 @@ export interface ShowRuntime {
 }
 
 /**
- * Action 実行時状態（§5.6・非永続）。最優先オーバーライド層（mixer 層1）。
- * 各アクティブ Action が自前の step 進行とフェードを持つ。
- */
-export interface ActionRuntime {
-  actionId: string;
-  /** 再生中の step index。 */
-  stepIndex: number;
-  /** 現 step のフェード開始時刻（ms）。 */
-  stepStartMs: number;
-  /** 512: このアクションの現在出力値（フェード適用後）。 */
-  values: number[];
-  /** 進行中フェード（無ければ null）。 */
-  fade: FadeState | null;
-  /** 512: このアクションが制御する ch（全 step の和集合＝footprint）。 */
-  controlled: boolean[];
-  /** hold 系: 押下中か。離されたら解除。 */
-  held: boolean;
-}
-
-/**
  * 操作モード。
  * - 'edit': CUE オーサリング。CUE 選択中ならフェーダー操作を選択 CUE へリアルタイム書き込み。
  *   未選択ならライブ直接出力（保存なし）。編集機能 有効。
@@ -241,8 +218,16 @@ export interface EngineRuntime {
   busking: boolean[];
   /** 512: 現在のフェーダー位置 */
   faderLive: number[];
-  /** アクティブな Action（最優先層）。 */
-  activeActions: ActionRuntime[];
+  /**
+   * Action フェード取り込み中の faderLive 補間（無ければ null・非永続）。
+   * tick ごとに from→to を進め、look 対象 ch の faderLive を更新する。
+   */
+  faderFade: FadeState | null;
+  /**
+   * EDIT モードで編集対象に選択中の Action id（非永続・既定 null）。
+   * 非 null の間、フェーダー操作はその Action の look（step0）へ書き込まれる（CUE 編集と同じ思想）。
+   */
+  editingActionId: string | null;
   /** 操作モード（非永続・既定 'edit'）。 */
   mode: EngineMode;
   /** グランドマスター（全体調光 0-255・非永続・既定 255）。最終出力に乗算。 */
@@ -334,7 +319,7 @@ export function createShowRuntime(): ShowRuntime {
   };
 }
 
-/** 新規 ActionButton（1 step、既定 press-once）。 */
-export function createAction(name = 'Action', mode: ActionMode = 'press-once'): ActionButton {
-  return { id: genId(), name, mode, steps: [] };
+/** 新規 ActionButton（空の look）。 */
+export function createAction(name = 'Action'): ActionButton {
+  return { id: genId(), name, steps: [] };
 }

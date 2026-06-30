@@ -71,6 +71,29 @@ export function serializeShow(show: Show, channelLabels?: Record<number, string>
   return JSON.stringify(out, null, 2);
 }
 
+/**
+ * Show の CUE 歌詞をマスター順のテキスト（歌詞シート）へ書き出す。
+ * 歌詞のある CUE のみを「番号<TAB>歌詞」で列挙する（番号は Timeline と同じ "1" / "2.1" 形式）。
+ * 歌詞が一つも無ければ見出しと注記のみを返す。
+ */
+export function serializeLyrics(show: Show): string {
+  const lines: string[] = [];
+  const push = (no: string, cue: Cue) => {
+    const lyrics = cue.lyrics?.trim();
+    if (lyrics) lines.push(`${no}\t${lyrics}`);
+  };
+  show.sequence.forEach((entry, m) => {
+    if (entry.kind === 'cue') {
+      push(`${m + 1}`, entry.cue);
+    } else {
+      entry.group.cues.forEach((c, j) => push(`${m + 1}.${j + 1}`, c));
+    }
+  });
+  const header = `# ${show.name || 'Show'} 歌詞`;
+  if (lines.length === 0) return `${header}\n\n（歌詞が登録された CUE はありません）\n`;
+  return `${header}\n\n${lines.join('\n')}\n`;
+}
+
 /** .dmxshow 文字列を Show + 参考ラベルへ。種別不正・壊れた入力は throw。 */
 export function deserializeShow(text: string): {
   show: Show;

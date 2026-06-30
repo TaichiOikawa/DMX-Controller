@@ -163,11 +163,8 @@ const api: DmxBridge = {
   },
 
   // Action
-  actionDown(actionId) {
-    ipcRenderer.send(Cmd.actionDown, actionId);
-  },
-  actionUp(actionId) {
-    ipcRenderer.send(Cmd.actionUp, actionId);
+  actionDown(actionId, fadeMs) {
+    ipcRenderer.send(Cmd.actionDown, actionId, fadeMs);
   },
   addAction(name) {
     ipcRenderer.send(Cmd.addAction, name);
@@ -178,11 +175,17 @@ const api: DmxBridge = {
   deleteAction(actionId) {
     ipcRenderer.send(Cmd.deleteAction, actionId);
   },
-  addActionStep(actionId, fadeInMs, holdMs) {
-    ipcRenderer.send(Cmd.addActionStep, actionId, fadeInMs, holdMs);
+  overwriteAction(actionId) {
+    ipcRenderer.send(Cmd.overwriteAction, actionId);
   },
-  deleteActionStep(actionId, stepIndex) {
-    ipcRenderer.send(Cmd.deleteActionStep, actionId, stepIndex);
+  selectActionForEdit(actionId) {
+    ipcRenderer.send(Cmd.selectActionForEdit, actionId);
+  },
+  deselectAction() {
+    ipcRenderer.send(Cmd.deselectAction);
+  },
+  captureAction(actionId, fadeMs) {
+    ipcRenderer.send(Cmd.captureAction, actionId, fadeMs);
   },
 
   // Timeline
@@ -252,6 +255,9 @@ const api: DmxBridge = {
   },
   importShow(show) {
     ipcRenderer.send(Cmd.importShow, show);
+  },
+  exportLyrics(showId) {
+    return ipcRenderer.invoke(Cmd.exportLyrics, showId) as ReturnType<DmxBridge['exportLyrics']>;
   },
 
   // 購読

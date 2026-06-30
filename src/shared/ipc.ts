@@ -14,7 +14,7 @@
  * 予約（後続）: releaseCapture / action* / timeline* / reportAudioPlayhead
  */
 
-import type { ActionMode, ArtnetSettings, Cue, EngineMode, Project, Show } from './types';
+import type { ArtnetSettings, Cue, EngineMode, Project, Show } from './types';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
@@ -74,12 +74,17 @@ export const Cmd = {
 
   // --- Action（§5.6） ---
   actionDown: 'cmd:actionDown',
-  actionUp: 'cmd:actionUp',
   addAction: 'cmd:addAction',
   updateAction: 'cmd:updateAction',
   deleteAction: 'cmd:deleteAction',
-  addActionStep: 'cmd:addActionStep',
-  deleteActionStep: 'cmd:deleteActionStep',
+  /** 既存 Action の look を現在のフェーダーで上書き（SHOW 中も可）。 */
+  overwriteAction: 'cmd:overwriteAction',
+  /** Action を編集対象に選択（EDIT・フェーダーで look を作り込む）。 */
+  selectActionForEdit: 'cmd:selectActionForEdit',
+  /** Action 編集選択を解除。 */
+  deselectAction: 'cmd:deselectAction',
+  /** Action の look を programmer（フェーダー）へ取り込む（キャプチャ）。 */
+  captureAction: 'cmd:captureAction',
 
   // --- Timeline（§5.5・内部タイムコード） ---
   reportAudioPlayhead: 'cmd:reportAudioPlayhead',
@@ -105,6 +110,9 @@ export const Cmd = {
   exportShow: 'cmd:exportShow',
   pickShowFile: 'cmd:pickShowFile',
   importShow: 'cmd:importShow',
+
+  // --- 歌詞シートの書き出し（.txt） ---
+  exportLyrics: 'cmd:exportLyrics',
 } as const;
 
 /** Engine → UI（イベント）チャンネル名。 */
@@ -217,7 +225,6 @@ export interface FixturePatch {
 /** updateAction で変更可能なフィールド。 */
 export interface ActionPatch {
   name?: string;
-  mode?: ActionMode;
 }
 
 /** .dmxshow 読込時に main → renderer へ返す解析結果（パッチ画面の入力）。 */
@@ -272,8 +279,8 @@ export interface EngineStateSnapshot {
   canUndo: boolean;
   /** Redo 可能か。 */
   canRedo: boolean;
-  /** アクティブな Action の id。 */
-  activeActionIds: string[];
+  /** EDIT モードで編集対象に選択中の Action id（未選択は null）。 */
+  editingActionId: string | null;
   /** 読込中 Show の再生状態（未読込は null）。 */
   playback: PlaybackStatus | null;
 }
@@ -347,13 +354,19 @@ export interface DmxBridge {
   releaseCapture(channels?: number[]): void;
 
   // Action（§5.6）
-  actionDown(actionId: string): void;
-  actionUp(actionId: string): void;
+  /** Action 発火: look を programmer（フェーダー）へ取り込んで保持する。fadeMs>0 でフェード。 */
+  actionDown(actionId: string, fadeMs?: number): void;
   addAction(name?: string): void;
   updateAction(actionId: string, patch: ActionPatch): void;
   deleteAction(actionId: string): void;
-  addActionStep(actionId: string, fadeInMs?: number, holdMs?: number): void;
-  deleteActionStep(actionId: string, stepIndex: number): void;
+  /** 既存 Action の look を現在のフェーダー位置で上書きする（SHOW モード中も可）。 */
+  overwriteAction(actionId: string): void;
+  /** Action を編集対象に選択する（EDIT・フェーダー操作がその look へ書き込まれる）。 */
+  selectActionForEdit(actionId: string): void;
+  /** Action 編集選択を解除する。 */
+  deselectAction(): void;
+  /** Action の look を programmer（フェーダー）へ取り込む（Show 読込中は busking）。fadeMs>0 でフェード。 */
+  captureAction(actionId: string, fadeMs?: number): void;
 
   // Timeline（§5.5）
   reportAudioPlayhead(ms: number): void;
@@ -403,6 +416,9 @@ export interface DmxBridge {
   }>;
   /** パッチ済み Show を現在の Project に取り込む（id は Engine が再採番）。 */
   importShow(show: Show): void;
+
+  /** 指定 Show の CUE 歌詞をテキスト（歌詞シート）として書き出す（保存ダイアログ）。 */
+  exportLyrics(showId: string): Promise<{ ok: boolean; path?: string; error?: string }>;
 
   // 購読（解除関数を返す）
   onOutputFrame(cb: (frame: number[]) => void): () => void;

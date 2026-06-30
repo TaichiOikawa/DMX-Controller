@@ -30,6 +30,7 @@ import { type ArtnetSettings, type Show, defaultArtnetSettings } from '../shared
 import {
   deserializeProject,
   deserializeShow,
+  serializeLyrics,
   serializeProject,
   serializeShow,
 } from '../shared/persistence';
@@ -57,6 +58,11 @@ const AUDIO_FILTERS = [
 
 const SHOW_FILTERS = [
   { name: 'DMX Show', extensions: ['dmxshow', 'json'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const LYRICS_FILTERS = [
+  { name: 'テキスト', extensions: ['txt'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 
@@ -305,18 +311,19 @@ export class EngineHost {
     );
 
     // --- Action ---
-    ipcMain.on(Cmd.actionDown, (_e, id: string) => this.engine.actionDown(id));
-    ipcMain.on(Cmd.actionUp, (_e, id: string) => this.engine.actionUp(id));
+    ipcMain.on(Cmd.actionDown, (_e, id: string, fadeMs?: number) =>
+      this.engine.actionDown(id, fadeMs),
+    );
     ipcMain.on(Cmd.addAction, (_e, name?: string) => this.engine.addAction(name));
     ipcMain.on(Cmd.updateAction, (_e, id: string, patch: ActionPatch) =>
       this.engine.updateAction(id, patch),
     );
     ipcMain.on(Cmd.deleteAction, (_e, id: string) => this.engine.deleteAction(id));
-    ipcMain.on(Cmd.addActionStep, (_e, id: string, fadeInMs?: number, holdMs?: number) =>
-      this.engine.addActionStep(id, fadeInMs, holdMs),
-    );
-    ipcMain.on(Cmd.deleteActionStep, (_e, id: string, stepIndex: number) =>
-      this.engine.deleteActionStep(id, stepIndex),
+    ipcMain.on(Cmd.overwriteAction, (_e, id: string) => this.engine.overwriteAction(id));
+    ipcMain.on(Cmd.selectActionForEdit, (_e, id: string) => this.engine.selectActionForEdit(id));
+    ipcMain.on(Cmd.deselectAction, () => this.engine.deselectAction());
+    ipcMain.on(Cmd.captureAction, (_e, id: string, fadeMs?: number) =>
+      this.engine.captureAction(id, fadeMs),
     );
 
     // --- Timeline ---
@@ -357,6 +364,9 @@ export class EngineHost {
     ipcMain.handle(Cmd.exportShow, (_e, showId: string) => this.exportShow(showId));
     ipcMain.handle(Cmd.pickShowFile, () => this.pickShowFile());
     ipcMain.on(Cmd.importShow, (_e, show: Show) => this.engine.importShow(show));
+
+    // --- 歌詞シートの書き出し ---
+    ipcMain.handle(Cmd.exportLyrics, (_e, showId: string) => this.exportLyrics(showId));
   }
 
   /** 指定パスへ Project を書き出し、保存済み基準を更新する。 */
@@ -490,6 +500,25 @@ export class EngineHost {
     if (res.canceled || !res.filePath) return { ok: false };
     try {
       await fs.writeFile(res.filePath, serializeShow(show, project.channelLabels), 'utf-8');
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  /** 指定 Show の CUE 歌詞をテキスト（歌詞シート）として書き出す。dirty / パスは変更しない。 */
+  private async exportLyrics(showId: string): Promise<SaveLoadResult> {
+    const project = this.engine.getProject();
+    const show = project.shows.find((s) => s.id === showId);
+    if (!show) return { ok: false, error: 'Show が見つかりません。' };
+    const res = await dialog.showSaveDialog({
+      title: '歌詞を書き出し',
+      defaultPath: `${show.name || 'show'}_歌詞.txt`,
+      filters: LYRICS_FILTERS,
+    });
+    if (res.canceled || !res.filePath) return { ok: false };
+    try {
+      await fs.writeFile(res.filePath, serializeLyrics(show), 'utf-8');
       return { ok: true, path: res.filePath };
     } catch (e) {
       return { ok: false, error: String(e) };

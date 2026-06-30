@@ -20,7 +20,7 @@ import {
   createRgbFixture,
   createShowRuntime,
   genId,
-  type ActionRuntime,
+  type ActionButton,
   type ArtnetSettings,
   type Cue,
   type EngineMode,
@@ -42,6 +42,7 @@ import {
   currentTarget,
   flattenCues,
   footprintOf,
+  lerp,
   nextInGroup,
   nextPosition,
   positionOfCue,
@@ -49,7 +50,6 @@ import {
   startFade,
   type Position,
 } from './playback';
-import { advanceAction, createActionRuntime } from './action';
 import { pointsCrossed } from './timeline';
 import { deserializeProject, serializeProject } from '../shared/persistence';
 import type {
@@ -116,7 +116,8 @@ export class Engine {
       show: null,
       busking: new Array(UNIVERSE_SIZE).fill(false),
       faderLive: this.project.faders.slice(),
-      activeActions: [],
+      faderFade: null,
+      editingActionId: null,
       mode: 'edit',
       masterLevel: 255,
       blackout: false,
@@ -238,7 +239,10 @@ export class Engine {
   setMode(mode: EngineMode): void {
     this.runtime.mode = mode;
     // SHOW へ切替時は自動送りタイマーを今から測り直す（EDIT 中の古い予定で即発火しないように）。
-    if (mode === 'show') this.scheduleFollow(this.nowFn());
+    if (mode === 'show') {
+      this.runtime.editingActionId = null; // SHOW では Action 編集選択を解除（クリックは発火）
+      this.scheduleFollow(this.nowFn());
+    }
     this.emitState();
   }
 
@@ -270,6 +274,12 @@ export class Engine {
     const v = clamp255(value);
     this.runtime.faderLive[ch] = v;
 
+    // EDIT × Action 選択中は Action の look（step0）へ書き込む（Show 有無に依らずグローバル編集）。
+    if (this.runtime.mode === 'edit' && this.runtime.editingActionId) {
+      this.editCurrentAction(ch, v);
+      return;
+    }
+
     const show = this.runtime.show;
     if (show === null) return; // 解放中: フェーダー直接出力
 
@@ -298,6 +308,22 @@ export class Engine {
     rt.controlled[ch] = true; // 新規 ch を show 制御下へ（層3 で出力・再選択時も保持）
     rt.tracked[ch] = v; // ライブ反映
     if (rt.fade) rt.fade.to[ch] = v; // フェード中なら着地点も更新
+    this.scheduleProjectNotify();
+    this.emitState();
+  }
+
+  /**
+   * Edit モード: 編集中 Action の look（step0）へこの ch を直接書き込む（CUE 編集と同様）。
+   * step が無ければ作成する。値 0 はその ch を look から外す（タッチで足し、0 で除く）。
+   */
+  private editCurrentAction(ch: number, v: number): void {
+    const action = this.project.actions.find((a) => a.id === this.runtime.editingActionId);
+    if (!action) return;
+    if (action.steps.length === 0) action.steps.push({ values: {}, fadeInMs: 0, holdMs: 500 });
+    this.pushUndoCoalesced(500); // フェーダー連続編集は1バーストに束ねる
+    const step = action.steps[0];
+    if (v > 0) step.values[ch] = v;
+    else delete step.values[ch];
     this.scheduleProjectNotify();
     this.emitState();
   }
@@ -493,6 +519,7 @@ export class Engine {
     if (!this.activeShow || !this.runtime.show) return;
     const pos: Position = { main: mainIndex, sub: subIndex };
     if (!cueAt(this.activeShow.sequence, pos)) return; // 無効位置
+    this.runtime.editingActionId = null; // CUE 選択へ切替（フェーダーは CUE 側へ）
     this.playPosition(pos, this.nowFn());
     this.emitState();
   }
@@ -909,40 +936,148 @@ export class Engine {
 
   // ===== コマンド: Action（§5.6） =====
 
-  /** Action 押下: ランタイムを起動（既にアクティブなら再起動）。 */
-  actionDown(actionId: string): void {
-    const action = this.project.actions.find((a) => a.id === actionId);
-    if (!action || action.steps.length === 0) return;
-    this.runtime.activeActions = this.runtime.activeActions.filter(
-      (r) => r.actionId !== actionId,
-    );
-    this.runtime.activeActions.push(createActionRuntime(action));
-    this.emitState();
-  }
-
-  /** Action 解放: hold 系は解除。press-once は自動解除に任せる。 */
-  actionUp(actionId: string): void {
+  /**
+   * Action 押下（発火）: look（step0）を programmer（フェーダー）へ取り込んで保持する。
+   * Show 読込中はその ch を busking として CUE を上書き保持、未読込は faderLive へ直接。
+   * fadeMs>0 なら現在の出力からその look へ fadeMs かけてフェードする。
+   */
+  actionDown(actionId: string, fadeMs = 0): void {
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
-    if (action.mode === 'press-once') return; // 自動解除
-    this.runtime.activeActions = this.runtime.activeActions.filter(
-      (r) => r.actionId !== actionId,
-    );
-    this.emitState();
+    if (this.applyActionLook(action, fadeMs)) {
+      this.notifyProject();
+      this.emitState();
+    }
+  }
+
+  /**
+   * Action の look（step0）を faderLive へ書き込む。Show 読込中は busking も立てる。
+   * fadeMs>0 なら即時書き込まず、現在の出力を起点に faderFade を仕込んで tick で補間する。
+   * @returns 1ch でも look 対象があれば true。
+   */
+  private applyActionLook(action: ActionButton, fadeMs = 0): boolean {
+    const step = action.steps[0];
+    if (!step) return false;
+    const showLoaded = this.runtime.show !== null;
+    const entries = Object.entries(step.values)
+      .map(([k, v]) => [Number(k), clamp255(v)] as const)
+      .filter(([ch]) => ch >= 0 && ch < UNIVERSE_SIZE);
+    if (entries.length === 0) {
+      this.runtime.faderFade = null;
+      return false;
+    }
+
+    if (fadeMs <= 0) {
+      // 即時取り込み。進行中フェードは破棄。
+      this.runtime.faderFade = null;
+      for (const [ch, v] of entries) {
+        this.runtime.faderLive[ch] = v;
+        if (showLoaded) this.runtime.busking[ch] = true;
+      }
+      return true;
+    }
+
+    // フェード取り込み: 現在の出力（プリマスター）を起点に look へ補間する。
+    const from = new Array(UNIVERSE_SIZE).fill(0);
+    resolveFrame(contextFromRuntime(this.runtime), from);
+    const to = from.slice();
+    for (const [ch, v] of entries) {
+      to[ch] = v;
+      if (showLoaded) this.runtime.busking[ch] = true; // look ch は busking で上書き保持
+      this.runtime.faderLive[ch] = from[ch]; // 起点に合わせて段差を無くす
+    }
+    this.runtime.faderFade = { from, to, startMs: this.nowFn(), durMs: fadeMs, delayMs: 0 };
+    return true;
+  }
+
+  /** faderFade を now まで進め、look 対象 ch の faderLive を補間する。 */
+  private advanceFaderFade(now: number): void {
+    const fade = this.runtime.faderFade;
+    if (!fade) return;
+    const t = fade.durMs <= 0 ? 1 : clamp01((now - fade.startMs) / fade.durMs);
+    for (let ch = 0; ch < UNIVERSE_SIZE; ch++) {
+      if (fade.from[ch] === fade.to[ch]) continue;
+      this.runtime.faderLive[ch] = t >= 1 ? fade.to[ch] : Math.round(lerp(fade.from[ch], fade.to[ch], t));
+    }
+    if (t >= 1) {
+      this.runtime.faderFade = null;
+      this.notifyProject(); // 完了でフェーダー位置を確定通知
+    } else {
+      this.scheduleProjectNotify(); // 途中はスロットルしてスライダーを追従
+    }
   }
 
   // ===== コマンド: Action オーサリング =====
 
+  /**
+   * 空の Action を追加し、編集対象に選択する（CUE 先行フローと同じ思想）。
+   * 以後フェーダーを操作すると、その look（step0）へ書き込まれる。
+   * Action は Project 全体で共通（全 Show で共有）。Show 未読込でも作成できる。
+   */
   addAction(name?: string): void {
     if (!this.editable) return;
-    if (this.runtime.show === null) return; // 解放中はオーサリング不可
     this.pushUndo();
     const action = createAction(name ?? `Action ${this.project.actions.length + 1}`);
-    // 現在のフェーダー位置（非ゼロ ch）を最初の step として取り込む。
-    const values = this.faderValuesFor(this.liveFaderChannels());
-    action.steps.push({ values, fadeInMs: 0, holdMs: 500 });
+    action.steps.push({ values: {}, fadeInMs: 0, holdMs: 500 }); // 空 look（フェーダーで作り込む）
     this.project.actions.push(action);
+    this.selectActionForEditInternal(action.id);
     this.notifyProject();
+    this.emitState();
+  }
+
+  /** Action を編集対象に選択する（EDIT のみ）。CUE 選択は解除し、フェーダーを Action 側へ向ける。 */
+  selectActionForEdit(actionId: string): void {
+    if (!this.editable) return;
+    if (!this.project.actions.some((a) => a.id === actionId)) return;
+    this.selectActionForEditInternal(actionId);
+    this.emitState();
+  }
+
+  /** 選択処理本体（CUE 選択解除を含む・emit は呼び出し側）。 */
+  private selectActionForEditInternal(actionId: string): void {
+    this.runtime.editingActionId = actionId;
+    // フェーダーは1つの編集対象のみ。CUE 選択中なら解除する（相互排他）。
+    const rt = this.runtime.show;
+    if (rt && rt.mainIndex >= 0) {
+      rt.mainIndex = -1;
+      rt.subIndex = 0;
+      rt.fade = null;
+      rt.followAtMs = null;
+      rt.tracked.fill(0);
+    }
+  }
+
+  /** Action 編集選択を解除する。 */
+  deselectAction(): void {
+    if (this.runtime.editingActionId === null) return;
+    this.runtime.editingActionId = null;
+    this.emitState();
+  }
+
+  /**
+   * Action の look（step0）を programmer（フェーダー）へ取り込む（キャプチャ）。
+   * Show 読込中はその ch を busking として CUE を上書き保持、未読込は faderLive へ直接。
+   * EDIT 中は CUE / Action 編集選択を解除し、取り込んだ look をそのまま programmer にする
+   * （以後フェーダーで調整・CUE 記録できる）。
+   */
+  captureAction(actionId: string, fadeMs = 0): void {
+    const action = this.project.actions.find((a) => a.id === actionId);
+    const step = action?.steps[0];
+    if (!action || !step) return;
+    if (this.runtime.mode === 'edit') {
+      this.runtime.editingActionId = null;
+      const rt = this.runtime.show;
+      if (rt && rt.mainIndex >= 0) {
+        rt.mainIndex = -1;
+        rt.subIndex = 0;
+        rt.fade = null;
+        rt.followAtMs = null;
+        rt.tracked.fill(0);
+      }
+    }
+    this.applyActionLook(action, fadeMs);
+    this.notifyProject();
+    this.emitState();
   }
 
   updateAction(actionId: string, patch: ActionPatch): void {
@@ -951,7 +1086,6 @@ export class Engine {
     if (!action) return;
     this.pushUndo();
     if (patch.name !== undefined) action.name = patch.name;
-    if (patch.mode !== undefined) action.mode = patch.mode;
     this.notifyProject();
   }
 
@@ -959,31 +1093,22 @@ export class Engine {
     if (!this.editable) return;
     this.pushUndo();
     this.project.actions = this.project.actions.filter((a) => a.id !== actionId);
-    this.runtime.activeActions = this.runtime.activeActions.filter(
-      (r) => r.actionId !== actionId,
-    );
+    if (this.runtime.editingActionId === actionId) this.runtime.editingActionId = null;
     this.notifyProject();
     this.emitState();
   }
 
-  /** 現在のフェーダー位置（非ゼロ ch）を新しい step として追加（チェイス用）。 */
-  addActionStep(actionId: string, fadeInMs = 0, holdMs = 500): void {
-    if (!this.editable) return;
-    if (this.runtime.show === null) return; // 解放中はオーサリング不可
+  /**
+   * 既存 Action の look（step0）を現在のフェーダー位置（非ゼロ ch）で上書きする。
+   * SHOW モード中でも実行可（本番で覚え込んだ look を更新するため）。step が無ければ作成する。
+   */
+  overwriteAction(actionId: string): void {
     const action = this.project.actions.find((a) => a.id === actionId);
     if (!action) return;
     this.pushUndo();
     const values = this.faderValuesFor(this.liveFaderChannels());
-    action.steps.push({ values, fadeInMs: Math.max(0, fadeInMs), holdMs: Math.max(0, holdMs) });
-    this.notifyProject();
-  }
-
-  deleteActionStep(actionId: string, stepIndex: number): void {
-    if (!this.editable) return;
-    const action = this.project.actions.find((a) => a.id === actionId);
-    if (!action || stepIndex < 0 || stepIndex >= action.steps.length) return;
-    this.pushUndo();
-    action.steps.splice(stepIndex, 1);
+    if (action.steps.length > 0) action.steps[0].values = values;
+    else action.steps.push({ values, fadeInMs: 0, holdMs: 500 });
     this.notifyProject();
   }
 
@@ -1168,7 +1293,7 @@ export class Engine {
       blackout: this.runtime.blackout,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
-      activeActionIds: this.runtime.activeActions.map((r) => r.actionId),
+      editingActionId: this.runtime.editingActionId,
       playback:
         show && this.activeShow
           ? {
@@ -1241,7 +1366,7 @@ export class Engine {
     // 自動送りを先に判定（新 cue のフェードを同 tick で反映するため）。
     this.maybeAutoAdvance(now);
     if (this.runtime.show) applyFade(this.runtime.show, now);
-    this.advanceActions(now);
+    this.advanceFaderFade(now);
 
     const ctx = contextFromRuntime(this.runtime);
     resolveFrame(ctx, this.runtime.output);
@@ -1277,22 +1402,6 @@ export class Engine {
     }
     const f = m / 255;
     for (let ch = 0; ch < UNIVERSE_SIZE; ch++) out[ch] = Math.round(out[ch] * f);
-  }
-
-  /** アクティブ Action を進め、完了したものを除去する。 */
-  private advanceActions(now: number): void {
-    if (this.runtime.activeActions.length === 0) return;
-    const remaining: ActionRuntime[] = [];
-    for (const rt of this.runtime.activeActions) {
-      const action = this.project.actions.find((a) => a.id === rt.actionId);
-      if (!action) continue; // 削除済み
-      const done = advanceAction(action, rt, now);
-      if (!done) remaining.push(rt);
-    }
-    if (remaining.length !== this.runtime.activeActions.length) {
-      this.runtime.activeActions = remaining;
-      this.emitState();
-    }
   }
 
   private updateMeasuredHz(now: number): void {

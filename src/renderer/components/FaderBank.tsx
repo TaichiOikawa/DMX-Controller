@@ -30,6 +30,8 @@ export function FaderBank() {
   const channelLabels = useDmxStore((s) => s.project?.channelLabels);
   const bankLabels = useDmxStore((s) => s.project?.bankLabels);
 
+  const editingActionId = useDmxStore((s) => s.editingActionId);
+
   // 選択中（プレイヘッド位置）の CUE。EDIT モードのみ。
   const activeShow = project?.shows.find((s) => s.id === activeShowId) ?? null;
   const mainIndex = playback?.mainIndex ?? -1;
@@ -38,14 +40,22 @@ export function FaderBank() {
     editable && activeShow && mainIndex >= 0
       ? cueAt(activeShow.sequence, { main: mainIndex, sub: subIndex })
       : null;
-  const cueChannels = new Set(Object.keys(selectedCue?.values ?? {}).map(Number));
 
-  // 選択 CUE が変わったとき（内容ではなく識別子）にフェーダー位置をその CUE へ同期する。
+  // EDIT × Action 編集中は、その look（step0）が編集対象。CUE 選択とは相互排他。
+  const editingAction =
+    editable && editingActionId
+      ? (project?.actions.find((a) => a.id === editingActionId) ?? null)
+      : null;
+  // 編集対象の look 値（Action 優先、無ければ選択 CUE）。
+  const editValues = editingAction?.steps[0]?.values ?? selectedCue?.values ?? null;
+  const editChannels = new Set(Object.keys(editValues ?? {}).map(Number));
+
+  // 編集対象が変わったとき（内容ではなく識別子）にフェーダー位置をその look へ同期する。
   useEffect(() => {
-    syncFadersToCue(selectedCue ? selectedCue.values : null);
-    // selectedCue.values の中身は依存に入れない（編集中の再同期で値が飛ぶのを防ぐ）。
+    syncFadersToCue(editValues);
+    // editValues の中身は依存に入れない（編集中の再同期で値が飛ぶのを防ぐ）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCue?.id, mainIndex, subIndex, editable, activeShowId]);
+  }, [selectedCue?.id, editingActionId, mainIndex, subIndex, editable, activeShowId]);
 
   const start = bank * FADERS_PER_BANK;
   const channels = Array.from({ length: FADERS_PER_BANK }, (_, i) => start + i);
@@ -167,7 +177,7 @@ export function FaderBank() {
       {/* フェーダー列 */}
       <div className="flex flex-1 gap-1 overflow-x-auto rounded-lg bg-neutral-900/60 p-3 ring-1 ring-neutral-800">
         {channels.map((ch) => {
-          const inSelectedCue = cueChannels.has(ch);
+          const inEditTarget = editChannels.has(ch);
           return (
             <Fader
               key={ch}
@@ -175,15 +185,17 @@ export function FaderBank() {
               value={faders[ch]}
               output={output[ch]}
               busking={showBusking && busking[ch]}
-              inSelectedCue={inSelectedCue}
+              inSelectedCue={inEditTarget}
               released={released}
               label={channelLabels?.[ch]}
               editable={editable}
               onChange={(v) => setFader(ch, v)}
               onClear={
-                inSelectedCue && selectedCue
-                  ? () => deleteCueChannel(selectedCue.id, ch)
-                  : () => releaseChannel(ch)
+                editingAction
+                  ? () => setFader(ch, 0) // Action look から ch を外す（0 で除外）
+                  : inEditTarget && selectedCue
+                    ? () => deleteCueChannel(selectedCue.id, ch)
+                    : () => releaseChannel(ch)
               }
               onLabelChange={(label) => window.dmx.setChannelLabel(ch, label)}
             />

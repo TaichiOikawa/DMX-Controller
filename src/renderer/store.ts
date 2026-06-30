@@ -6,7 +6,7 @@
  *   - busking: SHOW モードのライブ上書き中 ch（purple ハイライト。エンジン由来＋楽観更新）
  *   - output: エンジンの実出力（可視化用）
  *   - project: Show/マスター列/Action 構造（編集対象、エンジンから受信）
- *   - playback / activeActionIds: 再生・Action の状態（エンジンから受信）
+ *   - playback / editingActionId: 再生・Action 編集選択の状態（エンジンから受信）
  *   - transport: Timeline の内部タイムコード（renderer が回す）
  */
 
@@ -36,6 +36,71 @@ interface TransportState {
 /** 左パネルの Show/フォルダ並び順（表示専用・非永続）。 */
 export type ShowSort = 'manual' | 'name-asc' | 'name-desc';
 
+/** パネル開閉状態（Action / フェーダー）。true=折りたたみ。 */
+interface PanelCollapse {
+  actions: boolean;
+  faders: boolean;
+}
+/** EDIT / SHOW モード別のパネル開閉状態（Show 読込時に使用）。 */
+export interface PanelCollapsePrefs {
+  edit: PanelCollapse;
+  show: PanelCollapse;
+}
+
+const PANEL_COLLAPSE_KEY = 'dmx.panelCollapse';
+
+/** 既定: EDIT は Action 折りたたみ、SHOW はフェーダー折りたたみ。 */
+function defaultPanelCollapse(): PanelCollapsePrefs {
+  return {
+    edit: { actions: true, faders: false },
+    show: { actions: false, faders: true },
+  };
+}
+
+/** localStorage から復元（壊れていれば既定）。 */
+function loadPanelCollapse(): PanelCollapsePrefs {
+  const def = defaultPanelCollapse();
+  try {
+    const raw = localStorage.getItem(PANEL_COLLAPSE_KEY);
+    if (!raw) return def;
+    const p = JSON.parse(raw) as Partial<PanelCollapsePrefs>;
+    const pick = (m: PanelCollapse | undefined, d: PanelCollapse): PanelCollapse => ({
+      actions: typeof m?.actions === 'boolean' ? m.actions : d.actions,
+      faders: typeof m?.faders === 'boolean' ? m.faders : d.faders,
+    });
+    return { edit: pick(p.edit, def.edit), show: pick(p.show, def.show) };
+  } catch {
+    return def;
+  }
+}
+
+function savePanelCollapse(prefs: PanelCollapsePrefs): void {
+  try {
+    localStorage.setItem(PANEL_COLLAPSE_KEY, JSON.stringify(prefs));
+  } catch {
+    // localStorage 不可時は無視（永続化のみスキップ）。
+  }
+}
+
+/**
+ * パネル開閉トグルの反映。Show 読込中は現モード（EDIT/SHOW）の状態として
+ * panelCollapse に保存し localStorage へ永続化する。未読込時は live のみ更新。
+ */
+function persistPanelToggle(
+  s: DmxState,
+  patch: { actionsCollapsed?: boolean; fadersCollapsed?: boolean },
+): Partial<DmxState> {
+  const actionsCollapsed = patch.actionsCollapsed ?? s.actionsCollapsed;
+  const fadersCollapsed = patch.fadersCollapsed ?? s.fadersCollapsed;
+  if (s.activeShowId === null) return { actionsCollapsed, fadersCollapsed };
+  const panelCollapse: PanelCollapsePrefs = {
+    ...s.panelCollapse,
+    [s.mode]: { actions: actionsCollapsed, faders: fadersCollapsed },
+  };
+  savePanelCollapse(panelCollapse);
+  return { actionsCollapsed, fadersCollapsed, panelCollapse };
+}
+
 interface DmxState {
   faders: number[];
   output: number[];
@@ -45,6 +110,15 @@ interface DmxState {
   bank: number;
   /** フェーダーバンクを折りたたんでいるか（UI のみ）。 */
   fadersCollapsed: boolean;
+  /** Action パネルを折りたたんでいるか（UI のみ）。 */
+  actionsCollapsed: boolean;
+  /**
+   * Show 読込時の EDIT / SHOW 別パネル開閉状態（ソフト本体＝localStorage に永続化）。
+   * モード切替・再起動時にこの値から復元する。Show 未読込時は使わない。
+   */
+  panelCollapse: PanelCollapsePrefs;
+  /** Action フェードボタンの取り込み時間（ms・UI のみ）。 */
+  actionFadeMs: number;
   /** 左サイド（Project/Show ツリー）を折りたたんでいるか（UI のみ）。 */
   sidebarCollapsed: boolean;
   /** 環境設定モーダルを開いているか（UI のみ）。 */
@@ -60,7 +134,8 @@ interface DmxState {
   playback: PlaybackStatus | null;
   activeShowId: string | null;
   selectedShowId: string | null;
-  activeActionIds: string[];
+  /** EDIT モードで編集対象に選択中の Action id（未選択は null）。フェーダーがこの look を編集。 */
+  editingActionId: string | null;
   transport: TransportState;
   /** 読込中音声の長さ（ms）。Timeline の再生上限に反映（0=未読込）。 */
   audioDurationMs: number;
@@ -82,8 +157,17 @@ interface DmxState {
   setOutput: (frame: number[]) => void;
   setArtnet: (settings: ArtnetSettings) => void;
   setBank: (bank: number) => void;
-  /** フェーダーバンクの折りたたみを切り替える。 */
+  /** フェーダーバンクの折りたたみを切り替える（Show 読込時は現モードへ永続化）。 */
   toggleFadersCollapsed: () => void;
+  /** Action パネルの折りたたみを切り替える（Show 読込時は現モードへ永続化）。 */
+  toggleActionsCollapsed: () => void;
+  /**
+   * 現在の文脈（Show 読込有無・モード）に応じてパネル開閉状態を反映する。
+   * Show 読込中は永続化済みの EDIT/SHOW 別状態から、未読込時は大表示レイアウトへ。
+   */
+  applyPanelLayoutForContext: () => void;
+  /** Action フェード取り込み時間（ms）を設定する。 */
+  setActionFadeMs: (ms: number) => void;
   /** 左サイドバーの折りたたみを切り替える。 */
   toggleSidebarCollapsed: () => void;
   /** 環境設定モーダルの開閉を設定する。 */
@@ -177,6 +261,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   measuredHz: 0,
   bank: 0,
   fadersCollapsed: false,
+  actionsCollapsed: false,
+  panelCollapse: loadPanelCollapse(),
+  actionFadeMs: 2000,
   sidebarCollapsed: false,
   prefsOpen: false,
   showImport: null,
@@ -187,7 +274,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   playback: null,
   activeShowId: null,
   selectedShowId: null,
-  activeActionIds: [],
+  editingActionId: null,
   transport: { playing: false, playheadMs: 0, durationMs: DEFAULT_DURATION_MS },
   audioDurationMs: 0,
   mode: 'edit',
@@ -224,7 +311,21 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   setBank: (bank) => set({ bank }),
 
-  toggleFadersCollapsed: () => set((s) => ({ fadersCollapsed: !s.fadersCollapsed })),
+  toggleFadersCollapsed: () =>
+    set((s) => persistPanelToggle(s, { fadersCollapsed: !s.fadersCollapsed })),
+
+  toggleActionsCollapsed: () =>
+    set((s) => persistPanelToggle(s, { actionsCollapsed: !s.actionsCollapsed })),
+
+  applyPanelLayoutForContext: () =>
+    set((s) => {
+      // Show 未読込: Action 大表示・フェーダー表示（永続化対象外）。
+      if (s.activeShowId === null) return { actionsCollapsed: false, fadersCollapsed: false };
+      const pref = s.panelCollapse[s.mode];
+      return { actionsCollapsed: pref.actions, fadersCollapsed: pref.faders };
+    }),
+
+  setActionFadeMs: (ms) => set({ actionFadeMs: Math.max(0, Math.round(ms)) }),
 
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
@@ -253,9 +354,17 @@ export const useDmxStore = create<DmxState>((set, get) => ({
         s.mode === 'edit' && activeShow && mainIndex >= 0
           ? cueAt(activeShow.sequence, { main: mainIndex, sub: subIndex })
           : null;
-      const faders = selectedCue
-        ? fadersFromCue(selectedCue.values, s.faders, s.busking)
-        : project.faders.slice();
+      // EDIT × Action 編集中は、フェーダー表示の真実は編集中 Action の look（step0）。
+      const editingAction =
+        s.mode === 'edit' && s.editingActionId
+          ? (project.actions.find((a) => a.id === s.editingActionId) ?? null)
+          : null;
+      const editValues = editingAction?.steps[0]?.values ?? null;
+      const faders = editValues
+        ? fadersFromCue(editValues, s.faders, s.busking)
+        : selectedCue
+          ? fadersFromCue(selectedCue.values, s.faders, s.busking)
+          : project.faders.slice();
 
       return {
         project,
@@ -274,7 +383,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       measuredHz: state.measuredHz,
       playback: state.playback,
       activeShowId: state.activeShowId,
-      activeActionIds: state.activeActionIds,
+      editingActionId: state.editingActionId,
       busking: state.busking,
       mode: state.mode,
       masterLevel: state.masterLevel,

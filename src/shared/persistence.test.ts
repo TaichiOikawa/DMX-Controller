@@ -5,6 +5,7 @@ import {
   deserializeShow,
   migrateProject,
   remapShowChannels,
+  serializeLyrics,
   serializeProject,
   serializeShow,
 } from './persistence';
@@ -257,5 +258,38 @@ describe('remapShowChannels', () => {
     const out = remapShowChannels(show, { 0: 7, 1: 7 });
     const cue = out.sequence[0];
     if (cue.kind === 'cue') expect(cue.cue.values).toEqual({ 7: 20 });
+  });
+});
+
+describe('serializeLyrics', () => {
+  it('lists lyric-bearing cues in master order with "1" / "2.1" numbering', () => {
+    const show: Show = {
+      id: 's1',
+      name: 'Act 1',
+      sequence: [
+        { kind: 'cue', cue: { id: 'c1', lyrics: '君の名を呼ぶ', values: {}, fadeInMs: 0 } },
+        {
+          kind: 'group',
+          group: {
+            id: 'g1',
+            loop: false,
+            cues: [
+              { id: 'c2', values: {}, fadeInMs: 0 }, // 歌詞なし → 出力されない
+              { id: 'c3', lyrics: '空を見上げて', values: {}, fadeInMs: 0 },
+            ],
+          },
+        },
+      ],
+    };
+    expect(serializeLyrics(show)).toBe('# Act 1 歌詞\n\n1\t君の名を呼ぶ\n2.2\t空を見上げて\n');
+  });
+
+  it('trims whitespace and notes when no lyrics are present', () => {
+    const show: Show = {
+      id: 's1',
+      name: 'Empty',
+      sequence: [{ kind: 'cue', cue: { id: 'c1', lyrics: '  ', values: {}, fadeInMs: 0 } }],
+    };
+    expect(serializeLyrics(show)).toBe('# Empty 歌詞\n\n（歌詞が登録された CUE はありません）\n');
   });
 });

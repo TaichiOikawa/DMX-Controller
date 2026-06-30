@@ -59,12 +59,13 @@ export function resolveFrame(ctx: MixContext, out: number[]): void {
 }
 
 /**
- * EngineRuntime から MixContext を組み立てる。
- * 層1（Action・最優先）を `rt.activeActions` から、層3（show）を `rt.show` から構築。
+ * EngineRuntime から MixContext を組み立てる。層3（show）を `rt.show` から構築。
  *
  * 「show 制御中」= Show が GO 済み（mainIndex >= 0）かつ `controlled[ch]`。
  * 並列再生が無いので HTP の最大値計算は不要（単一ソース）。
- * 複数 Action が同 ch を持つ場合は max（HTP）。
+ *
+ * Action は look を programmer（faderLive / busking）へ取り込む方式に統一したため、
+ * 専用の最優先オーバーライド層（層1）は構築しない（resolveChannel 側のフックは未使用で残置）。
  */
 export function contextFromRuntime(rt: EngineRuntime): MixContext {
   const show = rt.show;
@@ -78,30 +79,9 @@ export function contextFromRuntime(rt: EngineRuntime): MixContext {
     ? (ch: number): number => show!.tracked[ch]
     : undefined;
 
-  const actions = rt.activeActions;
-  const actionControls =
-    actions.length === 0
-      ? undefined
-      : (ch: number): boolean => {
-          for (const a of actions) if (a.controlled[ch]) return true;
-          return false;
-        };
-  const actionValue =
-    actions.length === 0
-      ? undefined
-      : (ch: number): number => {
-          let max = 0;
-          for (const a of actions) {
-            if (a.controlled[ch] && a.values[ch] > max) max = a.values[ch];
-          }
-          return max;
-        };
-
   return {
     faderLive: rt.faderLive,
     busking: rt.busking,
-    actionControls,
-    actionValue,
     anyGroupControls,
     htpOverGroups,
   };

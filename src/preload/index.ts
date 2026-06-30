@@ -12,6 +12,7 @@ import {
   type ActionPatch,
   type AddCueOptions,
   type CuePatch,
+  type AudioLevels,
   type DirtyState,
   type DmxBridge,
   type EngineStateSnapshot,
@@ -67,6 +68,9 @@ const api: DmxBridge = {
   },
   openColorPicker() {
     ipcRenderer.send(Cmd.openColorPicker);
+  },
+  openMonitor() {
+    ipcRenderer.send(Cmd.openMonitor);
   },
   notifyUiState(state: UiState) {
     ipcRenderer.send(Cmd.uiState, state);
@@ -216,6 +220,9 @@ const api: DmxBridge = {
   clearShowAudio(showId) {
     ipcRenderer.send(Cmd.clearShowAudio, showId);
   },
+  setMainAudioProps(showId, props) {
+    ipcRenderer.send(Cmd.setMainAudioProps, showId, props);
+  },
   readAudioFile(filePath) {
     return ipcRenderer.invoke(Cmd.readAudioFile, filePath) as ReturnType<DmxBridge['readAudioFile']>;
   },
@@ -228,6 +235,29 @@ const api: DmxBridge = {
     return ipcRenderer.invoke(Cmd.checkMissingFiles) as ReturnType<
       DmxBridge['checkMissingFiles']
     >;
+  },
+
+  // 追加オーディオトラック / クリップ
+  pickAudioClip() {
+    return ipcRenderer.invoke(Cmd.pickAudioClip) as ReturnType<DmxBridge['pickAudioClip']>;
+  },
+  addAudioClip(showId, trackIndex, filePath, startMs, durationMs) {
+    ipcRenderer.send(Cmd.addAudioClip, showId, trackIndex, filePath, startMs, durationMs);
+  },
+  moveAudioClip(showId, trackIndex, clipId, startMs) {
+    ipcRenderer.send(Cmd.moveAudioClip, showId, trackIndex, clipId, startMs);
+  },
+  removeAudioClip(showId, trackIndex, clipId) {
+    ipcRenderer.send(Cmd.removeAudioClip, showId, trackIndex, clipId);
+  },
+  clearAudioTrack(showId, trackIndex) {
+    ipcRenderer.send(Cmd.clearAudioTrack, showId, trackIndex);
+  },
+  setAudioTrackProps(showId, trackIndex, props) {
+    ipcRenderer.send(Cmd.setAudioTrackProps, showId, trackIndex, props);
+  },
+  reportAudioLevels(levels) {
+    ipcRenderer.send(Cmd.reportAudioLevels, levels);
   },
 
   // 永続化
@@ -275,6 +305,9 @@ const api: DmxBridge = {
   },
   onMenuAction(cb) {
     return subscribe<MenuAction>(Evt.menuAction, cb);
+  },
+  onAudioLevels(cb) {
+    return subscribe<AudioLevels>(Evt.audioLevels, cb);
   },
 };
 

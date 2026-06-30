@@ -30,6 +30,8 @@ import {
   type SequenceEntry,
   type Show,
   type TimelinePoint,
+  type AudioTrack,
+  AUDIO_TRACK_COUNT,
 } from '../shared/types';
 import { encodeArtDmx, nextSequence } from './artnet';
 import { Clock } from './clock';
@@ -1197,11 +1199,31 @@ export class Engine {
     this.notifyProject();
   }
 
-  /** Show に音声ファイル（絶対パス）を設定。 */
+  /** Show に音声ファイル（絶対パス）を設定。音量/ミュート/ソロは保持する。 */
   setShowAudio(showId: string, filePath: string): void {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
-    show.audio = { filePath };
+    show.audio = { ...show.audio, filePath };
+    this.notifyProject();
+  }
+
+  /**
+   * メイン音声の音量(0..1)/ミュート/ソロを更新（追加トラックと同じミキサー操作）。
+   * SHOW 中も操作したいので editable ゲートせず、Undo にも積まない。
+   */
+  setMainAudioProps(
+    showId: string,
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
+  ): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show?.audio) return;
+    if (typeof props.volume === 'number') show.audio.volume = Math.max(0, Math.min(1, props.volume));
+    if (typeof props.muted === 'boolean') show.audio.muted = props.muted;
+    if (typeof props.solo === 'boolean') show.audio.solo = props.solo;
+    if (props.outputDeviceId !== undefined) {
+      if (props.outputDeviceId) show.audio.outputDeviceId = props.outputDeviceId;
+      else delete show.audio.outputDeviceId;
+    }
     this.notifyProject();
   }
 
@@ -1210,6 +1232,110 @@ export class Engine {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
     delete show.audio;
+    this.notifyProject();
+  }
+
+  // ===== コマンド: 追加オーディオトラック / クリップ =====
+
+  /** timeline と固定本数の追加トラックを保証して返す（無ければ生成）。 */
+  private ensureAudioTracks(show: Show): AudioTrack[] {
+    if (!show.timeline) show.timeline = { points: [] };
+    if (!show.timeline.audioTracks) show.timeline.audioTracks = [];
+    const tracks = show.timeline.audioTracks;
+    while (tracks.length < AUDIO_TRACK_COUNT) {
+      tracks.push({
+        id: genId(),
+        name: `Track ${tracks.length + 1}`,
+        clips: [],
+        volume: 1,
+        muted: false,
+        solo: false,
+      });
+    }
+    return tracks;
+  }
+
+  /** トラック（index 0..2）へ音声クリップを追加（開始位置・尺は ms）。 */
+  addAudioClip(
+    showId: string,
+    trackIndex: number,
+    filePath: string,
+    startMs: number,
+    durationMs: number,
+  ): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    const track = this.ensureAudioTracks(show)[trackIndex];
+    if (!track) return;
+    this.pushUndo();
+    track.clips.push({
+      id: genId(),
+      filePath,
+      startMs: Math.max(0, Math.round(startMs)),
+      durationMs: Math.max(0, Math.round(durationMs)),
+    });
+    track.clips.sort((a, b) => a.startMs - b.startMs);
+    this.notifyProject();
+  }
+
+  /** クリップの開始位置を更新（ドラッグ移動）。更新後に昇順ソート。 */
+  moveAudioClip(showId: string, trackIndex: number, clipId: string, startMs: number): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    const track = show?.timeline?.audioTracks?.[trackIndex];
+    const clip = track?.clips.find((c) => c.id === clipId);
+    if (!track || !clip) return;
+    this.pushUndo();
+    clip.startMs = Math.max(0, Math.round(startMs));
+    track.clips.sort((a, b) => a.startMs - b.startMs);
+    this.notifyProject();
+  }
+
+  /** クリップを削除。 */
+  removeAudioClip(showId: string, trackIndex: number, clipId: string): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    const track = show?.timeline?.audioTracks?.[trackIndex];
+    if (!track) return;
+    const idx = track.clips.findIndex((c) => c.id === clipId);
+    if (idx < 0) return;
+    this.pushUndo();
+    track.clips.splice(idx, 1);
+    this.notifyProject();
+  }
+
+  /** トラック（index 0..2）の全クリップを削除。 */
+  clearAudioTrack(showId: string, trackIndex: number): void {
+    if (!this.editable) return;
+    const show = this.project.shows.find((s) => s.id === showId);
+    const track = show?.timeline?.audioTracks?.[trackIndex];
+    if (!track || track.clips.length === 0) return;
+    this.pushUndo();
+    track.clips = [];
+    this.notifyProject();
+  }
+
+  /**
+   * トラック（index 0..2）の音量/ミュート/ソロを更新。SHOW 中も操作したいので editable ゲートせず、
+   * ミキサー値として Undo にも積まない（フェーダー操作と同様）。
+   */
+  setAudioTrackProps(
+    showId: string,
+    trackIndex: number,
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
+  ): void {
+    const show = this.project.shows.find((s) => s.id === showId);
+    if (!show) return;
+    const track = this.ensureAudioTracks(show)[trackIndex];
+    if (!track) return;
+    if (typeof props.volume === 'number') track.volume = Math.max(0, Math.min(1, props.volume));
+    if (typeof props.muted === 'boolean') track.muted = props.muted;
+    if (typeof props.solo === 'boolean') track.solo = props.solo;
+    if (props.outputDeviceId !== undefined) {
+      if (props.outputDeviceId) track.outputDeviceId = props.outputDeviceId;
+      else delete track.outputDeviceId;
+    }
     this.notifyProject();
   }
 

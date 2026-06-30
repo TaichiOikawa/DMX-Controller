@@ -62,6 +62,14 @@ export function pxToTime(px: number, scale: TimeScale): number {
   return Math.round(px / pxPerMs(scale));
 }
 
+/** クリップ配置のスナップ単位（ms）。リファレンス同様 10ms グリッドへ吸着する。 */
+export const SNAP_MS = 10;
+
+/** ms を SNAP_MS グリッドへ吸着する。 */
+export function snapMs(ms: number): number {
+  return Math.round(ms / SNAP_MS) * SNAP_MS;
+}
+
 /** ms → "MM:SS:CS"（CS=センチ秒）。 */
 export function formatTimecode(ms: number): string {
   const m = Math.floor(ms / 1000 / 60);

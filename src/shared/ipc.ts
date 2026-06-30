@@ -33,6 +33,7 @@ export const Cmd = {
   deleteFixture: 'cmd:deleteFixture',
   /** RGB カラーピッカーを別ウィンドウで開く（main がウィンドウを生成）。 */
   openColorPicker: 'cmd:openColorPicker',
+  openMonitor: 'cmd:openMonitor',
   /** renderer 専用 UI 状態（タブ・パネル開閉）を main へ同期し、メニューのチェック反映に使う。 */
   uiState: 'cmd:uiState',
 
@@ -96,9 +97,19 @@ export const Cmd = {
   setTimelinePointCue: 'cmd:setTimelinePointCue',
   pickShowAudio: 'cmd:pickShowAudio',
   clearShowAudio: 'cmd:clearShowAudio',
+  setMainAudioProps: 'cmd:setMainAudioProps',
   readAudioFile: 'cmd:readAudioFile',
   relinkAudioFromFolder: 'cmd:relinkAudioFromFolder',
   checkMissingFiles: 'cmd:checkMissingFiles',
+
+  // --- 追加オーディオトラック / クリップ ---
+  pickAudioClip: 'cmd:pickAudioClip',
+  addAudioClip: 'cmd:addAudioClip',
+  moveAudioClip: 'cmd:moveAudioClip',
+  removeAudioClip: 'cmd:removeAudioClip',
+  clearAudioTrack: 'cmd:clearAudioTrack',
+  setAudioTrackProps: 'cmd:setAudioTrackProps',
+  reportAudioLevels: 'cmd:reportAudioLevels',
 
   // --- 永続化 ---
   newProject: 'cmd:newProject',
@@ -127,6 +138,8 @@ export const Evt = {
   dirty: 'evt:dirty',
   /** アプリメニューからのアクション（main → renderer） */
   menuAction: 'evt:menuAction',
+  /** ミックス済みオーディオ出力レベル（メイン renderer → main → 全ウインドウ） */
+  audioLevels: 'evt:audioLevels',
 } as const;
 
 /**
@@ -173,6 +186,14 @@ export interface DirtyState {
 }
 
 // ===== ペイロード型 =====
+
+/** ミックス済みオーディオ出力のステレオレベル（0..1、ピーク+RMS）。 */
+export interface AudioLevels {
+  peakL: number;
+  peakR: number;
+  rmsL: number;
+  rmsR: number;
+}
 
 export interface SetFaderPayload {
   /** 0-511 */
@@ -381,6 +402,11 @@ export interface DmxBridge {
   pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }>;
   /** Show の音声を解除。 */
   clearShowAudio(showId: string): void;
+  /** メイン音声の音量(0..1)/ミュート/ソロを更新。 */
+  setMainAudioProps(
+    showId: string,
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
+  ): void;
   /** 音声ファイルのバイト列を読み出す（Blob URL 化して再生/波形に使う）。 */
   readAudioFile(filePath: string): Promise<{ ok: boolean; data?: ArrayBuffer; error?: string }>;
   /**
@@ -390,6 +416,34 @@ export interface DmxBridge {
   relinkAudioFromFolder(): Promise<{ ok: boolean; resolved?: number; error?: string }>;
   /** 現在の Project が参照する音声ファイルの存在確認を行い、見つからない一覧を返す。 */
   checkMissingFiles(): Promise<MissingFile[]>;
+
+  // 追加オーディオトラック / クリップ
+  /** 音声ファイルをダイアログで選び、絶対パスを返す（Project は変更しない。尺取得は renderer 側）。 */
+  pickAudioClip(): Promise<{ ok: boolean; path?: string }>;
+  /** トラック（index 0..2）へクリップを追加（開始位置・尺は ms）。 */
+  addAudioClip(
+    showId: string,
+    trackIndex: number,
+    filePath: string,
+    startMs: number,
+    durationMs: number,
+  ): void;
+  /** クリップの開始位置を更新（ドラッグ移動）。 */
+  moveAudioClip(showId: string, trackIndex: number, clipId: string, startMs: number): void;
+  /** クリップを削除。 */
+  removeAudioClip(showId: string, trackIndex: number, clipId: string): void;
+  /** トラック（index 0..2）の全クリップを削除。 */
+  clearAudioTrack(showId: string, trackIndex: number): void;
+  /** トラック（index 0..2）の音量(0..1)/ミュート/ソロを更新。 */
+  setAudioTrackProps(
+    showId: string,
+    trackIndex: number,
+    props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null },
+  ): void;
+  /** ミックス済みオーディオ出力レベルを main へ送る（main が全ウインドウへ中継）。 */
+  reportAudioLevels(levels: AudioLevels): void;
+  /** 音量モニターを別ウインドウで開く。 */
+  openMonitor(): void;
 
   // 永続化（main が結果を project イベントで返す）
   newProject(): void;
@@ -427,6 +481,8 @@ export interface DmxBridge {
   onDirty(cb: (state: DirtyState) => void): () => void;
   /** アプリメニューからのアクションを購読する（解除関数を返す）。 */
   onMenuAction(cb: (action: MenuAction) => void): () => void;
+  /** ミックス済みオーディオ出力レベルを購読する（解除関数を返す）。 */
+  onAudioLevels(cb: (levels: AudioLevels) => void): () => void;
 }
 
 /** Cue 単体を export 型として再公開（preload/renderer の利便のため）。 */

@@ -18,6 +18,7 @@ import {
   Evt,
   type ActionPatch,
   type AddCueOptions,
+  type AudioLevels,
   type CuePatch,
   type EngineStateSnapshot,
   type FixtureInit,
@@ -346,9 +347,40 @@ export class EngineHost {
     );
     ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));
+    ipcMain.on(
+      Cmd.setMainAudioProps,
+      (_e, showId: string, props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null }) =>
+        this.engine.setMainAudioProps(showId, props),
+    );
     ipcMain.handle(Cmd.readAudioFile, (_e, filePath: string) => this.readAudioFile(filePath));
     ipcMain.handle(Cmd.relinkAudioFromFolder, () => this.relinkAudioFromFolder());
     ipcMain.handle(Cmd.checkMissingFiles, () => this.findMissingFiles());
+
+    // --- 追加オーディオトラック / クリップ ---
+    ipcMain.handle(Cmd.pickAudioClip, () => this.pickAudioClip());
+    ipcMain.on(
+      Cmd.addAudioClip,
+      (_e, showId: string, trackIndex: number, filePath: string, startMs: number, durationMs: number) =>
+        this.engine.addAudioClip(showId, trackIndex, filePath, startMs, durationMs),
+    );
+    ipcMain.on(Cmd.moveAudioClip, (_e, showId: string, trackIndex: number, clipId: string, startMs: number) =>
+      this.engine.moveAudioClip(showId, trackIndex, clipId, startMs),
+    );
+    ipcMain.on(Cmd.removeAudioClip, (_e, showId: string, trackIndex: number, clipId: string) =>
+      this.engine.removeAudioClip(showId, trackIndex, clipId),
+    );
+    ipcMain.on(Cmd.clearAudioTrack, (_e, showId: string, trackIndex: number) =>
+      this.engine.clearAudioTrack(showId, trackIndex),
+    );
+    ipcMain.on(
+      Cmd.setAudioTrackProps,
+      (_e, showId: string, trackIndex: number, props: { volume?: number; muted?: boolean; solo?: boolean; outputDeviceId?: string | null }) =>
+        this.engine.setAudioTrackProps(showId, trackIndex, props),
+    );
+    // メイン renderer のミックスレベルを全ウインドウ（モニター）へ中継。
+    ipcMain.on(Cmd.reportAudioLevels, (_e, levels: AudioLevels) =>
+      this.broadcast(Evt.audioLevels, levels),
+    );
 
     // --- 永続化 ---
     ipcMain.on(Cmd.newProject, () => {
@@ -570,6 +602,17 @@ export class EngineHost {
     });
     if (res.canceled || res.filePaths.length === 0) return { ok: false };
     this.engine.setShowAudio(showId, res.filePaths[0]);
+    return { ok: true, path: res.filePaths[0] };
+  }
+
+  /** 追加トラック用の音声ファイルをダイアログで選ぶ（Project は変更しない。尺取得は renderer 側）。 */
+  private async pickAudioClip(): Promise<{ ok: boolean; path?: string }> {
+    const res = await dialog.showOpenDialog({
+      title: '音声ファイルを選択',
+      properties: ['openFile'],
+      filters: AUDIO_FILTERS,
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: false };
     return { ok: true, path: res.filePaths[0] };
   }
 

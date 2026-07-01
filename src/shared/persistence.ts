@@ -18,6 +18,8 @@ import {
   type Project,
   type RgbFixture,
   type SequenceEntry,
+  type Setlist,
+  type SetlistEntry,
   type Show,
   type Timeline,
   type TimelinePoint,
@@ -168,6 +170,9 @@ export function migrateProject(raw: unknown): Project {
     actions: normalizeActions(raw.actions),
     shows: normalizeShows(raw.shows, validFolderIds),
   };
+  const validShowIds = new Set(project.shows.map((s) => s.id));
+  const setlists = normalizeSetlists(raw.setlists, validShowIds);
+  if (setlists.length > 0) project.setlists = setlists;
   if (folders.length > 0) project.folders = folders;
   const channelLabels = normalizeLabels(raw.channelLabels, UNIVERSE_SIZE);
   if (channelLabels) project.channelLabels = channelLabels;
@@ -261,6 +266,34 @@ function normalizeFolders(raw: unknown): Folder[] {
     id: str(f.id, fallbackId()),
     name: str(f.name, 'フォルダ'),
   }));
+}
+
+/**
+ * セットリスト配列を正規化する。存在しない Show を指すエントリは捨てる（ダングリング除去）。
+ * 空になった Setlist は残す（Show ツリーが空 Show を残すのと同じ思想）。
+ */
+function normalizeSetlists(raw: unknown, validShowIds: Set<string>): Setlist[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw.filter(isObject) as Record<string, unknown>[]).map((s) =>
+    normalizeSetlist(s, validShowIds),
+  );
+}
+
+function normalizeSetlist(raw: Record<string, unknown>, validShowIds: Set<string>): Setlist {
+  const entries: SetlistEntry[] = [];
+  if (Array.isArray(raw.entries)) {
+    for (const e of raw.entries) {
+      if (!isObject(e)) continue;
+      const showId = str(e.showId, '');
+      if (!showId || !validShowIds.has(showId)) continue; // ダングリング除去
+      entries.push({ id: str(e.id, fallbackId()), showId });
+    }
+  }
+  return {
+    id: str(raw.id, fallbackId()),
+    name: str(raw.name, 'Setlist'),
+    entries,
+  };
 }
 
 function normalizeShows(raw: unknown, validFolderIds: Set<string>): Show[] {

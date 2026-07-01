@@ -127,6 +127,24 @@ const api: DmxBridge = {
   setShowFolder(showId, folderId) {
     ipcRenderer.send(Cmd.setShowFolder, showId, folderId);
   },
+  createSetlist(name) {
+    ipcRenderer.send(Cmd.createSetlist, name);
+  },
+  renameSetlist(setlistId, name) {
+    ipcRenderer.send(Cmd.renameSetlist, setlistId, name);
+  },
+  deleteSetlist(setlistId) {
+    ipcRenderer.send(Cmd.deleteSetlist, setlistId);
+  },
+  addToSetlist(setlistId, showId) {
+    ipcRenderer.send(Cmd.addToSetlist, setlistId, showId);
+  },
+  removeFromSetlist(setlistId, entryId) {
+    ipcRenderer.send(Cmd.removeFromSetlist, setlistId, entryId);
+  },
+  moveSetlistEntry(setlistId, entryId, toIndex) {
+    ipcRenderer.send(Cmd.moveSetlistEntry, setlistId, entryId, toIndex);
+  },
   addCue(showId, opts?: AddCueOptions) {
     ipcRenderer.send(Cmd.addCue, showId, opts);
   },

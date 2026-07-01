@@ -8,9 +8,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  FileMusic,
   Music2,
   Play,
   Plus,
+  Search,
   Square,
   X,
 } from "lucide-react";
@@ -26,6 +28,7 @@ export function SetlistPanel() {
   const setlistReset = useDmxStore((s) => s.setlistReset);
   const editable = useDmxStore((s) => s.mode === "edit");
   const [adding, setAdding] = useState(false);
+  const [filter, setFilter] = useState("");
 
   // 現在行が変わったらスクロール表示する。
   const listRef = useRef<HTMLDivElement>(null);
@@ -34,6 +37,32 @@ export function SetlistPanel() {
     const el = listRef.current?.querySelector('[data-current="true"]');
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [setlistIndex]);
+
+  const closeAdd = () => {
+    setAdding(false);
+    setFilter("");
+  };
+
+  // Show 追加ポップオーバー: 外側クリック / Esc で閉じる。
+  const addRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!adding) return;
+    const onDown = (e: MouseEvent) => {
+      if (!addRef.current?.contains(e.target as Node)) closeAdd();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeAdd();
+    };
+    const id = window.setTimeout(() => {
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("keydown", onKey);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [adding]);
 
   const setlist = project?.setlists?.find((s) => s.id === activeSetlistId) ?? null;
 
@@ -172,42 +201,88 @@ export function SetlistPanel() {
             })}
           </ul>
         )}
-
-        {/* Show 追加 */}
-        {editable && (
-          <div className="mt-2">
-            {adding ? (
-              <select
-                autoFocus
-                defaultValue=""
-                onChange={(e) => {
-                  if (e.target.value) window.dmx.addToSetlist(setlist.id, e.target.value);
-                  setAdding(false);
-                }}
-                onBlur={() => setAdding(false)}
-                className="w-full rounded bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 ring-1 ring-sky-500"
-              >
-                <option value="" disabled>
-                  追加する Show を選択…
-                </option>
-                {(project?.shows ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <button
-                onClick={() => setAdding(true)}
-                className="flex w-full items-center justify-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs text-sky-300 hover:bg-neutral-700"
-                title="Show をこのセットリストに追加"
-              >
-                <Plus size={13} /> Show を追加
-              </button>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* Show 追加（検索付きポップオーバー・複数追加可）。スクロール領域の外に置き、
+          上方向ポップオーバーが overflow でクリップされないようにする。 */}
+      {editable && (
+        <div className="relative" ref={addRef}>
+            {adding && (
+              <div className="absolute inset-x-0 bottom-full z-20 mb-1 flex max-h-72 flex-col overflow-hidden rounded-lg bg-neutral-800 shadow-lg ring-1 ring-neutral-700">
+                {/* 検索欄 */}
+                <div className="flex items-center gap-1.5 border-b border-neutral-700 px-2 py-1.5">
+                  <Search size={13} className="shrink-0 text-neutral-500" />
+                  <input
+                    autoFocus
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder="Show を検索して追加…"
+                    className="min-w-0 flex-1 bg-transparent text-xs text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                  <button
+                    onClick={closeAdd}
+                    className="inline-flex shrink-0 items-center rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
+                    title="閉じる（Esc）"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                {/* Show 候補 */}
+                <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                  {(() => {
+                    const q = filter.trim().toLowerCase();
+                    const matches = (project?.shows ?? [])
+                      .filter((s) => !q || s.name.toLowerCase().includes(q))
+                      .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+                    if ((project?.shows?.length ?? 0) === 0) {
+                      return (
+                        <div className="px-3 py-2 text-[11px] text-neutral-500">
+                          Show がありません
+                        </div>
+                      );
+                    }
+                    if (matches.length === 0) {
+                      return (
+                        <div className="px-3 py-2 text-[11px] text-neutral-500">
+                          「{filter}」に一致する Show はありません
+                        </div>
+                      );
+                    }
+                    return matches.map((s) => {
+                      const count = entries.filter((e) => e.showId === s.id).length;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => window.dmx.addToSetlist(setlist.id, s.id)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+                          title="クリックで追加（続けて複数追加できます）"
+                        >
+                          <FileMusic size={13} className="shrink-0 text-neutral-500" />
+                          <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                          {count > 0 && (
+                            <span className="shrink-0 rounded bg-neutral-700 px-1 font-mono text-[10px] text-neutral-400">
+                              ×{count}
+                            </span>
+                          )}
+                          <Plus size={13} className="shrink-0 text-sky-400" />
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => (adding ? closeAdd() : setAdding(true))}
+              className={`flex w-full items-center justify-center gap-1 rounded px-2 py-1.5 text-xs hover:bg-neutral-700 ${
+                adding ? "bg-neutral-700 text-neutral-100" : "bg-neutral-800 text-sky-300"
+              }`}
+              title="Show をこのセットリストに追加"
+            >
+              <Plus size={13} /> Show を追加
+            </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -187,7 +187,10 @@ export function ProjectSidebar() {
   const renderShow = (show: Show, indented: boolean) => {
     const selected = show.id === selectedShowId;
     const active = show.id === activeShowId;
-    const canLoad = show.id !== activeShowId;
+    // セットリスト読込中は、どの Show をロードするかはマスター GO が制御するため
+    // サイドバーからの読込／解放を禁止する。
+    const setlistActive = activeSetlistId !== null;
+    const canLoad = show.id !== activeShowId && !setlistActive;
     return (
       <div
         key={show.id}
@@ -210,9 +213,17 @@ export function ProjectSidebar() {
             : undefined
         }
         className={`group flex items-center gap-1 rounded px-1.5 py-1 ${indented ? 'pl-4' : ''} ${
-          selected ? 'bg-sky-600/30 ring-1 ring-sky-600/50' : 'hover:bg-neutral-800'
+          active
+            ? 'bg-amber-500/15 ring-1 ring-amber-500/50'
+            : selected
+              ? 'bg-sky-600/30 ring-1 ring-sky-600/50'
+              : 'hover:bg-neutral-800'
         }`}
-        title="クリックで選択 / ダブルクリックで読込（右クリックでメニュー）"
+        title={
+          setlistActive
+            ? 'セットリスト読込中は Show の読込はマスター GO が制御します（右クリックでメニュー）'
+            : 'クリックで選択 / ダブルクリックで読込（右クリックでメニュー）'
+        }
       >
         <FileMusic size={14} className={active ? 'shrink-0 text-amber-400' : 'shrink-0 text-neutral-500'} />
         {editable ? (
@@ -228,9 +239,10 @@ export function ProjectSidebar() {
           <span className="min-w-0 flex-1 truncate text-neutral-200">{show.name}</span>
         )}
 
-        {/* 行内アクション（ホバー / アクティブ時に表示） */}
+        {/* 行内アクション（ホバー / アクティブ時に表示）。
+            セットリスト読込中は読込／解放をマスター GO に委ねるため出さない。 */}
         <div className="flex shrink-0 items-center gap-0.5">
-          {active ? (
+          {setlistActive ? null : active ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -277,7 +289,11 @@ export function ProjectSidebar() {
             : undefined
         }
         className={`group flex items-center gap-1 rounded px-1.5 py-1 ${
-          selected ? 'bg-sky-600/30 ring-1 ring-sky-600/50' : 'hover:bg-neutral-800'
+          active
+            ? 'bg-amber-500/15 ring-1 ring-amber-500/50'
+            : selected
+              ? 'bg-sky-600/30 ring-1 ring-sky-600/50'
+              : 'hover:bg-neutral-800'
         }`}
         title="クリックで選択 / ダブルクリックで読込（右クリックでメニュー）"
       >

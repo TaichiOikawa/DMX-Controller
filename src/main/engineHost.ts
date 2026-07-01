@@ -272,6 +272,22 @@ export class EngineHost {
     ipcMain.on(Cmd.setShowFolder, (_e, showId: string, folderId: string | null) =>
       this.engine.setShowFolder(showId, folderId),
     );
+    ipcMain.on(Cmd.createSetlist, (_e, name?: string) => this.engine.createSetlist(name));
+    ipcMain.on(Cmd.renameSetlist, (_e, setlistId: string, name: string) =>
+      this.engine.renameSetlist(setlistId, name),
+    );
+    ipcMain.on(Cmd.deleteSetlist, (_e, setlistId: string) =>
+      this.engine.deleteSetlist(setlistId),
+    );
+    ipcMain.on(Cmd.addToSetlist, (_e, setlistId: string, showId: string) =>
+      this.engine.addToSetlist(setlistId, showId),
+    );
+    ipcMain.on(Cmd.removeFromSetlist, (_e, setlistId: string, entryId: string) =>
+      this.engine.removeFromSetlist(setlistId, entryId),
+    );
+    ipcMain.on(Cmd.moveSetlistEntry, (_e, setlistId: string, entryId: string, toIndex: number) =>
+      this.engine.moveSetlistEntry(setlistId, entryId, toIndex),
+    );
     ipcMain.on(Cmd.addCue, (_e, showId: string, opts?: AddCueOptions) =>
       this.engine.addCue(showId, opts),
     );

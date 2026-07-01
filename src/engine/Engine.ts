@@ -18,6 +18,8 @@ import {
   createFolder,
   createGroupEntry,
   createRgbFixture,
+  createSetlist,
+  createSetlistEntry,
   createShowRuntime,
   genId,
   type ActionButton,
@@ -694,6 +696,12 @@ export class Engine {
     this.pushUndo();
     if (this.runtime.activeShowId === showId) this.unloadShow();
     this.project.shows.splice(idx, 1);
+    // 削除 Show を参照するセットリストのエントリも掃除する（ダングリング防止）。
+    if (this.project.setlists) {
+      for (const sl of this.project.setlists) {
+        sl.entries = sl.entries.filter((e) => e.showId !== showId);
+      }
+    }
     this.notifyProject();
   }
 
@@ -748,6 +756,77 @@ export class Engine {
     this.pushUndo();
     if (next) show.folderId = next;
     else delete show.folderId;
+    this.notifyProject();
+  }
+
+  // ===== コマンド: セットリスト（Show を束ねる上位の再生リスト・複数可） =====
+
+  /** セットリストを作成する。 */
+  createSetlist(name?: string): void {
+    if (!this.editable) return;
+    this.pushUndo();
+    const setlist = createSetlist(
+      name?.trim() || `Setlist ${(this.project.setlists?.length ?? 0) + 1}`,
+    );
+    this.project.setlists = [...(this.project.setlists ?? []), setlist];
+    this.notifyProject();
+  }
+
+  /** セットリスト名を変更する。空文字は無視。 */
+  renameSetlist(setlistId: string, name: string): void {
+    if (!this.editable) return;
+    const setlist = this.project.setlists?.find((s) => s.id === setlistId);
+    if (!setlist) return;
+    const next = name.trim();
+    if (!next || next === setlist.name) return;
+    this.pushUndo();
+    setlist.name = next;
+    this.notifyProject();
+  }
+
+  /** セットリストを削除する。 */
+  deleteSetlist(setlistId: string): void {
+    if (!this.editable) return;
+    const setlists = this.project.setlists;
+    if (!setlists) return;
+    const idx = setlists.findIndex((s) => s.id === setlistId);
+    if (idx === -1) return;
+    this.pushUndo();
+    setlists.splice(idx, 1);
+    if (setlists.length === 0) delete this.project.setlists;
+    this.notifyProject();
+  }
+
+  /** Show 参照をセットリスト末尾に追加する。実在する Show のみ。 */
+  addToSetlist(setlistId: string, showId: string): void {
+    if (!this.editable) return;
+    const setlist = this.project.setlists?.find((s) => s.id === setlistId);
+    if (!setlist) return;
+    if (!this.project.shows.some((sh) => sh.id === showId)) return;
+    this.pushUndo();
+    setlist.entries.push(createSetlistEntry(showId));
+    this.notifyProject();
+  }
+
+  /** セットリストからエントリを削除する。 */
+  removeFromSetlist(setlistId: string, entryId: string): void {
+    if (!this.editable) return;
+    const setlist = this.project.setlists?.find((s) => s.id === setlistId);
+    if (!setlist) return;
+    const idx = setlist.entries.findIndex((e) => e.id === entryId);
+    if (idx === -1) return;
+    this.pushUndo();
+    setlist.entries.splice(idx, 1);
+    this.notifyProject();
+  }
+
+  /** セットリスト内のエントリを並び替える。 */
+  moveSetlistEntry(setlistId: string, entryId: string, toIndex: number): void {
+    if (!this.editable) return;
+    const setlist = this.project.setlists?.find((s) => s.id === setlistId);
+    if (!setlist) return;
+    this.pushUndo();
+    moveById(setlist.entries, (e) => e.id === entryId, toIndex);
     this.notifyProject();
   }
 

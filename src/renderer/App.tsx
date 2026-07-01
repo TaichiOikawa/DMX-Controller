@@ -10,6 +10,7 @@ import { PreferencesModal } from './components/PreferencesModal';
 import { ShowImportPatchModal } from './components/ShowImportPatchModal';
 import { MissingFilesModal } from './components/MissingFilesModal';
 import { PlaybackPanel } from './components/PlaybackPanel';
+import { SetlistPanel } from './components/SetlistPanel';
 import { NowNextPanel } from './components/NowNextPanel';
 import { MasterBar } from './components/MasterBar';
 import { ActionPanel } from './components/ActionPanel';
@@ -43,6 +44,8 @@ export default function App() {
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const selectedShowId = useDmxStore((s) => s.selectedShowId);
   const dirty = useDmxStore((s) => s.dirty);
+  // セットリスト読込中は中央をセットリスト表示に切替える（Show の CUE/Timeline より優先）。
+  const activeSetlistId = useDmxStore((s) => s.activeSetlistId);
   // Show 未読込（解放中）。CUE/Timeline を隠し Action を大きく表示する。
   const released = activeShowId === null;
   const [tab, setTab] = useState<Tab>('cue');
@@ -104,11 +107,22 @@ export default function App() {
         return;
       }
       if (e.repeat || e.altKey) return;
+      const st = useDmxStore.getState();
+      // セットリスト読込中はマスター GO 系へ振る（中央がセットリスト表示のため）。
+      if (st.activeSetlistId) {
+        if (e.code === 'Space' || e.code === 'ArrowRight') {
+          e.preventDefault();
+          st.setlistGo();
+        } else if (e.code === 'Backspace' || e.code === 'ArrowLeft') {
+          e.preventDefault();
+          st.setlistGoTo(st.setlistIndex - 1);
+        }
+        return;
+      }
       if (e.code === 'Space') {
         e.preventDefault();
         // Timeline タブでは再生/一時停止トグル、それ以外（CUE）では GO。
         if (tabRef.current === 'timeline') {
-          const st = useDmxStore.getState();
           if (st.activeShowId) {
             if (st.transport.playing) st.transportPause();
             else st.transportPlay();
@@ -219,6 +233,27 @@ export default function App() {
     document.title = `${dirty ? '● ' : ''}${base} — DMX Console`;
   }, [project, projectPath, activeShowId, selectedShowId, dirty]);
 
+  // CUE / Timeline のタブ領域（通常時は中央、セットリスト時は右半分で再利用）。
+  const cueTimelinePanel = (
+    <>
+      {/* タブバー：CUE / Timeline を切り替え */}
+      <div className="flex items-center gap-1 border-b border-neutral-800">
+        <TabButton label="CUE" active={tab === 'cue'} onClick={() => setTab('cue')} />
+        <TabButton label="Timeline" active={tab === 'timeline'} onClick={() => setTab('timeline')} />
+      </div>
+      {/* タブ内容（共通の高さ領域）。CUE はマスター列、Timeline はトランスポート。
+          両方マウントしたまま表示切替し、Timeline のスクロール位置・再生状態を保持する。 */}
+      <div className="min-h-0 flex-[2]">
+        <div className={`h-full ${tab === 'cue' ? '' : 'hidden'}`}>
+          <PlaybackPanel />
+        </div>
+        <div className={`h-full ${tab === 'timeline' ? '' : 'hidden'}`}>
+          <TimelineView active={tab === 'timeline'} />
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="flex h-screen gap-2 bg-neutral-950 p-2 text-neutral-100">
       {/* 左サイド：Project / Show ツリー（開閉可） */}
@@ -232,34 +267,25 @@ export default function App() {
         {/* 本番モードの「現在 / 次の CUE」帯（SHOW 時のみ表示） */}
         <NowNextPanel />
 
-        {/* Show 読込中のみ CUE / Timeline を表示。未読込時は隠して Action を大きく出す。 */}
-        {!released && (
-          <>
-            {/* タブバー：CUE / Timeline を切り替え */}
-            <div className="flex items-center gap-1 border-b border-neutral-800">
-              <TabButton label="CUE" active={tab === 'cue'} onClick={() => setTab('cue')} />
-              <TabButton
-                label="Timeline"
-                active={tab === 'timeline'}
-                onClick={() => setTab('timeline')}
-              />
+        {/* 中央領域: セットリスト読込中は左右2分割（左=セットリスト / 右=CUE・Timeline）。
+            そうでなければ Show 読込中に CUE / Timeline を表示。どちらも無ければ Action を大きく。 */}
+        {activeSetlistId ? (
+          <div className="flex min-h-0 flex-[2] gap-2">
+            {/* 左: セットリスト（マスター GO） */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <SetlistPanel />
             </div>
-
-            {/* タブ内容（共通の高さ領域）。CUE はマスター列、Timeline はトランスポート。
-                両方マウントしたまま表示切替し、Timeline のスクロール位置・再生状態を保持する。 */}
-            <div className="min-h-0 flex-[2]">
-              <div className={`h-full ${tab === 'cue' ? '' : 'hidden'}`}>
-                <PlaybackPanel />
-              </div>
-              <div className={`h-full ${tab === 'timeline' ? '' : 'hidden'}`}>
-                <TimelineView active={tab === 'timeline'} />
-              </div>
+            {/* 右: 再生中 Show の CUE / Timeline */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+              {cueTimelinePanel}
             </div>
-          </>
+          </div>
+        ) : (
+          !released && cueTimelinePanel
         )}
 
-        {/* Action パネル。未読込時は大きく（タブ領域を占有）、読込時は通常/折りたたみ。 */}
-        {released ? (
+        {/* Action パネル。CUE/Timeline/セットリストのいずれも無い時だけ大きく（領域占有）。 */}
+        {released && !activeSetlistId ? (
           <div className="min-h-0 flex-[2]">
             <ActionPanel big />
           </div>

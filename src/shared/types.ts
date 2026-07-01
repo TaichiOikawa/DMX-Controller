@@ -29,6 +29,11 @@ export interface Project {
   bankLabels?: Record<number, string>;
   actions: ActionButton[];
   shows: Show[];
+  /**
+   * セットリスト（任意・複数）。Show を順序付きで束ね、単一のマスター GO で
+   * 1 Show ずつ「読込 + その Show の Timeline 再生」を進める上位の再生リスト。
+   */
+  setlists?: Setlist[];
   /** Show を整理するフォルダ（任意・単層）。Show.folderId が参照する。 */
   folders?: Folder[];
   /** RGB フィクスチャ定義（任意）。3ch を 1 色として束ねカラーピッカー入力に使う。 */
@@ -51,6 +56,22 @@ export interface RgbFixture {
 export interface Folder {
   id: string;
   name: string;
+}
+
+// ===== Setlist（Show を順序付きで束ねる上位の再生リスト・複数可） =====
+/** セットリストの 1 エントリ。Project.shows の Show を参照する（同一 Show の複数回登場可）。 */
+export interface SetlistEntry {
+  id: string;
+  /** 参照先 Show の id（Project.shows）。 */
+  showId: string;
+}
+
+/** Show を順序付きで束ねる再生リスト。Show と同じく Project 直下に複数作れる。 */
+export interface Setlist {
+  id: string;
+  name: string;
+  /** 順序付き Show 参照列。マスター GO で先頭から 1 つずつ進む。 */
+  entries: SetlistEntry[];
 }
 
 export interface ArtnetSettings {
@@ -328,6 +349,16 @@ export function createShow(name = 'Show 1'): Show {
 /** 新規 Folder。 */
 export function createFolder(name = 'フォルダ'): Folder {
   return { id: genId(), name };
+}
+
+/** 新規 Setlist（空の Show 参照列）。 */
+export function createSetlist(name = 'Setlist 1'): Setlist {
+  return { id: genId(), name, entries: [] };
+}
+
+/** Show 参照を 1 エントリに包む。 */
+export function createSetlistEntry(showId: string): SetlistEntry {
+  return { id: genId(), showId };
 }
 
 /** 新規 RGB フィクスチャ。 */

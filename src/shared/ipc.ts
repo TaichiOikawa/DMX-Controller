@@ -58,6 +58,12 @@ export const Cmd = {
   renameFolder: 'cmd:renameFolder',
   deleteFolder: 'cmd:deleteFolder',
   setShowFolder: 'cmd:setShowFolder',
+  createSetlist: 'cmd:createSetlist',
+  renameSetlist: 'cmd:renameSetlist',
+  deleteSetlist: 'cmd:deleteSetlist',
+  addToSetlist: 'cmd:addToSetlist',
+  removeFromSetlist: 'cmd:removeFromSetlist',
+  moveSetlistEntry: 'cmd:moveSetlistEntry',
   addCue: 'cmd:addCue',
   addGroupEntry: 'cmd:addGroupEntry',
   setGroupLoop: 'cmd:setGroupLoop',
@@ -358,6 +364,18 @@ export interface DmxBridge {
   deleteFolder(folderId: string): void;
   /** Show の所属フォルダを設定/解除する（null でルートへ）。 */
   setShowFolder(showId: string, folderId: string | null): void;
+  /** セットリストを作成する。 */
+  createSetlist(name?: string): void;
+  /** セットリスト名を変更する（空文字は無視）。 */
+  renameSetlist(setlistId: string, name: string): void;
+  /** セットリストを削除する。 */
+  deleteSetlist(setlistId: string): void;
+  /** Show 参照をセットリスト末尾に追加する（実在する Show のみ）。 */
+  addToSetlist(setlistId: string, showId: string): void;
+  /** セットリストからエントリを削除する。 */
+  removeFromSetlist(setlistId: string, entryId: string): void;
+  /** セットリスト内のエントリを並び替える。 */
+  moveSetlistEntry(setlistId: string, entryId: string, toIndex: number): void;
   addCue(showId: string, opts?: AddCueOptions): void;
   addGroupEntry(showId: string, name?: string): void;
   setGroupLoop(groupId: string, loop: boolean): void;

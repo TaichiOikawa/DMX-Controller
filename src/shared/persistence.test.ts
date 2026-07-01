@@ -107,6 +107,27 @@ describe('serialize/deserialize round-trip', () => {
     expect(p.shows[0].folderId).toBeUndefined();
     expect(p.folders).toBeUndefined();
   });
+
+  it('preserves setlists and their ordered show references', () => {
+    const p = createDefaultProject();
+    p.shows = [
+      { id: 's1', name: 'A', sequence: [] },
+      { id: 's2', name: 'B', sequence: [] },
+    ];
+    p.setlists = [
+      {
+        id: 'sl1',
+        name: '本番',
+        entries: [
+          { id: 'e1', showId: 's2' },
+          { id: 'e2', showId: 's1' },
+          { id: 'e3', showId: 's2' }, // 同一 Show の複数回登場
+        ],
+      },
+    ];
+    const restored = deserializeProject(serializeProject(p));
+    expect(restored.setlists).toEqual(p.setlists);
+  });
 });
 
 describe('migrateProject (tolerant loading)', () => {
@@ -191,6 +212,34 @@ describe('migrateProject (tolerant loading)', () => {
       shows: [{ id: 's', name: 'S', sequence: [{ kind: 'bogus' }, { kind: 'cue' }, 42] }],
     });
     expect(p.shows[0].sequence).toEqual([]);
+  });
+
+  it('drops setlist entries that reference no existing show, keeping the (empty) setlist', () => {
+    const p = migrateProject({
+      shows: [{ id: 's1', name: 'A', sequence: [] }],
+      setlists: [
+        {
+          id: 'sl1',
+          name: 'L',
+          entries: [
+            { id: 'e1', showId: 's1' },
+            { id: 'e2', showId: 'ghost' }, // 参照先なし → 除去
+            { id: 'e3' }, // showId 欠落 → 除去
+            42,
+          ],
+        },
+        { id: 'sl2', name: 'Empty', entries: [{ id: 'e4', showId: 'ghost' }] },
+      ],
+    });
+    expect(p.setlists).toHaveLength(2);
+    expect(p.setlists?.[0].entries).toEqual([{ id: 'e1', showId: 's1' }]);
+    // 全エントリがダングリングでも Setlist 自体は残す（空になるだけ）。
+    expect(p.setlists?.[1].entries).toEqual([]);
+  });
+
+  it('omits setlists when none are present', () => {
+    const p = migrateProject({ shows: [] });
+    expect(p.setlists).toBeUndefined();
   });
 });
 

@@ -13,6 +13,7 @@ import {
   FileMusic,
   Folder as FolderIcon,
   FolderOpen as FolderOpenIcon,
+  ListMusic,
   Plus,
   Upload,
 } from 'lucide-react';
@@ -29,10 +30,11 @@ import {
 } from '../projectFileOps';
 import type { Folder, Show } from '../../shared/types';
 
-/** 右クリックメニュー状態（画面座標）。Show 用とフォルダ用の判別共用体。 */
+/** 右クリックメニュー状態（画面座標）。Show / フォルダ / セットリスト用の判別共用体。 */
 type CtxMenu =
   | { kind: 'show'; id: string; name: string; folderId?: string; x: number; y: number }
-  | { kind: 'folder'; id: string; name: string; x: number; y: number };
+  | { kind: 'folder'; id: string; name: string; x: number; y: number }
+  | { kind: 'setlist'; id: string; name: string; x: number; y: number };
 
 /** name でソート（manual は元の順序を保持）。 */
 function sortByName<T extends { name: string }>(list: T[], sort: ShowSort): T[] {
@@ -47,6 +49,11 @@ export function ProjectSidebar() {
   const selectedShowId = useDmxStore((s) => s.selectedShowId);
   const activeShowId = useDmxStore((s) => s.activeShowId);
   const selectShow = useDmxStore((s) => s.selectShow);
+  const activeSetlistId = useDmxStore((s) => s.activeSetlistId);
+  const selectedSetlistId = useDmxStore((s) => s.selectedSetlistId);
+  const selectSetlist = useDmxStore((s) => s.selectSetlist);
+  const loadSetlist = useDmxStore((s) => s.loadSetlist);
+  const unloadSetlist = useDmxStore((s) => s.unloadSetlist);
   const mode = useDmxStore((s) => s.mode);
   const projectPath = useDmxStore((s) => s.projectPath);
   const collapsed = useDmxStore((s) => s.sidebarCollapsed);
@@ -138,6 +145,23 @@ export function ProjectSidebar() {
     setMenu(null);
   };
 
+  const deleteSetlist = () => {
+    if (menu?.kind !== 'setlist') return;
+    const label = menu.name?.trim() || 'このセットリスト';
+    if (window.confirm(`セットリスト「${label}」を削除しますか？（元に戻す: Ctrl+Z）`)) {
+      window.dmx.deleteSetlist(menu.id);
+    }
+    setMenu(null);
+  };
+
+  const addShowToSetlist = (setlistId: string) => {
+    if (menu?.kind !== 'show') return;
+    window.dmx.addToSetlist(setlistId, menu.id);
+    setMenu(null);
+  };
+
+  const setlists = project?.setlists ?? [];
+
   // 折りたたみ時は縦帯＋展開ボタンのみ。
   if (collapsed) {
     return (
@@ -163,7 +187,10 @@ export function ProjectSidebar() {
   const renderShow = (show: Show, indented: boolean) => {
     const selected = show.id === selectedShowId;
     const active = show.id === activeShowId;
-    const canLoad = show.id !== activeShowId;
+    // セットリスト読込中は、どの Show をロードするかはマスター GO が制御するため
+    // サイドバーからの読込／解放を禁止する。
+    const setlistActive = activeSetlistId !== null;
+    const canLoad = show.id !== activeShowId && !setlistActive;
     return (
       <div
         key={show.id}
@@ -186,9 +213,17 @@ export function ProjectSidebar() {
             : undefined
         }
         className={`group flex items-center gap-1 rounded px-1.5 py-1 ${indented ? 'pl-4' : ''} ${
-          selected ? 'bg-sky-600/30 ring-1 ring-sky-600/50' : 'hover:bg-neutral-800'
+          active
+            ? 'bg-amber-500/15 ring-1 ring-amber-500/50'
+            : selected
+              ? 'bg-sky-600/30 ring-1 ring-sky-600/50'
+              : 'hover:bg-neutral-800'
         }`}
-        title="クリックで選択 / ダブルクリックで読込（右クリックでメニュー）"
+        title={
+          setlistActive
+            ? 'セットリスト読込中は Show の読込はマスター GO が制御します（右クリックでメニュー）'
+            : 'クリックで選択 / ダブルクリックで読込（右クリックでメニュー）'
+        }
       >
         <FileMusic size={14} className={active ? 'shrink-0 text-amber-400' : 'shrink-0 text-neutral-500'} />
         {editable ? (
@@ -204,9 +239,10 @@ export function ProjectSidebar() {
           <span className="min-w-0 flex-1 truncate text-neutral-200">{show.name}</span>
         )}
 
-        {/* 行内アクション（ホバー / アクティブ時に表示） */}
+        {/* 行内アクション（ホバー / アクティブ時に表示）。
+            セットリスト読込中は読込／解放をマスター GO に委ねるため出さない。 */}
         <div className="flex shrink-0 items-center gap-0.5">
-          {active ? (
+          {setlistActive ? null : active ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -222,6 +258,76 @@ export function ProjectSidebar() {
               onClick={(e) => {
                 e.stopPropagation();
                 window.dmx.loadShow(show.id);
+              }}
+              className="rounded bg-sky-700 px-1.5 py-0.5 text-[10px] text-white opacity-0 hover:bg-sky-600 group-hover:opacity-100"
+              title="読込"
+            >
+              読込
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  /** セットリスト行（読込／解放・リネーム・右クリック削除）。Show 行と同じ体裁。 */
+  const renderSetlist = (setlist: { id: string; name: string; entries: unknown[] }) => {
+    const selected = setlist.id === selectedSetlistId;
+    const active = setlist.id === activeSetlistId;
+    return (
+      <div
+        key={setlist.id}
+        onClick={() => selectSetlist(setlist.id)}
+        onDoubleClick={() => loadSetlist(setlist.id)}
+        onContextMenu={
+          editable
+            ? (e) => {
+                e.preventDefault();
+                selectSetlist(setlist.id);
+                setMenu({ kind: 'setlist', id: setlist.id, name: setlist.name, x: e.clientX, y: e.clientY });
+              }
+            : undefined
+        }
+        className={`group flex items-center gap-1 rounded px-1.5 py-1 ${
+          active
+            ? 'bg-amber-500/15 ring-1 ring-amber-500/50'
+            : selected
+              ? 'bg-sky-600/30 ring-1 ring-sky-600/50'
+              : 'hover:bg-neutral-800'
+        }`}
+        title="クリックで選択 / ダブルクリックで読込（右クリックでメニュー）"
+      >
+        <ListMusic size={14} className={active ? 'shrink-0 text-amber-400' : 'shrink-0 text-neutral-500'} />
+        {editable ? (
+          <InlineText
+            value={setlist.name}
+            placeholder="セットリスト名"
+            editable
+            onCommit={(v) => window.dmx.renameSetlist(setlist.id, v)}
+            className="min-w-0 flex-1 truncate px-1 py-0.5 text-left text-neutral-200"
+            title="クリックで名前を編集"
+          />
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-neutral-200">{setlist.name}</span>
+        )}
+        <span className="shrink-0 text-[10px] text-neutral-600">{setlist.entries.length}</span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {active ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                unloadSetlist();
+              }}
+              className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-700"
+              title="解放"
+            >
+              解放
+            </button>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                loadSetlist(setlist.id);
               }}
               className="rounded bg-sky-700 px-1.5 py-0.5 text-[10px] text-white opacity-0 hover:bg-sky-600 group-hover:opacity-100"
               title="読込"
@@ -396,6 +502,26 @@ export function ProjectSidebar() {
             )}
           </div>
         )}
+
+        {/* セットリスト（Show を束ねる上位の再生リスト） */}
+        <div className="mt-3 flex items-center gap-1 px-1.5 text-[11px] font-semibold text-sky-400">
+          <ListMusic size={13} className="shrink-0" /> セットリスト
+        </div>
+        <div className="mt-0.5 space-y-0.5 pl-3">
+          {setlists.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-neutral-600">（セットリストなし）</div>
+          )}
+          {sortByName(setlists, showSort).map(renderSetlist)}
+          {editable && (
+            <button
+              onClick={() => window.dmx.createSetlist()}
+              className="mt-0.5 flex w-full items-center justify-center gap-1 rounded px-1.5 py-1 text-sky-300 hover:bg-neutral-800"
+              title="セットリストを追加"
+            >
+              <Plus size={12} /> セットリスト
+            </button>
+          )}
+        </div>
       </div>
 
       {/* フッタ: ロード状態 */}
@@ -443,6 +569,21 @@ export function ProjectSidebar() {
                 削除
               </button>
               <div className="my-1 border-t border-neutral-700" />
+              <div className="px-3 py-0.5 text-[10px] text-neutral-500">セットリストに追加</div>
+              {setlists.length === 0 ? (
+                <div className="px-3 py-1 text-[11px] text-neutral-600">（セットリストなし）</div>
+              ) : (
+                setlists.map((sl) => (
+                  <button
+                    key={sl.id}
+                    onClick={() => addShowToSetlist(sl.id)}
+                    className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-700"
+                  >
+                    <ListMusic size={13} className="shrink-0" /> {sl.name}
+                  </button>
+                ))
+              )}
+              <div className="my-1 border-t border-neutral-700" />
               <div className="px-3 py-0.5 text-[10px] text-neutral-500">フォルダへ移動</div>
               {menu.folderId && (
                 <button
@@ -466,6 +607,13 @@ export function ProjectSidebar() {
                 </button>
               ))}
             </>
+          ) : menu.kind === 'setlist' ? (
+            <button
+              onClick={deleteSetlist}
+              className="block w-full px-3 py-1.5 text-left text-red-300 hover:bg-red-600/30"
+            >
+              削除
+            </button>
           ) : (
             <button
               onClick={deleteFolder}

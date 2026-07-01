@@ -135,6 +135,14 @@ interface DmxState {
   playback: PlaybackStatus | null;
   activeShowId: string | null;
   selectedShowId: string | null;
+  /** 読込中（アクティブ）のセットリスト id（未読込は null・非永続）。読込中は中央パネルを切替。 */
+  activeSetlistId: string | null;
+  /** サイドバーで選択中のセットリスト id（編集フォーカス・非永続）。 */
+  selectedSetlistId: string | null;
+  /** アクティブセットリストの現在エントリ index（未開始は -1・非永続）。 */
+  setlistIndex: number;
+  /** マスター GO で loadShow 済みだが音声準備待ちの showId（準備完了で再生開始・非永続）。 */
+  pendingPlayShowId: string | null;
   /** EDIT モードで編集対象に選択中の Action id（未選択は null）。フェーダーがこの look を編集。 */
   editingActionId: string | null;
   transport: TransportState;
@@ -184,6 +192,20 @@ interface DmxState {
   setProject: (project: Project) => void;
   setEngineState: (state: EngineStateSnapshot) => void;
   selectShow: (showId: string) => void;
+  /** サイドバーでセットリストを選択する（編集フォーカス）。 */
+  selectSetlist: (setlistId: string | null) => void;
+  /** セットリストを読込む（中央パネルをセットリスト表示へ切替・頭出し前）。 */
+  loadSetlist: (setlistId: string) => void;
+  /** セットリストを解放する（子 Show もアンロードし中央を戻す）。 */
+  unloadSetlist: () => void;
+  /** マスター GO: 次のエントリの Show をロードし、その Timeline を頭から再生する。末尾は no-op。 */
+  setlistGo: () => void;
+  /** 任意エントリへジャンプして再生（行クリック）。 */
+  setlistGoTo: (index: number) => void;
+  /** 頭出し前（未開始）へ戻す。読込は維持。 */
+  setlistReset: () => void;
+  /** マスター GO 後、対象 Show の音声準備が整ったら Timeline を頭から再生する（私用・冪等）。 */
+  resolvePendingPlay: () => void;
   setMode: (mode: EngineMode) => void;
   setMasterLevel: (level: number) => void;
   setBlackout: (on: boolean) => void;
@@ -284,6 +306,10 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   playback: null,
   activeShowId: null,
   selectedShowId: null,
+  activeSetlistId: null,
+  selectedSetlistId: null,
+  setlistIndex: -1,
+  pendingPlayShowId: null,
   editingActionId: null,
   transport: { playing: false, playheadMs: 0, durationMs: DEFAULT_DURATION_MS },
   audioDurationMs: 0,
@@ -376,11 +402,20 @@ export const useDmxStore = create<DmxState>((set, get) => ({
           ? fadersFromCue(selectedCue.values, s.faders, s.busking)
           : project.faders.slice();
 
+      // アクティブ/選択中のセットリストが削除された（or 別 Project 読込）なら選択を落とす。
+      const activeSetlistExists = project.setlists?.some((sl) => sl.id === s.activeSetlistId) ?? false;
+      const selectedSetlistExists =
+        project.setlists?.some((sl) => sl.id === s.selectedSetlistId) ?? false;
+
       return {
         project,
         faders,
         artnet: project.settings.artnet,
         selectedShowId,
+        selectedSetlistId: selectedSetlistExists ? s.selectedSetlistId : null,
+        ...(s.activeSetlistId && !activeSetlistExists
+          ? { activeSetlistId: null, setlistIndex: -1, pendingPlayShowId: null }
+          : null),
         transport: {
           ...s.transport,
           durationMs: durationForProject(project, s.activeShowId, s.audioDurationMs),
@@ -407,9 +442,70 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     });
     // アクティブ Show が変わったら追加トラック音源を切り替える。
     if (prevShowId !== state.activeShowId) get().syncShowAudio();
+    // マスター GO の遅延再生: 対象 Show がアクティブになり、かつメイン音声が
+    // 変わらない（= 非同期デコード待ちが起きない）なら即座に再生開始する。
+    // 音声が変わる場合は loadAudio / unloadAudio の完了で resolvePendingPlay が呼ばれる。
+    const s = get();
+    if (s.pendingPlayShowId && s.pendingPlayShowId === state.activeShowId) {
+      const prevPath =
+        s.project?.shows.find((sh) => sh.id === prevShowId)?.audio?.filePath ?? null;
+      const newPath =
+        s.project?.shows.find((sh) => sh.id === state.activeShowId)?.audio?.filePath ?? null;
+      if (newPath === prevPath) get().resolvePendingPlay();
+    }
   },
 
   selectShow: (showId) => set({ selectedShowId: showId }),
+
+  selectSetlist: (setlistId) => set({ selectedSetlistId: setlistId }),
+
+  loadSetlist: (setlistId) => {
+    const s = get();
+    if (s.activeShowId) window.dmx.unloadShow();
+    s.transportStop();
+    set({ activeSetlistId: setlistId, setlistIndex: -1, pendingPlayShowId: null });
+  },
+
+  unloadSetlist: () => {
+    const s = get();
+    if (s.activeShowId) window.dmx.unloadShow();
+    s.transportStop();
+    set({ activeSetlistId: null, setlistIndex: -1, pendingPlayShowId: null });
+  },
+
+  setlistGo: () => {
+    const s = get();
+    const setlist = s.project?.setlists?.find((sl) => sl.id === s.activeSetlistId);
+    if (!setlist) return;
+    const next = s.setlistIndex + 1;
+    if (next >= setlist.entries.length) return; // 末尾は no-op（手動のみ・ループなし）
+    get().setlistGoTo(next);
+  },
+
+  setlistGoTo: (index) => {
+    const s = get();
+    const setlist = s.project?.setlists?.find((sl) => sl.id === s.activeSetlistId);
+    if (!setlist) return;
+    if (index < 0 || index >= setlist.entries.length) return;
+    const showId = setlist.entries[index].showId;
+    if (s.mode !== 'show') s.setMode('show'); // 本番再生として SHOW モードへ
+    window.dmx.loadShow(showId); // エンジンでアクティブ化（setEngineState で戻る）
+    s.transportStop(); // playhead 0・跨ぎ基準リセット
+    set({ setlistIndex: index, pendingPlayShowId: showId });
+  },
+
+  setlistReset: () => {
+    get().transportStop();
+    set({ setlistIndex: -1, pendingPlayShowId: null });
+  },
+
+  resolvePendingPlay: () => {
+    const s = get();
+    if (!s.pendingPlayShowId || s.pendingPlayShowId !== s.activeShowId) return;
+    set({ pendingPlayShowId: null });
+    s.transportSeek(0);
+    s.transportPlay();
+  },
 
   setMode: (mode) =>
     set(() => {
@@ -573,6 +669,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
         const bus = ensureBus(mainGainEntry.deviceId);
         mainSource = scheduleSource(mainBuffer, bus, mainGainEntry.gain, 0, currentPositionMs() / 1000);
       }
+      // マスター GO の遅延再生: 新 Show のメイン音声デコードが整ったので再生開始。
+      get().resolvePendingPlay();
     }).catch(() => {});
   },
 
@@ -589,6 +687,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
           : DEFAULT_DURATION_MS,
       },
     }));
+    // マスター GO の遅延再生: メイン音声なしの Show はここで再生開始（クロック駆動）。
+    get().resolvePendingPlay();
   },
 
   reportPlayhead: (absMs) => {

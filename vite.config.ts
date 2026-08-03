@@ -15,6 +15,15 @@ export default defineConfig({
       main: {
         // -> dist-electron/main.js（ESM。package.json type:module 準拠）
         entry: { main: 'src/main/index.ts' },
+        vite: {
+          build: {
+            rolldownOptions: {
+              // serialport はネイティブモジュール（.node）なのでバンドルできない。
+              // 実行時に node_modules から解決させる（electron-builder が同梱する）。
+              external: ['serialport'],
+            },
+          },
+        },
       },
       preload: {
         // -> dist-electron/preload.cjs（CommonJS。contextIsolation 下の preload）

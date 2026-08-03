@@ -25,11 +25,18 @@ import {
   type FixturePatch,
   type MissingFile,
   type RemoteState,
+  type SerialPortInfo,
   type SetFaderPayload,
   type UiState,
 } from '../shared/ipc';
 import { RemoteServer } from './remoteServer';
-import { type ArtnetSettings, type Show, defaultArtnetSettings } from '../shared/types';
+import { OpenDmxDriver, listSerialPorts } from './openDmx';
+import {
+  type ArtnetSettings,
+  type OpenDmxSettings,
+  type Show,
+  defaultArtnetSettings,
+} from '../shared/types';
 import {
   deserializeProject,
   deserializeShow,
@@ -75,6 +82,8 @@ export class EngineHost {
   private readonly engine: Engine;
   private readonly socket: dgram.Socket;
   private artnet: ArtnetSettings;
+  /** OpenDMX(USB-DMX) の送出ドライバ。Art-Net とは独立に動く。 */
+  private readonly openDmxDriver: OpenDmxDriver;
 
   /** イベント配信先（メインウィンドウ + 別ウィンドウのカラーピッカー等）。 */
   private clients = new Set<WebContents>();
@@ -110,15 +119,23 @@ export class EngineHost {
       }
     });
 
+    // OpenDMX の接続状態は Driver が真実。Engine へ流し込んで state に相乗りさせる。
+    this.openDmxDriver = new OpenDmxDriver({
+      onStatus: (status) => this.engine.setOpenDmxStatus(status),
+    });
+
     this.engine = new Engine({
       artnet: this.artnet,
       send: (packet) => this.sendPacket(packet),
+      sendDmx: (channels) => this.openDmxDriver.setFrame(channels),
     });
 
     this.engine.onFrame((frame) => this.forwardFrame(frame));
     this.engine.onState((state) => {
       // 送信先 IP 等は Engine 側が真実（loadProject で変わりうる）。常に追従。
       this.artnet = state.artnet;
+      // Project 読込 / Undo でもポート設定が変わりうるので、常に Driver へ反映する。
+      this.openDmxDriver.apply(state.openDmx);
       this.broadcast(Evt.engineState, state);
       this.engineStateListener?.(state);
     });
@@ -218,6 +235,8 @@ export class EngineHost {
 
   start(): void {
     this.engine.start();
+    // 起動時点の Project 設定で OpenDMX を接続する（以降は onState 経由で追従）。
+    this.openDmxDriver.apply(this.engine.getOpenDmxSettings());
     if (this.autosaveTimer === null) {
       this.autosaveTimer = setInterval(() => void this.autosaveBackup(), AUTOSAVE_INTERVAL_MS);
     }
@@ -229,6 +248,7 @@ export class EngineHost {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
     }
+    void this.openDmxDriver.stop();
     void this.remoteServer.close();
     try {
       this.socket.close();
@@ -244,6 +264,10 @@ export class EngineHost {
     ipcMain.on(Cmd.updateArtnetSettings, (_e, s: ArtnetSettings) =>
       this.engine.updateArtnetSettings(s),
     );
+    ipcMain.on(Cmd.updateOpenDmxSettings, (_e, s: OpenDmxSettings) =>
+      this.engine.updateOpenDmxSettings(s),
+    );
+    ipcMain.handle(Cmd.listSerialPorts, () => this.listSerialPorts());
     ipcMain.handle(Cmd.getEngineState, () => this.engine.getState());
     ipcMain.handle(Cmd.getProject, () => this.engine.getProject());
     ipcMain.on(Cmd.setMode, (_e, mode: 'edit' | 'show') => this.engine.setMode(mode));
@@ -667,6 +691,20 @@ export class EngineHost {
       return { ok: true, data: ab };
     } catch (e) {
       return { ok: false, error: String(e) };
+    }
+  }
+
+  /**
+   * OpenDMX のポート候補を列挙する。
+   * serialport が読み込めない環境（ネイティブモジュール欠落）でも UI を壊さないよう、
+   * 失敗時は空配列を返す（接続を試みたときに status 側でエラーが出る）。
+   */
+  private async listSerialPorts(): Promise<SerialPortInfo[]> {
+    try {
+      return await listSerialPorts();
+    } catch (e) {
+      console.error('[opendmx] port list failed:', e);
+      return [];
     }
   }
 

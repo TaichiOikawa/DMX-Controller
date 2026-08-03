@@ -20,14 +20,9 @@
     "dist:mac": "yarn build && electron-builder --mac",
     "dist:linux": "yarn build && electron-builder --linux"
   },
+  "//dependencies": "配布物へ実体を同梱する必要があるものだけを置く。serialport はネイティブモジュール（.node）でバンドルできないためここ。Vite がバンドルする react 等は devDependencies に置き、electron-builder がパッケージから除外できるようにしている。",
   "dependencies": {
-    "lucide-react": "^1.21.0",
-    "qrcode": "^1.5.4",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "serialport": "^13.0.0",
-    "wavesurfer.js": "^7.12.8",
-    "zustand": "^5.0.14"
+    "serialport": "^13.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
@@ -47,11 +42,17 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "lucide-react": "^1.21.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
     "vite-plugin-electron": "^1.0.4",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "wavesurfer.js": "^7.12.8",
+    "zustand": "^5.0.14"
   }
 }

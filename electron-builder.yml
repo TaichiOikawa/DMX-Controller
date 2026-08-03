@@ -9,17 +9,26 @@ copyright: Copyright © 2026 TaichiOikawa
 #  - dist/          : renderer（Vite ビルド成果物。main.js が ../dist/index.html を読み込む）
 #  - dist-electron/ : main プロセス & preload（main.js, preload.cjs）
 #  - package.json   : main フィールド（dist-electron/main.js）解決に必要
-# renderer/main の依存はすべて Vite/Rolldown でバンドル済みのため node_modules の同梱は不要。
+#
+# renderer/main の依存は基本すべて Vite/Rolldown でバンドル済み。唯一の例外が
+# serialport（OpenDMX 出力）で、ネイティブモジュール（.node）はバンドルできないため
+# 実体を同梱する必要がある。
+#
+# そこで「同梱が必要なものだけ dependencies、バンドル済みのものは devDependencies」と
+# package.json 側で切り分けてある。electron-builder は devDependencies を自動で
+# 除外するので、node_modules からは serialport とその依存だけが入る。
 files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
-  # 依存はすべてバンドル済みのため node_modules は同梱しない（lucide-react 等の肥大を回避）。
-  - "!node_modules/**/*"
 
-# ソースの node_modules はバンドル済みのため取り込まない（成果物を小さく保つ）。
+# serialport の prebuild は N-API（ABI 非依存）なので、Electron 向けの再ビルドは不要。
 npmRebuild: false
 asar: true
+# ネイティブモジュールは asar 内から dlopen できないため展開して配置する。
+asarUnpack:
+  - "**/*.node"
+  - "node_modules/@serialport/bindings-cpp/**"
 
 directories:
   output: release

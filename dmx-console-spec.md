@@ -26,7 +26,7 @@ DMX512 を出力するステージ照明コンソールのデスクトップア�
 - **Electron + React + TypeScript**
 - ビルド: `electron-vite` 推奨（Vite ベースで main/preload/renderer を扱う）
 - 状態管理: Zustand 等（UI 側）。エンジン状態はエンジンが単独管理する
-- DMX 出力: **Art-Net**（UDP / Node `dgram`）。当面 **1 ユニバース = 512ch**
+- DMX 出力: **Art-Net**（UDP / Node `dgram`）と **OpenDMX**（USB シリアル / `serialport`）。当面 **1 ユニバース = 512ch**
 - パッケージング: `electron-builder` → NSIS インストーラ or ポータブル `.exe`
 - 推奨ライブラリ（実装時に最新版・メンテ状況を確認すること）: Art-Net 送信は自前実装でも可（ArtDMX は単純なため）
 
@@ -52,12 +52,30 @@ DMX は一定レートで出し続ける必要があり、レンダラ（React�
 
 ---
 
-## 4. DMX / Art-Net
+## 4. DMX 出力（Art-Net / OpenDMX）
 
 - 当面 **1 ユニバース = 512ch**（将来の多ユニバース拡張を型で考慮しておく）
-- ArtDMX パケットを ~40Hz で送出。変化が無くてもキープアライブとして送り続けてよい
 - 値域: 各 ch `0–255`
+- 出力ループは ~40Hz。変化が無くてもキープアライブとして送り続けてよい
+- **2 系統は独立に ON/OFF でき、同時出力もできる**（Art-Net でビジュアライザ、OpenDMX で実機、など）
+
+### 4.1 Art-Net
+
+- ArtDMX パケットを UDP 6454 へ送出
 - **ハード無しでのテスト**: Art-Net ビジュアライザ / ソフトノードで受信確認できるようにする
+
+### 4.2 OpenDMX（Enttec Open DMX USB 等）
+
+FTDI ベースの I/F はマイコンを持たないため、DMX の物理フレームをホストが全部組み立てる。
+
+- シリアル設定: **250kbps / 8bit / パリティなし / ストップ 2bit**
+- 1 フレーム: `BREAK(>=92µs)` → `MAB(>=12µs)` → `スタートコード(0x00)` → `512ch`
+- BREAK は `serialport` の `set({ brk })` トグルで生成する。µs 単位の待ちは作れないが、
+  BREAK/MAB は「最小長」の規定なので長い分には問題ない
+- **送出レートの物理上限は約 40Hz**（513 バイト × 11bit / 250kbps ≒ 22.6ms/フレーム）。
+  エンジンのクロックと送出は分離し、送出側は常に「最新の 1 枚」を出す（積み残しを作らない）
+- 抜線・オープン失敗はエラー状態として UI に出し、一定間隔で自動再接続する
+- ポート名はマシン固有のため、Project に保存はするが可搬ではない
 
 ---
 
@@ -156,11 +174,16 @@ interface Project {
 interface ProjectSettings {
   universeCount: number;     // 当面 1
   artnet: {
+    enabled: boolean;        // Art-Net(UDP) 送出の有効/無効
     targetIp: string;        // 送信先ノード or ブロードキャスト
     universe: number;        // Art-Net universe
     net: number;
     subnet: number;
-    refreshRateHz: number;   // ~40
+    refreshRateHz: number;   // ~40（出力ループ全体のレート。OpenDMX にも効く）
+  };
+  openDmx: {                 // OpenDMX(USB-DMX)。Art-Net と同時に出せる
+    enabled: boolean;
+    portPath: string;        // 'COM3' / '/dev/tty.usbserial-XXXX'。空 = 未選択
   };
   releaseFadeMs: number;     // リリース時の戻りフェード（デフォルト 0 = 即時 / §11-①）
 }
@@ -300,7 +323,7 @@ interface EngineRuntime {
 
 ## 13. 確定事項サマリ
 
-- 出力: Art-Net、1 ユニバース = 512ch
+- 出力: Art-Net / OpenDMX（独立に ON/OFF・同時出力可）、1 ユニバース = 512ch
 - 制御単位: チャンネル単位（フィクスチャ/パッチ概念なし）、フェーダー 1 本 = 1ch
 - GO: 全グループ一斉、グループ間は HTP 合成
 - CUE: 操作対象 ch のみ保持、非指定 ch はトラッキング

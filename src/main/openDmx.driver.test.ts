@@ -119,6 +119,21 @@ describe('OpenDmxDriver: 送出プロトコル', () => {
   });
 });
 
+describe('OpenDmxDriver: 状態通知', () => {
+  it('実測 Hz は onStatus で通知せず、getStatus() から読める', async () => {
+    // 毎秒何度も変わる値を push すると、512 要素を含む state 配信が IPC を溢れさせる。
+    // 通知は接続/切断/エラーの遷移だけに絞る契約。
+    const { driver, statuses } = makeDriver();
+    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    await wait(300);
+
+    expect(driver.getStatus().measuredHz).toBeGreaterThan(0);
+    // 送出が何フレームも進んでいるのに、通知は opening → open の 2 回だけ。
+    expect(stateSeq(statuses)).toEqual(['opening', 'open']);
+    await driver.stop();
+  });
+});
+
 describe('OpenDmxDriver: 接続ライフサイクル', () => {
   it('無効化するとポートを閉じ、状態を disabled にする', async () => {
     const { driver, statuses, ports } = makeDriver();

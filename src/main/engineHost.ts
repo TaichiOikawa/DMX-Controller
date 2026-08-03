@@ -120,8 +120,13 @@ export class EngineHost {
     });
 
     // OpenDMX の接続状態は Driver が真実。Engine へ流し込んで state に相乗りさせる。
+    // 接続/切断/エラーの遷移は待たせたくないので、ここだけ即時ブロードキャストする
+    // （実測 Hz の更新は forwardFrame の 250ms 周期で拾う）。
     this.openDmxDriver = new OpenDmxDriver({
-      onStatus: (status) => this.engine.setOpenDmxStatus(status),
+      onStatus: (status) => {
+        this.engine.setOpenDmxStatus(status);
+        this.broadcast(Evt.engineState, this.engine.getState());
+      },
     });
 
     this.engine = new Engine({
@@ -723,6 +728,8 @@ export class EngineHost {
 
     if (now - this.lastStateSentAt >= STATE_FORWARD_INTERVAL_MS) {
       this.lastStateSentAt = now;
+      // OpenDMX の実測 Hz はこの周期で拾う（毎フレーム配信すると IPC が溢れる）。
+      this.engine.setOpenDmxStatus(this.openDmxDriver.getStatus());
       this.broadcast(Evt.engineState, this.engine.getState());
     }
   }

@@ -1535,20 +1535,15 @@ export class Engine {
 
   /**
    * main の OpenDmxDriver から接続状態を受け取り、state スナップショットへ反映する。
-   * 変化が無ければ何もしない（250ms 周期の state 配信を無駄に増やさない）。
+   *
+   * ここでは state 配信を行わない。実測 Hz は毎秒何度も変わるため、配信のたびに
+   * 512 要素の busking 配列を含むスナップショットを流すと IPC が溢れる（§3）。
+   * 配信タイミングは呼び出し側（engineHost）が持つ:
+   *   - 接続/切断/エラーの遷移 → 即時ブロードキャスト
+   *   - 実測 Hz の更新        → 既存の 250ms 周期に相乗り
    */
   setOpenDmxStatus(status: OpenDmxStatus): void {
-    const prev = this.openDmxStatus;
-    if (
-      prev.state === status.state &&
-      prev.portPath === status.portPath &&
-      prev.error === status.error &&
-      prev.measuredHz === status.measuredHz
-    ) {
-      return;
-    }
     this.openDmxStatus = { ...status };
-    this.emitState();
   }
 
   getState(): EngineStateSnapshot {

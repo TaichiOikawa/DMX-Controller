@@ -348,18 +348,22 @@ export class OpenDmxDriver {
     await drain(port);
   }
 
-  /** 実測レート（直近 1 秒の送出回数）を更新し、変化があれば通知する。 */
+  /**
+   * 実測レート（直近 1 秒の送出回数）を更新する。
+   *
+   * 毎秒何度も変わる値なので onStatus では通知しない。getStatus() を
+   * 定期的に読む側（engineHost の 250ms 周期）に拾わせる。
+   */
   private recordSent(at: number): void {
     this.sentTimestamps.push(at);
     const cutoff = at - 1000;
     while (this.sentTimestamps.length > 0 && this.sentTimestamps[0] < cutoff) {
       this.sentTimestamps.shift();
     }
-    const hz = this.sentTimestamps.length;
-    if (hz === this.status.measuredHz) return;
-    this.setStatus({ ...this.status, measuredHz: hz });
+    this.status = { ...this.status, measuredHz: this.sentTimestamps.length };
   }
 
+  /** 接続状態の遷移（接続/切断/エラー）を記録し、即時に通知する。 */
   private setStatus(next: OpenDmxStatus): void {
     this.status = next;
     this.onStatus({ ...next });

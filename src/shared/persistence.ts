@@ -10,8 +10,10 @@ import {
   UNIVERSE_SIZE,
   createDefaultProject,
   defaultArtnetSettings,
+  defaultOpenDmxSettings,
   type ActionButton,
   type ArtnetSettings,
+  type OpenDmxSettings,
   type Cue,
   type Folder,
   type Group,
@@ -229,6 +231,7 @@ function normalizeSettings(raw: unknown): Project['settings'] {
   return {
     universeCount: clampInt(num(raw.universeCount, def.universeCount), 1, 8),
     artnet: normalizeArtnet(raw.artnet),
+    openDmx: normalizeOpenDmx(raw.openDmx),
     releaseFadeMs: Math.max(0, num(raw.releaseFadeMs, def.releaseFadeMs)),
   };
 }
@@ -237,11 +240,22 @@ function normalizeArtnet(raw: unknown): ArtnetSettings {
   const def = defaultArtnetSettings();
   if (!isObject(raw)) return def;
   return {
+    // enabled は後付けフィールド。旧ファイル（未定義）は「有効」として扱う。
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : def.enabled,
     targetIp: str(raw.targetIp, def.targetIp),
     universe: clampInt(num(raw.universe, def.universe), 0, 15),
     net: clampInt(num(raw.net, def.net), 0, 127),
     subnet: clampInt(num(raw.subnet, def.subnet), 0, 15),
     refreshRateHz: clampInt(num(raw.refreshRateHz, def.refreshRateHz), 1, 60),
+  };
+}
+
+function normalizeOpenDmx(raw: unknown): OpenDmxSettings {
+  const def = defaultOpenDmxSettings();
+  if (!isObject(raw)) return def;
+  return {
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : def.enabled,
+    portPath: str(raw.portPath, def.portPath),
   };
 }
 

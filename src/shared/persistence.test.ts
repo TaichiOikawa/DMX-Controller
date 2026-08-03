@@ -138,6 +138,36 @@ describe('migrateProject (tolerant loading)', () => {
     expect(p.shows).toEqual([]);
   });
 
+  it('treats a legacy project without output flags as Art-Net on / OpenDMX off', () => {
+    // enabled / openDmx は後付けフィールド。既存プロジェクトの挙動を変えてはいけない。
+    const p = migrateProject({
+      settings: { artnet: { targetIp: '10.0.0.5', universe: 3 } },
+    });
+    expect(p.settings.artnet.enabled).toBe(true);
+    expect(p.settings.artnet.targetIp).toBe('10.0.0.5');
+    expect(p.settings.openDmx).toEqual({ enabled: false, portPath: '' });
+  });
+
+  it('round-trips OpenDMX settings and honours an explicitly disabled Art-Net', () => {
+    const p = migrateProject({
+      settings: {
+        artnet: { enabled: false },
+        openDmx: { enabled: true, portPath: 'COM7' },
+      },
+    });
+    expect(p.settings.artnet.enabled).toBe(false);
+    expect(p.settings.openDmx).toEqual({ enabled: true, portPath: 'COM7' });
+
+    const reloaded = deserializeProject(serializeProject(p));
+    expect(reloaded.settings.artnet.enabled).toBe(false);
+    expect(reloaded.settings.openDmx).toEqual({ enabled: true, portPath: 'COM7' });
+  });
+
+  it('falls back to defaults for a malformed openDmx block', () => {
+    const p = migrateProject({ settings: { openDmx: { enabled: 'yes', portPath: 42 } } });
+    expect(p.settings.openDmx).toEqual({ enabled: false, portPath: '' });
+  });
+
   it('migrates legacy parallel groups[] into group entries', () => {
     const p = migrateProject({
       shows: [

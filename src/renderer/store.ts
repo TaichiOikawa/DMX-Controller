@@ -16,15 +16,18 @@ import type {
   DirtyState,
   EngineStateSnapshot,
   MissingFile,
+  OpenDmxStatus,
   PlaybackStatus,
   ShowFilePayload,
 } from '../shared/ipc';
 import {
   defaultArtnetSettings,
+  defaultOpenDmxSettings,
   UNIVERSE_SIZE,
   type ArtnetSettings,
   type AudioTrack,
   type EngineMode,
+  type OpenDmxSettings,
   type Project,
 } from '../shared/types';
 
@@ -107,6 +110,10 @@ interface DmxState {
   output: number[];
   busking: boolean[];
   artnet: ArtnetSettings;
+  /** OpenDMX(USB-DMX) 出力設定。 */
+  openDmx: OpenDmxSettings;
+  /** OpenDMX の接続状態（main の Driver 由来・読み取り専用）。 */
+  openDmxStatus: OpenDmxStatus;
   measuredHz: number;
   bank: number;
   /** フェーダーバンクを折りたたんでいるか（UI のみ）。 */
@@ -167,6 +174,7 @@ interface DmxState {
   setFader: (ch: number, value: number) => void;
   setOutput: (frame: number[]) => void;
   setArtnet: (settings: ArtnetSettings) => void;
+  setOpenDmx: (settings: OpenDmxSettings) => void;
   setBank: (bank: number) => void;
   /** フェーダーバンクの折りたたみを切り替える（Show 読込時は現モードへ永続化）。 */
   toggleFadersCollapsed: () => void;
@@ -303,6 +311,8 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   output: new Array(UNIVERSE_SIZE).fill(0),
   busking: new Array(UNIVERSE_SIZE).fill(false),
   artnet: defaultArtnetSettings(),
+  openDmx: defaultOpenDmxSettings(),
+  openDmxStatus: { state: 'disabled', portPath: null, measuredHz: 0 },
   measuredHz: 0,
   bank: 0,
   fadersCollapsed: false,
@@ -358,6 +368,12 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     set(() => {
       window.dmx.updateArtnetSettings(settings);
       return { artnet: settings };
+    }),
+
+  setOpenDmx: (settings) =>
+    set(() => {
+      window.dmx.updateOpenDmxSettings(settings);
+      return { openDmx: settings };
     }),
 
   setBank: (bank) => set({ bank }),
@@ -426,6 +442,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
         project,
         faders,
         artnet: project.settings.artnet,
+        openDmx: project.settings.openDmx,
         selectedShowId,
         selectedSetlistId: selectedSetlistExists ? s.selectedSetlistId : null,
         ...(s.activeSetlistId && !activeSetlistExists
@@ -445,6 +462,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     const prevShowId = get().activeShowId;
     set({
       measuredHz: state.measuredHz,
+      openDmxStatus: state.openDmxStatus,
       playback: state.playback,
       activeShowId: state.activeShowId,
       editingActionId: state.editingActionId,

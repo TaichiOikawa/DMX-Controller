@@ -25,6 +25,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "serialport": "^13.0.0",
     "wavesurfer.js": "^7.12.8",
     "zustand": "^5.0.14"
   },

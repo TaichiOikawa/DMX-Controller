@@ -18,9 +18,10 @@ import {
   type EngineStateSnapshot,
   type MenuAction,
   type RemoteCommand,
+  type SerialPortInfo,
   type UiState,
 } from '../shared/ipc';
-import type { ArtnetSettings, Project } from '../shared/types';
+import type { ArtnetSettings, OpenDmxSettings, Project } from '../shared/types';
 
 /** Evt 購読の共通ヘルパ。解除関数を返す。 */
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -36,6 +37,12 @@ const api: DmxBridge = {
   },
   updateArtnetSettings(settings: ArtnetSettings) {
     ipcRenderer.send(Cmd.updateArtnetSettings, settings);
+  },
+  updateOpenDmxSettings(settings: OpenDmxSettings) {
+    ipcRenderer.send(Cmd.updateOpenDmxSettings, settings);
+  },
+  listSerialPorts() {
+    return ipcRenderer.invoke(Cmd.listSerialPorts) as Promise<SerialPortInfo[]>;
   },
   getEngineState() {
     return ipcRenderer.invoke(Cmd.getEngineState) as Promise<EngineStateSnapshot>;

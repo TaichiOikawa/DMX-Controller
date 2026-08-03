@@ -14,13 +14,24 @@
  * 予約（後続）: releaseCapture / action* / timeline* / reportAudioPlayhead
  */
 
-import type { ArtnetSettings, Cue, EngineMode, Project, Show } from './types';
+import type {
+  ArtnetSettings,
+  Cue,
+  EngineMode,
+  OpenDmxSettings,
+  Project,
+  Show,
+} from './types';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
   // --- フェーダー / 設定 ---
   setFader: 'cmd:setFader',
   updateArtnetSettings: 'cmd:updateArtnetSettings',
+  /** OpenDMX(USB-DMX) 設定の更新。ポート変更/有効化で main が再接続する。 */
+  updateOpenDmxSettings: 'cmd:updateOpenDmxSettings',
+  /** 接続可能なシリアルポートの一覧を取得する（OpenDMX のポート選択用）。 */
+  listSerialPorts: 'cmd:listSerialPorts',
   getEngineState: 'cmd:getEngineState',
   getProject: 'cmd:getProject',
   setMode: 'cmd:setMode',
@@ -387,12 +398,47 @@ export interface PlaybackStatus {
   entryCount: number;
 }
 
+/** 選択候補として UI に出すシリアルポート 1 件（listSerialPorts の戻り）。 */
+export interface SerialPortInfo {
+  /** ポートのパス（Windows: `COM3` / macOS: `/dev/tty.usbserial-XXXX`）。 */
+  path: string;
+  /** OS が返す表示名（Windows のみ返ることが多い）。 */
+  friendlyName?: string;
+  manufacturer?: string;
+  vendorId?: string;
+  productId?: string;
+  /** FTDI(VID 0403) 等、OpenDMX I/F として尤もらしいポートか。UI の並べ替えに使う。 */
+  likelyDmx: boolean;
+}
+
+/** OpenDMX 接続の実行時状態。設定（OpenDmxSettings）とは別で、非永続。 */
+export interface OpenDmxStatus {
+  /**
+   * - `disabled`: 設定で無効
+   * - `closed`  : 有効だがポート未選択／切断済み
+   * - `opening` : オープン試行中
+   * - `open`    : 送出中
+   * - `error`   : オープン失敗 or 送出中に切断（`error` に理由）
+   */
+  state: 'disabled' | 'closed' | 'opening' | 'open' | 'error';
+  /** 実際に開いている（開こうとした）ポート。未選択は null。 */
+  portPath: string | null;
+  /** state==='error' のときの理由（UI 表示用）。 */
+  error?: string;
+  /** 実測のフレーム送出レート（Hz）。診断用。0 は未送出。 */
+  measuredHz: number;
+}
+
 /** 可視化用に間引かれた状態スナップショット（§9 `state`）。 */
 export interface EngineStateSnapshot {
   activeShowId: string | null;
   /** 512: busking（SHOW モードのライブ上書き）中フラグ */
   busking: boolean[];
   artnet: ArtnetSettings;
+  /** OpenDMX 出力設定（Project 由来）。 */
+  openDmx: OpenDmxSettings;
+  /** OpenDMX 接続の実行時状態。Engine ではなく main の Driver が真実。 */
+  openDmxStatus: OpenDmxStatus;
   /** 実際の送出レート計測値（Hz）。診断用。 */
   measuredHz: number;
   /** 操作モード（'edit' / 'show'）。 */
@@ -419,6 +465,10 @@ export interface DmxBridge {
   // フェーダー / 設定
   setFader(ch: number, value: number): void;
   updateArtnetSettings(settings: ArtnetSettings): void;
+  /** OpenDMX 設定を更新する（main が必要に応じてポートを開き直す）。 */
+  updateOpenDmxSettings(settings: OpenDmxSettings): void;
+  /** 接続可能なシリアルポートを列挙する（OpenDMX らしいポートが先頭）。 */
+  listSerialPorts(): Promise<SerialPortInfo[]>;
   getEngineState(): Promise<EngineStateSnapshot>;
   getProject(): Promise<Project>;
   setMode(mode: EngineMode): void;

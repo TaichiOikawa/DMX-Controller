@@ -28,6 +28,7 @@ import {
   type EngineMode,
   type EngineRuntime,
   type Group,
+  type OpenDmxSettings,
   type Project,
   type SequenceEntry,
   type Show,
@@ -63,11 +64,17 @@ import type {
   EngineStateSnapshot,
   FixtureInit,
   FixturePatch,
+  OpenDmxStatus,
 } from '../shared/ipc';
 
 export interface EngineOptions {
   /** 符号化済み ArtDMX パケットの送出先（UDP 等）。注入する。 */
   send: (packet: Buffer) => void;
+  /**
+   * 生の 512ch フレームの送出先（OpenDMX 等、Art-Net 以外の物理出力）。
+   * 毎 tick 呼ばれ、渡す配列は Engine が使い回すので受け手は即座に読むかコピーする。
+   */
+  sendDmx?: (channels: readonly number[]) => void;
   artnet?: ArtnetSettings;
   setTimeoutFn?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimeoutFn?: (handle: ReturnType<typeof setTimeout>) => void;
@@ -80,8 +87,10 @@ type ProjectListener = (project: Project) => void;
 
 export class Engine {
   private readonly send: (packet: Buffer) => void;
+  private readonly sendDmx: ((channels: readonly number[]) => void) | null;
   private readonly nowFn: () => number;
   private artnet: ArtnetSettings;
+  private openDmx: OpenDmxSettings;
   private clock: Clock;
 
   private project: Project;
@@ -95,6 +104,16 @@ export class Engine {
 
   private tickTimestamps: number[] = [];
   private measuredHz = 0;
+
+  /**
+   * OpenDMX 接続の実行時状態。真実は main の OpenDmxDriver 側にあり、
+   * Engine はそれを state スナップショットへ中継するだけの入れ物として持つ。
+   */
+  private openDmxStatus: OpenDmxStatus = {
+    state: 'disabled',
+    portPath: null,
+    measuredHz: 0,
+  };
 
   /** Timeline: 直近に受け取った playhead（ms）。跨ぎ判定の基準。 */
   private lastPlayheadMs = 0;
@@ -111,9 +130,11 @@ export class Engine {
 
   constructor(opts: EngineOptions) {
     this.send = opts.send;
+    this.sendDmx = opts.sendDmx ?? null;
     this.nowFn = opts.nowFn ?? (() => Date.now());
     this.project = createDefaultProject();
     this.artnet = opts.artnet ?? { ...this.project.settings.artnet };
+    this.openDmx = { ...this.project.settings.openDmx };
 
     this.runtime = {
       activeShowId: null,
@@ -160,6 +181,7 @@ export class Engine {
     this.project = project;
     this.runtime.faderLive = project.faders.slice();
     this.applyArtnet(project.settings.artnet);
+    this.openDmx = { ...project.settings.openDmx };
     this.unloadShow();
     // 別ドキュメントを開いた／新規にしたら Undo 履歴はリセットする。
     this.undoStack = [];
@@ -177,6 +199,7 @@ export class Engine {
   getProject(): Project {
     this.project.faders = this.runtime.faderLive.slice();
     this.project.settings.artnet = { ...this.artnet };
+    this.project.settings.openDmx = { ...this.openDmx };
     return this.project;
   }
 
@@ -221,6 +244,7 @@ export class Engine {
     this.project = deserializeProject(json);
     this.runtime.faderLive = this.project.faders.slice();
     this.applyArtnet(this.project.settings.artnet);
+    this.openDmx = { ...this.project.settings.openDmx };
     const showId = this.runtime.activeShowId;
     if (showId) {
       this.activeShow = this.project.shows.find((s) => s.id === showId) ?? null;
@@ -367,6 +391,17 @@ export class Engine {
   updateArtnetSettings(settings: ArtnetSettings): void {
     this.applyArtnet(settings);
     this.emitState();
+  }
+
+  /**
+   * OpenDMX 設定を更新する。実際のポート開閉は state を購読する main 側が行う。
+   * Project にも書き戻すので、保存すればポート選択は次回起動時に復元される。
+   */
+  updateOpenDmxSettings(settings: OpenDmxSettings): void {
+    this.openDmx = { enabled: !!settings.enabled, portPath: settings.portPath ?? '' };
+    this.project.settings.openDmx = { ...this.openDmx };
+    this.emitState();
+    this.notifyProject();
   }
 
   /** ch ラベルを設定（空文字で削除）。 */
@@ -1494,12 +1529,36 @@ export class Engine {
     return { ...this.artnet };
   }
 
+  getOpenDmxSettings(): OpenDmxSettings {
+    return { ...this.openDmx };
+  }
+
+  /**
+   * main の OpenDmxDriver から接続状態を受け取り、state スナップショットへ反映する。
+   * 変化が無ければ何もしない（250ms 周期の state 配信を無駄に増やさない）。
+   */
+  setOpenDmxStatus(status: OpenDmxStatus): void {
+    const prev = this.openDmxStatus;
+    if (
+      prev.state === status.state &&
+      prev.portPath === status.portPath &&
+      prev.error === status.error &&
+      prev.measuredHz === status.measuredHz
+    ) {
+      return;
+    }
+    this.openDmxStatus = { ...status };
+    this.emitState();
+  }
+
   getState(): EngineStateSnapshot {
     const show = this.runtime.show;
     return {
       activeShowId: this.runtime.activeShowId,
       busking: this.runtime.busking.slice(),
       artnet: { ...this.artnet },
+      openDmx: { ...this.openDmx },
+      openDmxStatus: { ...this.openDmxStatus },
       measuredHz: this.measuredHz,
       mode: this.runtime.mode,
       masterLevel: this.runtime.masterLevel,
@@ -1585,9 +1644,14 @@ export class Engine {
     resolveFrame(ctx, this.runtime.output);
     this.applyMaster(this.runtime.output);
 
-    const packet = encodeArtDmx(this.runtime.output, this.sequence, this.artnet);
-    this.sequence = nextSequence(this.sequence);
-    this.send(packet);
+    // Art-Net と OpenDMX は独立に出せる。Art-Net 無効時はパケット生成ごと省く。
+    if (this.artnet.enabled) {
+      const packet = encodeArtDmx(this.runtime.output, this.sequence, this.artnet);
+      this.sequence = nextSequence(this.sequence);
+      this.send(packet);
+    }
+    // 生フレームの送出先（OpenDMX）。実際の開閉・レート制御は受け手側が持つ。
+    this.sendDmx?.(this.runtime.output);
 
     this.updateMeasuredHz(now);
 

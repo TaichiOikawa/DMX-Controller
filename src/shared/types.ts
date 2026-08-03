@@ -75,20 +75,44 @@ export interface Setlist {
 }
 
 export interface ArtnetSettings {
+  /** Art-Net(UDP) 送出の有効/無効。false でも出力ループ自体は回る。 */
+  enabled: boolean;
   /** 送信先ノード or ブロードキャストアドレス */
   targetIp: string;
   /** Art-Net universe (0-15) */
   universe: number;
   net: number;
   subnet: number;
-  /** 出力ループのリフレッシュレート (~40Hz) */
+  /**
+   * 出力ループのリフレッシュレート (~40Hz)。
+   * Engine のクロックそのものなので、OpenDMX 出力の更新レートも兼ねる。
+   */
   refreshRateHz: number;
+}
+
+/**
+ * OpenDMX（Enttec Open DMX USB 等の FTDI ベース I/F）の送出設定。
+ *
+ * この種の I/F はマイコンを持たず、ホストが 250kbps・8N2 のシリアルで
+ * BREAK / MAB / スタートコード込みの DMX フレームを直接生成する。
+ * 実送出は main プロセスの OpenDmxDriver が担当する（src/main/openDmx.ts）。
+ */
+export interface OpenDmxSettings {
+  /** OpenDMX 送出の有効/無効。Art-Net とは独立に ON/OFF できる。 */
+  enabled: boolean;
+  /**
+   * シリアルポートのパス（Windows: `COM3` / macOS: `/dev/tty.usbserial-XXXX`）。
+   * 空文字は未選択。マシン固有なので Project を配布しても再選択が必要になりうる。
+   */
+  portPath: string;
 }
 
 export interface ProjectSettings {
   /** 当面 1 */
   universeCount: number;
   artnet: ArtnetSettings;
+  /** OpenDMX(USB-DMX) 出力設定。Art-Net と同時に出せる。 */
+  openDmx: OpenDmxSettings;
   /** リリース時の戻りフェード（デフォルト 0 = 即時 / §11-①） */
   releaseFadeMs: number;
 }
@@ -305,11 +329,20 @@ export interface EngineRuntime {
 /** デフォルトの Art-Net 設定（ローカルのビジュアライザ/ノード向け）。 */
 export function defaultArtnetSettings(): ArtnetSettings {
   return {
+    enabled: true,
     targetIp: '127.0.0.1',
     universe: 0,
     net: 0,
     subnet: 0,
     refreshRateHz: 40,
+  };
+}
+
+/** デフォルトの OpenDMX 設定（既定は無効・ポート未選択）。 */
+export function defaultOpenDmxSettings(): OpenDmxSettings {
+  return {
+    enabled: false,
+    portPath: '',
   };
 }
 
@@ -324,6 +357,7 @@ export function createDefaultProject(): Project {
     settings: {
       universeCount: 1,
       artnet: defaultArtnetSettings(),
+      openDmx: defaultOpenDmxSettings(),
       releaseFadeMs: 0,
     },
     faders: new Array(UNIVERSE_SIZE).fill(0),

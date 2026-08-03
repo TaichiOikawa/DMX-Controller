@@ -1,15 +1,17 @@
 /**
  * 環境設定モーダル。
- * Art-Net 送信設定（§7 ProjectSettings.artnet）: 送信先 IP / universe / net / subnet /
- * リフレッシュレート、実測 Hz を表示・編集する。`prefsOpen` で表示制御。
+ * 出力設定（§7 ProjectSettings）を表示・編集する。`prefsOpen` で表示制御。
+ *   - Art-Net: 送信先 IP / universe / net / subnet / リフレッシュレート、実測 Hz
+ *   - OpenDMX: 有効/無効 とシリアルポート選択、接続状態
+ * 2 系統は独立に ON/OFF でき、同時出力もできる。
  */
 
-import { Plus, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Plus, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useDmxStore } from '../store';
 import { UNIVERSE_SIZE, type ArtnetSettings, type RgbFixture } from '../../shared/types';
-import type { RemoteInfo } from '../../shared/ipc';
+import type { OpenDmxStatus, RemoteInfo, SerialPortInfo } from '../../shared/ipc';
 import { InlineText } from './InlineText';
 
 export function PreferencesModal() {
@@ -65,21 +67,38 @@ export function PreferencesModal() {
 
         {/* Art-Net セクション */}
         <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Art-Net</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Art-Net
+            </h3>
+            <EnableToggle
+              enabled={artnet.enabled}
+              onToggle={() => patch({ enabled: !artnet.enabled })}
+              title="Art-Net(UDP) の送出を切り替える（OpenDMX とは独立）"
+            />
+          </div>
 
           <Field label="送信先 IP">
             <input
               value={artnet.targetIp}
               onChange={(e) => patch({ targetIp: e.target.value })}
-              className="w-40 rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-sky-500"
+              disabled={!artnet.enabled}
+              className="w-40 rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-40"
             />
           </Field>
 
           <div className="flex flex-wrap gap-4">
-            <NumField label="Universe" value={artnet.universe} min={0} max={15} onChange={(v) => patch({ universe: v })} />
-            <NumField label="Net" value={artnet.net} min={0} max={127} onChange={(v) => patch({ net: v })} />
-            <NumField label="Subnet" value={artnet.subnet} min={0} max={15} onChange={(v) => patch({ subnet: v })} />
-            <NumField label="Rate Hz" value={artnet.refreshRateHz} min={1} max={60} onChange={(v) => patch({ refreshRateHz: v })} />
+            <NumField label="Universe" value={artnet.universe} min={0} max={15} disabled={!artnet.enabled} onChange={(v) => patch({ universe: v })} />
+            <NumField label="Net" value={artnet.net} min={0} max={127} disabled={!artnet.enabled} onChange={(v) => patch({ net: v })} />
+            <NumField label="Subnet" value={artnet.subnet} min={0} max={15} disabled={!artnet.enabled} onChange={(v) => patch({ subnet: v })} />
+            <NumField
+              label="Rate Hz"
+              value={artnet.refreshRateHz}
+              min={1}
+              max={60}
+              onChange={(v) => patch({ refreshRateHz: v })}
+              title="出力ループ全体のレート。OpenDMX の送出間隔にも効く（OpenDMX は物理上限 約 40Hz）"
+            />
           </div>
 
           <div className="flex items-center gap-2 text-xs">
@@ -87,6 +106,9 @@ export function PreferencesModal() {
             <span className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-emerald-400">{measuredHz} Hz</span>
           </div>
         </section>
+
+        {/* OpenDMX セクション */}
+        <OpenDmxSection open={open} />
 
         {/* RGB フィクスチャ セクション */}
         <section className="mt-5 space-y-2">
@@ -126,6 +148,157 @@ export function PreferencesModal() {
         <RemoteSection open={open} />
       </div>
     </div>
+  );
+}
+
+/**
+ * OpenDMX（Enttec Open DMX USB 等の FTDI ベース I/F）セクション。
+ * 有効/無効トグル、シリアルポート選択、接続状態を表示する。
+ * 実際の接続・再接続は main の OpenDmxDriver が行い、ここは状態を映すだけ。
+ */
+function OpenDmxSection({ open }: { open: boolean }) {
+  const openDmx = useDmxStore((s) => s.openDmx);
+  const setOpenDmx = useDmxStore((s) => s.setOpenDmx);
+  const status = useDmxStore((s) => s.openDmxStatus);
+
+  const [ports, setPorts] = useState<SerialPortInfo[] | null>(null);
+  const [listing, setListing] = useState(false);
+
+  // 「更新」ボタン用。スピナーを出したいのでこちらは待ち状態を持つ。
+  const refreshPorts = useCallback(async () => {
+    setListing(true);
+    try {
+      setPorts(await window.dmx.listSerialPorts());
+    } finally {
+      setListing(false);
+    }
+  }, []);
+
+  // モーダルを開くたびに列挙し直す（開いたまま抜き差しした場合は「更新」で拾う）。
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    window.dmx
+      .listSerialPorts()
+      .then((list) => {
+        if (!cancelled) setPorts(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  // 保存済みポートが今は存在しない場合でも選択は保持する（挿し直せば自動で復帰する）。
+  const missing =
+    !!openDmx.portPath && !!ports && !ports.some((p) => p.path === openDmx.portPath);
+
+  return (
+    <section className="mt-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          OpenDMX（USB-DMX）
+        </h3>
+        <EnableToggle
+          enabled={openDmx.enabled}
+          onToggle={() => setOpenDmx({ ...openDmx, enabled: !openDmx.enabled })}
+          title="OpenDMX の送出を切り替える（Art-Net とは独立）"
+        />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Field label="ポート">
+          <select
+            value={openDmx.portPath}
+            onChange={(e) => setOpenDmx({ ...openDmx, portPath: e.target.value })}
+            className="w-56 rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-sky-500"
+          >
+            <option value="">（未選択）</option>
+            {/* 保存済みのポートが現在見つからなくても、選択肢としては残す。 */}
+            {missing && <option value={openDmx.portPath}>{openDmx.portPath}（未接続）</option>}
+            {ports?.map((p) => (
+              <option key={p.path} value={p.path}>
+                {p.likelyDmx ? '★ ' : ''}
+                {p.path}
+                {p.friendlyName ? ` — ${p.friendlyName}` : ''}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <button
+          onClick={() => void refreshPorts()}
+          disabled={listing}
+          className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-sky-300 hover:bg-neutral-700 disabled:opacity-40"
+          title="接続されているシリアルポートを再検索"
+        >
+          <RefreshCw size={12} className={listing ? 'animate-spin' : undefined} /> 更新
+        </button>
+      </div>
+
+      <OpenDmxStatusLine status={status} />
+
+      {ports?.length === 0 && (
+        <p className="text-[11px] text-amber-400">
+          シリアルポートが見つかりません。USB-DMX を接続し、FTDI ドライバが入っているか確認してください。
+        </p>
+      )}
+
+      <p className="text-[10px] text-neutral-600">
+        ★ は FTDI 製（OpenDMX I/F の可能性が高いポート）。抜線しても自動で再接続を試みます。
+      </p>
+    </section>
+  );
+}
+
+/** OpenDMX の接続状態を 1 行で表示する。 */
+function OpenDmxStatusLine({ status }: { status: OpenDmxStatus }) {
+  const [label, tone] = describeOpenDmxStatus(status);
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <span className="shrink-0 pt-0.5 text-neutral-500">状態</span>
+      <span className={`rounded bg-neutral-800 px-2 py-0.5 font-mono ${tone}`}>{label}</span>
+    </div>
+  );
+}
+
+/** 接続状態を表示文字列と色クラスへ変換する。 */
+function describeOpenDmxStatus(status: OpenDmxStatus): [string, string] {
+  switch (status.state) {
+    case 'disabled':
+      return ['無効', 'text-neutral-500'];
+    case 'closed':
+      return ['ポート未選択', 'text-neutral-400'];
+    case 'opening':
+      return ['接続中…', 'text-amber-400'];
+    case 'open':
+      return [`送出中 ${status.measuredHz} Hz`, 'text-emerald-400'];
+    case 'error':
+      return [status.error ?? '接続エラー', 'text-red-400'];
+  }
+}
+
+/** セクション見出し横の有効/無効トグル（リモート操作セクションと同じ見た目）。 */
+function EnableToggle({
+  enabled,
+  onToggle,
+  title,
+}: {
+  enabled: boolean;
+  onToggle: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={title}
+      className={`rounded px-3 py-1 text-[11px] font-semibold ${
+        enabled
+          ? 'bg-emerald-700 text-emerald-50 hover:bg-emerald-600'
+          : 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600'
+      }`}
+    >
+      {enabled ? '有効' : '無効'}
+    </button>
   );
 }
 
@@ -318,9 +491,17 @@ function ChField({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  title,
+}: {
+  label: string;
+  children: React.ReactNode;
+  title?: string;
+}) {
   return (
-    <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+    <label className="flex items-center gap-1.5 text-xs text-neutral-400" title={title}>
       <span>{label}</span>
       {children}
     </label>
@@ -333,25 +514,30 @@ function NumField({
   min,
   max,
   onChange,
+  disabled,
+  title,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
   onChange: (v: number) => void;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
-    <Field label={label}>
+    <Field label={label} title={title}>
       <input
         type="number"
         min={min}
         max={max}
         value={value}
+        disabled={disabled}
         onChange={(e) => {
           const n = Math.max(min, Math.min(max, Math.round(Number(e.target.value))));
           if (Number.isFinite(n)) onChange(n);
         }}
-        className="w-14 rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-sky-500"
+        className="w-14 rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-40"
       />
     </Field>
   );

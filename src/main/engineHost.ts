@@ -24,9 +24,11 @@ import {
   type FixtureInit,
   type FixturePatch,
   type MissingFile,
+  type RemoteState,
   type SetFaderPayload,
   type UiState,
 } from '../shared/ipc';
+import { RemoteServer } from './remoteServer';
 import { type ArtnetSettings, type Show, defaultArtnetSettings } from '../shared/types';
 import {
   deserializeProject,
@@ -76,6 +78,10 @@ export class EngineHost {
 
   /** イベント配信先（メインウィンドウ + 別ウィンドウのカラーピッカー等）。 */
   private clients = new Set<WebContents>();
+  /** 主ウィンドウの WebContents（リモートコマンドの送信先。多重実行を避け主のみへ送る）。 */
+  private mainWebContents: WebContents | null = null;
+  /** リモート操作サーバー（スマホ等）。既定は無効。 */
+  private readonly remoteServer = new RemoteServer();
   private lastFrameSentAt = 0;
   private lastStateSentAt = 0;
 
@@ -123,6 +129,14 @@ export class EngineHost {
 
     // 起動直後の Project を「保存済み（クリーン）」の基準にする。
     this.lastSavedJson = serializeProject(this.engine.getProject());
+
+    // リモート（スマホ等）からのコマンドは主ウィンドウ renderer のみへ渡す
+    // （既存の GO / セットリスト / トランスポート ロジックをそのまま再利用させる）。
+    this.remoteServer.setCommandForwarder((cmd) => {
+      if (this.mainWebContents && !this.mainWebContents.isDestroyed()) {
+        this.mainWebContents.send(Evt.remoteCommand, cmd);
+      }
+    });
   }
 
   // ===== 未保存（dirty）状態の管理 =====
@@ -178,6 +192,10 @@ export class EngineHost {
 
   /** メインウィンドウの WebContents を登録し、現在の Project / 状態を初期送信する。 */
   attach(webContents: WebContents): void {
+    this.mainWebContents = webContents;
+    webContents.once('destroyed', () => {
+      if (this.mainWebContents === webContents) this.mainWebContents = null;
+    });
     this.addClient(webContents);
   }
 
@@ -211,6 +229,7 @@ export class EngineHost {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
     }
+    void this.remoteServer.close();
     try {
       this.socket.close();
     } catch {
@@ -415,6 +434,11 @@ export class EngineHost {
 
     // --- 歌詞シートの書き出し ---
     ipcMain.handle(Cmd.exportLyrics, (_e, showId: string) => this.exportLyrics(showId));
+
+    // --- リモート操作（スマホ等） ---
+    ipcMain.on(Cmd.reportRemoteState, (_e, vm: RemoteState) => this.remoteServer.updateState(vm));
+    ipcMain.handle(Cmd.getRemoteInfo, () => this.remoteServer.getInfo());
+    ipcMain.handle(Cmd.setRemoteEnabled, (_e, on: boolean) => this.remoteServer.setEnabled(on));
   }
 
   /** 指定パスへ Project を書き出し、保存済み基準を更新する。 */

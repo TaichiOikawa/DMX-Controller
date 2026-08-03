@@ -6,8 +6,10 @@
 
 import { Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { useDmxStore } from '../store';
 import { UNIVERSE_SIZE, type ArtnetSettings, type RgbFixture } from '../../shared/types';
+import type { RemoteInfo } from '../../shared/ipc';
 import { InlineText } from './InlineText';
 
 export function PreferencesModal() {
@@ -119,8 +121,127 @@ export function PreferencesModal() {
             ch は 1–{UNIVERSE_SIZE} で指定。色はフェーダー上部のバーから選べます。
           </p>
         </section>
+
+        {/* リモート操作 セクション */}
+        <RemoteSection open={open} />
       </div>
     </div>
+  );
+}
+
+/**
+ * リモート操作（スマホ等）セクション。
+ * 有効/無効トグルと、有効時の接続 URL・PIN・QR コードを表示する。
+ */
+function RemoteSection({ open }: { open: boolean }) {
+  const [info, setInfo] = useState<RemoteInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [qr, setQr] = useState<string>('');
+
+  // モーダルを開いたら現在の接続情報を取得する。
+  useEffect(() => {
+    if (!open) return;
+    void window.dmx.getRemoteInfo().then(setInfo);
+  }, [open]);
+
+  // 有効かつ URL があれば先頭 URL の QR を生成する（QR は enabled ブロック内でのみ描画するため、
+  // 無効化時に消去しなくても表示されない）。
+  useEffect(() => {
+    const url = info?.enabled ? info.urls[0] : undefined;
+    if (!url) return;
+    let cancelled = false;
+    QRCode.toDataURL(url, { margin: 1, width: 176 })
+      .then((dataUrl) => {
+        if (!cancelled) setQr(dataUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [info]);
+
+  const toggle = async () => {
+    if (!info || busy) return;
+    setBusy(true);
+    try {
+      setInfo(await window.dmx.setRemoteEnabled(!info.enabled));
+    } catch {
+      // 失敗時は現状の接続情報に戻す。
+      setInfo(await window.dmx.getRemoteInfo());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          リモート操作（スマホ）
+        </h3>
+        <button
+          onClick={toggle}
+          disabled={!info || busy}
+          className={`rounded px-3 py-1 text-[11px] font-semibold disabled:opacity-40 ${
+            info?.enabled
+              ? 'bg-emerald-700 text-emerald-50 hover:bg-emerald-600'
+              : 'bg-neutral-700 text-neutral-200 hover:bg-neutral-600'
+          }`}
+        >
+          {info?.enabled ? '有効' : '無効'}
+        </button>
+      </div>
+
+      {info?.enabled ? (
+        info.urls.length === 0 ? (
+          <p className="text-[11px] text-amber-400">
+            ネットワーク接続が見つかりません。Wi-Fi/LAN に接続してください。
+          </p>
+        ) : (
+          <div className="flex gap-4">
+            {qr && (
+              <img
+                src={qr}
+                alt="接続 QR コード"
+                className="h-[88px] w-[88px] shrink-0 rounded bg-white p-1"
+              />
+            )}
+            <div className="min-w-0 flex-1 space-y-2 text-xs">
+              <div>
+                <span className="text-neutral-500">接続 URL</span>
+                <div className="mt-1 space-y-1">
+                  {info.urls.map((u) => (
+                    <div
+                      key={u}
+                      className="truncate rounded bg-neutral-800 px-2 py-1 font-mono text-sky-300"
+                    >
+                      {u}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-500">PIN</span>
+                <span className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-lg tracking-widest text-emerald-400">
+                  {info.pin}
+                </span>
+              </div>
+              <div className="text-[10px] text-neutral-500">
+                Action 専用ページ:{' '}
+                <span className="font-mono text-sky-300">{info.urls[0]}/actions</span>
+              </div>
+            </div>
+          </div>
+        )
+      ) : (
+        <p className="text-[11px] text-neutral-600">
+          有効にすると、同じ Wi-Fi のスマホから GO / ブラックアウト等を操作できます。
+        </p>
+      )}
+      <p className="text-[10px] text-neutral-600">
+        信頼できる LAN 内でのみ使用してください（平文通信・簡易 PIN 認証）。
+      </p>
+    </section>
   );
 }
 

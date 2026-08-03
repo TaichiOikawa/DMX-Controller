@@ -62,6 +62,26 @@ export function pxToTime(px: number, scale: TimeScale): number {
   return Math.round(px / pxPerMs(scale));
 }
 
+/**
+ * 要素に幅が付いたら一度だけ cb を呼ぶ。解除関数を返す。
+ * Timeline タブ非表示（display:none）中は幅 0 のため、WaveSurfer をこの状態で
+ * 生成すると canvas が 1 枚も作られず波形が出ない。幅が付くのを待ってから
+ * 生成するために使う（生成後のリサイズ追従は WaveSurfer 自身が行う）。
+ */
+export function onceVisible(el: HTMLElement, cb: () => void): () => void {
+  if (el.clientWidth > 0) {
+    cb();
+    return () => {};
+  }
+  const ro = new ResizeObserver(() => {
+    if (el.clientWidth <= 0) return;
+    ro.disconnect();
+    cb();
+  });
+  ro.observe(el);
+  return () => ro.disconnect();
+}
+
 /** クリップ配置のスナップ単位（ms）。リファレンス同様 10ms グリッドへ吸着する。 */
 export const SNAP_MS = 10;
 

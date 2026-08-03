@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { timeToPx, type TimeScale } from './utils';
+import { onceVisible, timeToPx, type TimeScale } from './utils';
 
 interface AudioTrackProps {
   audioUrl: string | null;
@@ -24,31 +24,39 @@ export function AudioTrack({ audioUrl, scale, onDurationMs }: AudioTrackProps) {
   }, [onDurationMs]);
 
   useEffect(() => {
-    if (!containerRef.current || !audioUrl) {
+    const el = containerRef.current;
+    if (!el || !audioUrl) {
       setAudioMs(0);
       return;
     }
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: '#34d399',
-      progressColor: '#34d399',
-      cursorWidth: 0,
-      height: 48,
-      normalize: true,
-      interact: false,
-      hideScrollbar: true,
-      fillParent: true,
+    let ws: WaveSurfer | null = null;
+    // Timeline タブ非表示中（幅 0）に生成すると canvas が作られないため、幅が付くまで待つ。
+    const cancelVisible = onceVisible(el, () => {
+      const instance = WaveSurfer.create({
+        container: el,
+        waveColor: '#34d399',
+        progressColor: '#34d399',
+        cursorWidth: 0,
+        height: 48,
+        normalize: true,
+        interact: false,
+        hideScrollbar: true,
+        fillParent: true,
+      });
+      ws = instance;
+      wsRef.current = instance;
+      instance.on('ready', () => {
+        const ms = Math.round(instance.getDuration() * 1000);
+        setAudioMs(ms);
+        onDurationRef.current?.(ms);
+      });
+      instance.on('error', (e) => console.error('[AudioTrack] wavesurfer error', e));
+      void instance.load(audioUrl).catch((e) => console.error('[AudioTrack] load rejected', e));
     });
-    wsRef.current = ws;
-    ws.on('ready', () => {
-      const ms = Math.round(ws.getDuration() * 1000);
-      setAudioMs(ms);
-      onDurationRef.current?.(ms);
-    });
-    void ws.load(audioUrl).catch(() => {});
 
     return () => {
-      ws.destroy();
+      cancelVisible();
+      ws?.destroy();
       wsRef.current = null;
     };
   }, [audioUrl]);

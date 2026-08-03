@@ -25,9 +25,89 @@ import {
   fileSaveProjectAs,
   fileSaveProjectOverwrite,
 } from './projectFileOps';
-import type { MenuAction } from '../shared/ipc';
+import { cueAt, nextPosition } from '../engine/playback';
+import type {
+  MenuAction,
+  PlaybackStatus,
+  RemoteCommand,
+  RemoteCue,
+  RemoteState,
+} from '../shared/ipc';
+import type { Project } from '../shared/types';
 
 type Tab = 'cue' | 'timeline';
+
+/** CUE を RemoteCue（名前 + 歌詞）へ整形する（NowNextPanel と同じ既定名ロジック）。 */
+function toRemoteCue(cue: { name?: string; lyrics?: string } | null): RemoteCue | null {
+  if (!cue) return null;
+  return { name: cue.name?.trim() ? cue.name : 'Cue', lyrics: cue.lyrics?.trim() ?? '' };
+}
+
+/** ストアの各スライスからスマホ向けビューモデル（RemoteState）を組み立てる。 */
+function buildRemoteState(args: {
+  project: Project | null;
+  activeShowId: string | null;
+  playback: PlaybackStatus | null;
+  mode: RemoteState['mode'];
+  blackout: boolean;
+  masterLevel: number;
+  activeSetlistId: string | null;
+  setlistIndex: number;
+  transportPlaying: boolean;
+  audioDurationMs: number;
+  timelineDurationMs: number;
+  positionMs: number;
+  actionFadeMs: number;
+}): RemoteState {
+  const { project, activeShowId } = args;
+  const show = project?.shows.find((s) => s.id === activeShowId) ?? null;
+
+  let now: RemoteCue | null = null;
+  let next: RemoteCue | null = null;
+  if (show) {
+    const seq = show.sequence;
+    const main = args.playback?.mainIndex ?? -1;
+    const sub = args.playback?.subIndex ?? 0;
+    now = main >= 0 ? toRemoteCue(cueAt(seq, { main, sub })) : null;
+    const nextPos = nextPosition(seq, main, sub);
+    next = nextPos ? toRemoteCue(cueAt(seq, nextPos)) : null;
+  }
+
+  const setlist = project?.setlists?.find((sl) => sl.id === args.activeSetlistId) ?? null;
+  const showNameOf = (id: string) => project?.shows.find((s) => s.id === id)?.name || 'Show';
+
+  const hasAudio = args.audioDurationMs > 0;
+  return {
+    mode: args.mode,
+    blackout: args.blackout,
+    masterLevel: args.masterLevel,
+    showName: show?.name ?? null,
+    activeShowId: activeShowId,
+    shows: (project?.shows ?? [])
+      .map((s) => ({ id: s.id, name: s.name || 'Show' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true })),
+    setlist: setlist
+      ? {
+          name: setlist.name,
+          index: args.setlistIndex,
+          total: setlist.entries.length,
+          entries: setlist.entries.map((e) => ({ name: showNameOf(e.showId) })),
+        }
+      : null,
+    now,
+    next,
+    transport: show
+      ? {
+          hasAudio,
+          playing: args.transportPlaying,
+          positionMs: args.positionMs,
+          durationMs: args.timelineDurationMs,
+        }
+      : null,
+    actions: (project?.actions ?? []).map((a) => ({ id: a.id, name: a.name || 'Action' })),
+    actionFadeMs: args.actionFadeMs,
+  };
+}
 
 export default function App() {
   const setOutput = useDmxStore((s) => s.setOutput);
@@ -46,6 +126,17 @@ export default function App() {
   const dirty = useDmxStore((s) => s.dirty);
   // セットリスト読込中は中央をセットリスト表示に切替える（Show の CUE/Timeline より優先）。
   const activeSetlistId = useDmxStore((s) => s.activeSetlistId);
+  // リモート（スマホ）へ報告するビューモデルの素材。
+  const playback = useDmxStore((s) => s.playback);
+  const blackout = useDmxStore((s) => s.blackout);
+  const masterLevel = useDmxStore((s) => s.masterLevel);
+  const setlistIndex = useDmxStore((s) => s.setlistIndex);
+  const transportPlaying = useDmxStore((s) => s.transport.playing);
+  const audioDurationMs = useDmxStore((s) => s.audioDurationMs);
+  const timelineDurationMs = useDmxStore((s) => s.transport.durationMs);
+  // 再生位置は 100ms 粒度で購読（毎フレーム再送を避け、~10Hz でタイムコード更新）。
+  const positionBucket = useDmxStore((s) => Math.round(s.transport.playheadMs / 100));
+  const actionFadeMs = useDmxStore((s) => s.actionFadeMs);
   // Show 未読込（解放中）。CUE/Timeline を隠し Action を大きく表示する。
   const released = activeShowId === null;
   const [tab, setTab] = useState<Tab>('cue');
@@ -112,10 +203,10 @@ export default function App() {
       if (st.activeSetlistId) {
         if (e.code === 'Space' || e.code === 'ArrowRight') {
           e.preventDefault();
-          st.setlistGo();
+          st.operatorGo();
         } else if (e.code === 'Backspace' || e.code === 'ArrowLeft') {
           e.preventDefault();
-          st.setlistGoTo(st.setlistIndex - 1);
+          st.operatorBack();
         }
         return;
       }
@@ -128,14 +219,14 @@ export default function App() {
             else st.transportPlay();
           }
         } else {
-          window.dmx.go();
+          st.operatorGo();
         }
       } else if (e.code === 'ArrowRight') {
         e.preventDefault();
-        window.dmx.go();
+        st.operatorGo();
       } else if (e.code === 'Backspace' || e.code === 'ArrowLeft') {
         e.preventDefault();
-        window.dmx.goBack();
+        st.operatorBack();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -205,6 +296,104 @@ export default function App() {
     };
     return window.dmx.onMenuAction(onMenu);
   }, []);
+
+  // リモート（スマホ等）からのコマンドを受け、既存のストア/GO ロジックへディスパッチする。
+  // GO/BACK はキーボードと同じ operatorGo/operatorBack（セットリスト対応）を再利用する。
+  useEffect(() => {
+    const onRemote = (cmd: RemoteCommand) => {
+      const st = useDmxStore.getState();
+      switch (cmd.action) {
+        case 'go':
+          st.operatorGo();
+          break;
+        case 'back':
+          st.operatorBack();
+          break;
+        case 'hold':
+          window.dmx.holdFade();
+          break;
+        case 'blackout':
+          st.setBlackout(!st.blackout);
+          break;
+        case 'master':
+          if (typeof cmd.value === 'number') {
+            st.setMasterLevel(Math.max(0, Math.min(255, Math.round(cmd.value))));
+          }
+          break;
+        case 'setlistGoTo':
+          if (typeof cmd.value === 'number') st.setlistGoTo(cmd.value);
+          break;
+        case 'action':
+          if (typeof cmd.id === 'string') st.applyAction(cmd.id, cmd.fade ? st.actionFadeMs : 0);
+          break;
+        case 'modeShow':
+          // リモートからは EDIT→SHOW のみ許可（SHOW→EDIT は本体でのみ操作）。
+          st.setMode('show');
+          break;
+        case 'loadShow':
+          // セットリスト読込中は Show の読込をマスター GO に委ねる（サイドバーと同じ制約）。
+          if (typeof cmd.id === 'string' && !st.activeSetlistId) window.dmx.loadShow(cmd.id);
+          break;
+        case 'unloadShow':
+          if (!st.activeSetlistId) window.dmx.unloadShow();
+          break;
+        case 'timelineToggle':
+          // 本体の再生状態を真として切り替える（スマホ側の状態が古くても位置を戻さない）。
+          if (st.transport.playing) st.transportPause();
+          else if (st.activeShowId) st.transportPlay();
+          break;
+        case 'timelinePlay':
+          if (st.activeShowId) st.transportPlay();
+          break;
+        case 'timelinePause':
+          st.transportPause();
+          break;
+        case 'timelineStop':
+          st.transportStop();
+          break;
+      }
+    };
+    return window.dmx.onRemoteCommand(onRemote);
+  }, []);
+
+  // リモート画面用ビューモデルを組み立て、変化時のみ main（RemoteServer）へ報告する。
+  // 内容が同一のときは送らない（フェード進捗・再生位置などの高頻度更新を握りつぶす）。
+  const lastRemoteJson = useRef<string>('');
+  useEffect(() => {
+    const vm = buildRemoteState({
+      project,
+      activeShowId,
+      playback,
+      mode,
+      blackout,
+      masterLevel,
+      activeSetlistId,
+      setlistIndex,
+      transportPlaying,
+      audioDurationMs,
+      timelineDurationMs,
+      positionMs: positionBucket * 100,
+      actionFadeMs,
+    });
+    const json = JSON.stringify(vm);
+    if (json === lastRemoteJson.current) return;
+    lastRemoteJson.current = json;
+    window.dmx.reportRemoteState(vm);
+  }, [
+    project,
+    activeShowId,
+    playback,
+    mode,
+    blackout,
+    masterLevel,
+    activeSetlistId,
+    setlistIndex,
+    transportPlaying,
+    audioDurationMs,
+    timelineDurationMs,
+    positionBucket,
+    actionFadeMs,
+  ]);
 
   // タブ/パネル開閉の変化を main へ同期し、メニューのチェック表示に反映する。
   useEffect(() => {

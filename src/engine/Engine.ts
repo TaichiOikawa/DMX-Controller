@@ -318,7 +318,8 @@ export class Engine {
 
   /**
    * Edit モード: 編集中 Action の look（step0）へこの ch を直接書き込む（CUE 編集と同様）。
-   * step が無ければ作成する。値 0 はその ch を look から外す（タッチで足し、0 で除く）。
+   * step が無ければ作成する。>0 で look に足し、一度 look に入った ch は 0 にしても
+   * 値 0 として保持する（明示的な消灯をキャプチャ）。未タッチで 0 のままの ch は足さない。
    */
   private editCurrentAction(ch: number, v: number): void {
     const action = this.project.actions.find((a) => a.id === this.runtime.editingActionId);
@@ -326,8 +327,7 @@ export class Engine {
     if (action.steps.length === 0) action.steps.push({ values: {}, fadeInMs: 0, holdMs: 500 });
     this.pushUndoCoalesced(500); // フェーダー連続編集は1バーストに束ねる
     const step = action.steps[0];
-    if (v > 0) step.values[ch] = v;
-    else delete step.values[ch];
+    if (v > 0 || ch in step.values) step.values[ch] = v;
     this.scheduleProjectNotify();
     this.emitState();
   }
@@ -1034,9 +1034,11 @@ export class Engine {
   /**
    * Action の look（step0）を faderLive へ書き込む。Show 読込中は busking も立てる。
    * fadeMs>0 なら即時書き込まず、現在の出力を起点に faderFade を仕込んで tick で補間する。
+   * fromZero=true のときは look 対象 ch の起点を 0（黒）にして立ち上げる。EDIT の取り込み
+   * プレビューで、フェーダーが既に look 値でも（from===to にならず）フェードを可視化するため。
    * @returns 1ch でも look 対象があれば true。
    */
-  private applyActionLook(action: ActionButton, fadeMs = 0): boolean {
+  private applyActionLook(action: ActionButton, fadeMs = 0, fromZero = false): boolean {
     const step = action.steps[0];
     if (!step) return false;
     const showLoaded = this.runtime.show !== null;
@@ -1065,6 +1067,7 @@ export class Engine {
     for (const [ch, v] of entries) {
       to[ch] = v;
       if (showLoaded) this.runtime.busking[ch] = true; // look ch は busking で上書き保持
+      if (fromZero) from[ch] = 0; // プレビューは黒から立ち上げる
       this.runtime.faderLive[ch] = from[ch]; // 起点に合わせて段差を無くす
     }
     this.runtime.faderFade = { from, to, startMs: this.nowFn(), durMs: fadeMs, delayMs: 0 };
@@ -1156,7 +1159,9 @@ export class Engine {
         rt.tracked.fill(0);
       }
     }
-    this.applyActionLook(action, fadeMs);
+    // 取り込みプレビューは黒から立ち上げてフェードを見せる（編集中で faders が既に
+    // look 値でも即時にならないように）。fadeMs=0 の即時取り込みには影響しない。
+    this.applyActionLook(action, fadeMs, true);
     this.notifyProject();
     this.emitState();
   }
@@ -1181,6 +1186,9 @@ export class Engine {
 
   /**
    * 既存 Action の look（step0）を現在のフェーダー位置（非ゼロ ch）で上書きする。
+   * ライブのフェーダー状態を丸ごと取り直すスナップショット操作（未タッチ ch を 0 で
+   * 塗り潰さないよう、既存 look の 0 保持はここでは行わない。0 を含む look の作り込みは
+   * 編集フロー editCurrentAction 側で行う）。
    * SHOW モード中でも実行可（本番で覚え込んだ look を更新するため）。step が無ければ作成する。
    */
   overwriteAction(actionId: string): void {

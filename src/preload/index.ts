@@ -17,6 +17,7 @@ import {
   type DmxBridge,
   type EngineStateSnapshot,
   type MenuAction,
+  type RemoteCommand,
   type UiState,
 } from '../shared/ipc';
 import type { ArtnetSettings, Project } from '../shared/types';
@@ -306,6 +307,22 @@ const api: DmxBridge = {
   },
   exportLyrics(showId) {
     return ipcRenderer.invoke(Cmd.exportLyrics, showId) as ReturnType<DmxBridge['exportLyrics']>;
+  },
+
+  // リモート操作
+  reportRemoteState(state) {
+    ipcRenderer.send(Cmd.reportRemoteState, state);
+  },
+  getRemoteInfo() {
+    return ipcRenderer.invoke(Cmd.getRemoteInfo) as ReturnType<DmxBridge['getRemoteInfo']>;
+  },
+  setRemoteEnabled(on) {
+    return ipcRenderer.invoke(Cmd.setRemoteEnabled, on) as ReturnType<
+      DmxBridge['setRemoteEnabled']
+    >;
+  },
+  onRemoteCommand(cb) {
+    return subscribe<RemoteCommand>(Evt.remoteCommand, cb);
   },
 
   // 購読

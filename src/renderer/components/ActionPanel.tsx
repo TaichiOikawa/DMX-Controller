@@ -161,10 +161,8 @@ function ActionCard({
   const chCount = Object.keys(action.steps[0]?.values ?? {}).length;
 
   // メイン（即時）とフェード取り込み。発火 / キャプチャいずれも look を取り込んで保持。
-  const apply = (ms: number): void => {
-    if (triggerMode) window.dmx.actionDown(action.id, ms);
-    else window.dmx.captureAction(action.id, ms);
-  };
+  // キーボード/リモートと同じ store.applyAction を用いて挙動を一元化する。
+  const apply = (ms: number): void => useDmxStore.getState().applyAction(action.id, ms);
   const fadeSec = (fadeMs / 1000).toString();
 
   return (

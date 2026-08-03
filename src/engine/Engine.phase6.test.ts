@@ -496,9 +496,13 @@ describe('Action authoring (global / overwrite)', () => {
     engine.setFader(5, 200);
     expect(engine.getProject().actions[0].steps[0].values).toEqual({ 0: 100, 5: 200 });
 
-    // 0 にするとその ch は look から外れる。
+    // 一度 look に入った ch は 0 にしても look に残る（明示的な消灯としてキャプチャ）。
     engine.setFader(0, 0);
-    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 5: 200 });
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 0: 0, 5: 200 });
+
+    // 未タッチ（0 のまま）の ch は look に足さない。
+    engine.setFader(9, 0);
+    expect(engine.getProject().actions[0].steps[0].values).toEqual({ 0: 0, 5: 200 });
   });
 
   it('selecting a cue deselects the editing Action (faders go back to the cue)', () => {
@@ -547,6 +551,28 @@ describe('Action authoring (global / overwrite)', () => {
     engine.captureAction('act');
     expect(engine.getProject().faders[3]).toBe(150);
     expect(engine.getState().busking[3]).toBe(false);
+  });
+
+  it('captureAction with fade shows the look fading in from 0, even while editing that action', () => {
+    const { engine, clock } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [actionButton({})];
+    engine.loadProject(p);
+    // EDIT: 編集対象に選び、フェーダーで look を作り込む（faderLive が look 値になる）。
+    engine.selectActionForEdit('act');
+    engine.setFader(0, 200);
+
+    // フェードボタン相当（2s）。from===to で即時にならず 0 から立ち上がること。
+    clock.now = 0;
+    engine.captureAction('act', 2000);
+    engine.tick(0);
+    expect(engine.getOutput()[0]).toBe(0); // 黒から開始
+    clock.now = 1000;
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(100); // 2s の中間
+    clock.now = 2000;
+    engine.tick(2000);
+    expect(engine.getOutput()[0]).toBe(200); // 到達
   });
 
   it('overwriteAction re-captures faders into step 0, even in SHOW mode', () => {

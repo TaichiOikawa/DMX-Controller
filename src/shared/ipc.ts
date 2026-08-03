@@ -117,6 +117,14 @@ export const Cmd = {
   setAudioTrackProps: 'cmd:setAudioTrackProps',
   reportAudioLevels: 'cmd:reportAudioLevels',
 
+  // --- リモート操作（スマホ等からの遠隔操作） ---
+  /** renderer が組み立てたモニター用ビューモデルを main（RemoteServer）へ報告する。 */
+  reportRemoteState: 'cmd:reportRemoteState',
+  /** リモートサーバーの接続情報（URL / PIN / 有効状態）を取得する。 */
+  getRemoteInfo: 'cmd:getRemoteInfo',
+  /** リモートサーバーの有効/無効を切り替える（切替後の接続情報を返す）。 */
+  setRemoteEnabled: 'cmd:setRemoteEnabled',
+
   // --- 永続化 ---
   newProject: 'cmd:newProject',
   saveProject: 'cmd:saveProject',
@@ -146,6 +154,8 @@ export const Evt = {
   menuAction: 'evt:menuAction',
   /** ミックス済みオーディオ出力レベル（メイン renderer → main → 全ウインドウ） */
   audioLevels: 'evt:audioLevels',
+  /** リモート（スマホ等）からのコマンド（main → 主ウィンドウ renderer） */
+  remoteCommand: 'evt:remoteCommand',
 } as const;
 
 /**
@@ -206,6 +216,95 @@ export interface SetFaderPayload {
   ch: number;
   /** 0-255 */
   value: number;
+}
+
+// ===== リモート操作（スマホ等からの遠隔操作） =====
+
+/** リモート画面に表示する CUE（現在 / 次）。 */
+export interface RemoteCue {
+  name: string;
+  lyrics: string;
+}
+
+/** リモート画面のセットリスト状態（読込中のみ非 null）。 */
+export interface RemoteSetlist {
+  name: string;
+  /** 現在エントリ index（未開始は -1）。 */
+  index: number;
+  /** エントリ総数。 */
+  total: number;
+  /** 各エントリの Show 名（一覧描画・頭出し用）。 */
+  entries: { name: string }[];
+}
+
+/** リモート画面の Timeline トランスポート状態（Show 読込中のみ非 null）。 */
+export interface RemoteTransport {
+  hasAudio: boolean;
+  playing: boolean;
+  /** 現在の再生位置（ms・100ms 粒度に丸め）。 */
+  positionMs: number;
+  /** タイムラインの長さ（ms）。 */
+  durationMs: number;
+}
+
+/**
+ * スマホ等のリモート画面へ配信するビューモデル（renderer が組み立て、main が中継）。
+ * 現在/次 CUE・歌詞、モード、ブラックアウト、マスター、セットリスト位置などを反映する。
+ */
+export interface RemoteState {
+  mode: EngineMode;
+  blackout: boolean;
+  /** グランドマスター（0-255）。 */
+  masterLevel: number;
+  /** 読込中 Show 名（未読込は null）。 */
+  showName: string | null;
+  /** 読込中（アクティブ）Show の id（未読込は null。読込リストのハイライト用）。 */
+  activeShowId: string | null;
+  /** 読み込める Show の一覧（スマホから loadShow するため）。 */
+  shows: { id: string; name: string }[];
+  setlist: RemoteSetlist | null;
+  now: RemoteCue | null;
+  next: RemoteCue | null;
+  transport: RemoteTransport | null;
+  /** 発火できる Action（プロジェクト共通・全 Show で共有）。 */
+  actions: { id: string; name: string }[];
+  /** フェード発火の既定時間（ms・ラベル表示に使う）。 */
+  actionFadeMs: number;
+}
+
+/** リモート画面 → 本体への操作コマンド。 */
+export interface RemoteCommand {
+  action:
+    | 'go'
+    | 'back'
+    | 'hold'
+    | 'blackout'
+    | 'master'
+    | 'setlistGoTo'
+    | 'action'
+    | 'modeShow'
+    | 'loadShow'
+    | 'unloadShow'
+    | 'timelineToggle'
+    | 'timelinePlay'
+    | 'timelinePause'
+    | 'timelineStop';
+  /** master の値（0-255）や setlistGoTo の行 index。 */
+  value?: number;
+  /** action 発火の対象 Action id、または loadShow の Show id。 */
+  id?: string;
+  /** action 発火でフェードするか（true なら actionFadeMs でフェード）。 */
+  fade?: boolean;
+}
+
+/** 設定画面へ返すリモートサーバーの接続情報。 */
+export interface RemoteInfo {
+  enabled: boolean;
+  port: number;
+  /** 接続 PIN（4 桁）。無効時も一度生成済みなら表示する。 */
+  pin: string;
+  /** LAN 上の接続 URL 一覧（複数 NIC 対応）。 */
+  urls: string[];
 }
 
 /** addCue（空の CUE を追加）のオプション。 */
@@ -491,6 +590,16 @@ export interface DmxBridge {
 
   /** 指定 Show の CUE 歌詞をテキスト（歌詞シート）として書き出す（保存ダイアログ）。 */
   exportLyrics(showId: string): Promise<{ ok: boolean; path?: string; error?: string }>;
+
+  // リモート操作（スマホ等からの遠隔操作）
+  /** モニター用ビューモデルを main（RemoteServer）へ報告する（スマホへ中継される）。 */
+  reportRemoteState(state: RemoteState): void;
+  /** リモートサーバーの接続情報（URL / PIN / 有効状態）を取得する。 */
+  getRemoteInfo(): Promise<RemoteInfo>;
+  /** リモートサーバーの有効/無効を切り替える（切替後の接続情報を返す）。 */
+  setRemoteEnabled(on: boolean): Promise<RemoteInfo>;
+  /** リモートからのコマンドを購読する（解除関数を返す）。 */
+  onRemoteCommand(cb: (cmd: RemoteCommand) => void): () => void;
 
   // 購読（解除関数を返す）
   onOutputFrame(cb: (frame: number[]) => void): () => void;

@@ -158,7 +158,7 @@ export function TimelineView({ active }: { active: boolean }) {
         );
         createdUrl = url;
         setAudioUrl(url);
-        loadAudio(url, res.data);
+        loadAudio(url, res.data, filePath);
       });
     }
     return () => {

@@ -9,7 +9,7 @@ import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import type { AudioClip } from '../../../shared/types';
-import { pxToTime, snapMs, timeToPx, type TimeScale } from './utils';
+import { onceVisible, pxToTime, snapMs, timeToPx, type TimeScale } from './utils';
 
 function mimeFor(p: string): string {
   switch (p.toLowerCase().split('.').pop()) {
@@ -56,35 +56,47 @@ export function AudioClipBlock({
   const moved = useRef(false);
   const startMs = dragMs ?? clip.startMs;
 
+  const missing = status === 'missing';
+
   // クリップ内に波形を表示する（メイン音声と同様 WaveSurfer・表示専用）。
   // 実バイトを読み出し Blob URL 化してロードする。再生位置の同期は不要（実再生はストア）。
+  // missing を依存に含め、再リンクで波形 div が再マウントされたら作り直す。
   const waveRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
     let ws: WaveSurfer | null = null;
+    let cancelVisible = () => {};
     window.dmx.readAudioFile(clip.filePath).then((res) => {
-      if (cancelled || !waveRef.current || !res.ok || !res.data) return;
+      const el = waveRef.current;
+      if (cancelled || !el || !res.ok || !res.data) return;
       createdUrl = URL.createObjectURL(new Blob([res.data], { type: mimeFor(clip.filePath) }));
-      ws = WaveSurfer.create({
-        container: waveRef.current,
-        waveColor: 'rgba(167, 243, 208, 0.55)',
-        progressColor: 'rgba(167, 243, 208, 0.55)',
-        cursorWidth: 0,
-        height: 36,
-        normalize: true,
-        interact: false,
-        hideScrollbar: true,
-        fillParent: true,
+      const url = createdUrl;
+      // Timeline タブ非表示中（幅 0）に生成すると canvas が作られないため、幅が付くまで待つ。
+      cancelVisible = onceVisible(el, () => {
+        if (cancelled) return;
+        ws = WaveSurfer.create({
+          container: el,
+          waveColor: 'rgba(167, 243, 208, 0.55)',
+          progressColor: 'rgba(167, 243, 208, 0.55)',
+          cursorWidth: 0,
+          height: 36,
+          normalize: true,
+          interact: false,
+          hideScrollbar: true,
+          fillParent: true,
+        });
+        ws.on('error', (e) => console.error('[AudioClip] wavesurfer error', e));
+        void ws.load(url).catch((e) => console.error('[AudioClip] load rejected', e));
       });
-      void ws.load(createdUrl).catch(() => {});
     });
     return () => {
       cancelled = true;
+      cancelVisible();
       ws?.destroy();
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [clip.filePath]);
+  }, [clip.filePath, missing]);
 
   // 衝突回避：自分の左右隣の固定位置から、跨がない開始位置の範囲を求める。
   const idx = clips.findIndex((c) => c.id === clip.id);
@@ -127,7 +139,6 @@ export function AudioClipBlock({
   };
 
   const fileName = clip.filePath.split(/[\\/]/).pop() ?? clip.filePath;
-  const missing = status === 'missing';
   const width = Math.max(8, timeToPx(clip.durationMs, scale));
 
   return (

@@ -204,8 +204,23 @@ interface DmxState {
   setlistGoTo: (index: number) => void;
   /** 頭出し前（未開始）へ戻す。読込は維持。 */
   setlistReset: () => void;
+  /** オペレーター GO：セットリスト読込中は次エントリへ、それ以外は CUE を進める。 */
+  operatorGo: () => void;
+  /** オペレーター BACK：セットリスト読込中は前エントリへ、それ以外は CUE を戻す。 */
+  operatorBack: () => void;
+  /**
+   * Action を適用する（キーボード/リモート/UI 共通）。
+   * SHOW × Show 読込中は発火（actionDown）、それ以外は programmer へ取り込み（captureAction）。
+   */
+  applyAction: (actionId: string, fadeMs: number) => void;
   /** マスター GO 後、対象 Show の音声準備が整ったら Timeline を頭から再生する（私用・冪等）。 */
   resolvePendingPlay: () => void;
+  /**
+   * 指定 Show のメイン音声を先読み（ファイル読込 + デコード）してキャッシュする。
+   * セットリストで次に GO される Show を事前に用意し、GO 時のロード待ち（先頭の欠落）を無くす。
+   * 既にキャッシュ済み/先読み中なら何もしない（冪等・非再生）。
+   */
+  prefetchShowAudio: (showId: string) => void;
   setMode: (mode: EngineMode) => void;
   setMasterLevel: (level: number) => void;
   setBlackout: (on: boolean) => void;
@@ -237,7 +252,7 @@ interface DmxState {
    * 音声を読込（Web Audio のクロック源になる）。
    * url は WaveSurfer 波形表示用の Blob URL、arrayBuffer は再生・時間軸用に decode する実体。
    */
-  loadAudio: (url: string, arrayBuffer: ArrayBuffer) => void;
+  loadAudio: (url: string, arrayBuffer: ArrayBuffer, filePath?: string | null) => void;
   /** 音声を解除（内部クロックへ戻す）。 */
   unloadAudio: () => void;
   /** 絶対位置で playhead を反映しエンジンへ報告（音声クロックから・私用）。 */
@@ -464,6 +479,10 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     if (s.activeShowId) window.dmx.unloadShow();
     s.transportStop();
     set({ activeSetlistId: setlistId, setlistIndex: -1, pendingPlayShowId: null });
+    // 最初の GO 対象（先頭エントリ）を先読みし、1 回目の GO も即時再生にする。
+    const setlist = s.project?.setlists?.find((sl) => sl.id === setlistId);
+    const first = setlist?.entries[0];
+    if (first) get().prefetchShowAudio(first.showId);
   },
 
   unloadSetlist: () => {
@@ -492,11 +511,34 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     window.dmx.loadShow(showId); // エンジンでアクティブ化（setEngineState で戻る）
     s.transportStop(); // playhead 0・跨ぎ基準リセット
     set({ setlistIndex: index, pendingPlayShowId: showId });
+    // 次のエントリを先読みして、続く GO を（デコード待ちなく）即時再生にする。
+    const nextEntry = setlist.entries[index + 1];
+    if (nextEntry) get().prefetchShowAudio(nextEntry.showId);
   },
 
   setlistReset: () => {
     get().transportStop();
     set({ setlistIndex: -1, pendingPlayShowId: null });
+  },
+
+  operatorGo: () => {
+    const s = get();
+    if (s.activeSetlistId) s.setlistGo();
+    else window.dmx.go();
+  },
+
+  operatorBack: () => {
+    const s = get();
+    if (s.activeSetlistId) s.setlistGoTo(s.setlistIndex - 1);
+    else window.dmx.goBack();
+  },
+
+  applyAction: (actionId, fadeMs) => {
+    const s = get();
+    // SHOW × Show 読込時のみ発火、ほかは programmer（フェーダー）へキャプチャ（ActionCard と同じ）。
+    const triggerMode = s.mode === 'show' && s.activeShowId !== null;
+    if (triggerMode) window.dmx.actionDown(actionId, fadeMs);
+    else window.dmx.captureAction(actionId, fadeMs);
   },
 
   resolvePendingPlay: () => {
@@ -505,6 +547,31 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     set({ pendingPlayShowId: null });
     s.transportSeek(0);
     s.transportPlay();
+  },
+
+  prefetchShowAudio: (showId) => {
+    const s = get();
+    const show = s.project?.shows.find((sh) => sh.id === showId);
+    const fp = show?.audio?.filePath;
+    if (!fp) return; // 音声なしの Show は先読み不要（無音 GO）。
+    if (mainBufferCache.has(fp) || prefetchingFiles.has(fp)) return; // 済み/進行中。
+    prefetchingFiles.add(fp);
+    window.dmx
+      .readAudioFile(fp)
+      .then((res) => {
+        if (!res.ok || !res.data) {
+          prefetchingFiles.delete(fp);
+          return; // 欠損は GO 時の通常経路（再リンク）に委ねる。
+        }
+        ensureAudioCtx()
+          .decodeAudioData(res.data)
+          .then((buf) => {
+            prefetchingFiles.delete(fp);
+            cacheMainBuffer(fp, buf);
+          })
+          .catch(() => prefetchingFiles.delete(fp));
+      })
+      .catch(() => prefetchingFiles.delete(fp));
   },
 
   setMode: (mode) =>
@@ -644,9 +711,34 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     set({ transport: { ...s.transport, playheadMs: next } });
   },
 
-  loadAudio: (_url, arrayBuffer) => {
+  loadAudio: (_url, arrayBuffer, filePath) => {
+    console.debug('[loadAudio] called');
     // 既存メイン音源だけ破棄（クリップ・クロックは触らない）。
     stopMainSource();
+    // 先読み済みならデコードを待たず即座に再生できる（セットリスト GO の先頭欠落を防ぐ）。
+    const cached = filePath ? mainBufferCache.get(filePath) : undefined;
+    if (cached) {
+      console.debug('[loadAudio] cache hit durationMs=', Math.round(cached.duration * 1000));
+      mainBuffer = cached;
+      cacheMainBuffer(filePath!, cached); // recency 更新 & live として保護
+      ensureGraph(); // グラフ（既定バス + メイン gain）を用意。デコードは不要。
+      applyTrackGains();
+      const ms = Math.round(cached.duration * 1000);
+      if (Number.isFinite(ms) && ms > 0) {
+        set((s) => ({
+          audioDurationMs: ms,
+          transport: { ...s.transport, durationMs: Math.max(s.transport.durationMs, ms) },
+        }));
+      }
+      // 再生中に差し替わった場合は現在位置から鳴らし直す。
+      if (audioPlaying && mainGainEntry) {
+        const bus = ensureBus(mainGainEntry.deviceId);
+        mainSource = scheduleSource(cached, bus, mainGainEntry.gain, 0, currentPositionMs() / 1000);
+      }
+      // マスター GO の遅延再生: 音声が整っているので即再生開始。
+      get().resolvePendingPlay();
+      return;
+    }
     mainBuffer = null;
     // ファイルを一度だけ PCM デコードし、メインの時間軸・再生源にする。
     // （<audio>.currentTime は VBR 等で非線形・不正確になるため使わない。）
@@ -654,8 +746,11 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     ensureGraph();
     // 生成直後の gain に現在のメインミキサー値（音量/ミュート/ソロ）を反映する。
     applyTrackGains();
+    console.debug('[loadAudio] start decode bytes=', arrayBuffer.byteLength, 'ctxState=', ctx.state);
     void ctx.decodeAudioData(arrayBuffer).then((buf) => {
+      console.debug('[loadAudio] decode ok durationMs=', Math.round(buf.duration * 1000));
       mainBuffer = buf;
+      if (filePath) cacheMainBuffer(filePath, buf);
       const ms = Math.round(buf.duration * 1000);
       if (Number.isFinite(ms) && ms > 0) {
         // 音声長を保持し、再生上限へ反映（以後の setProject でも維持される）。
@@ -671,10 +766,13 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       }
       // マスター GO の遅延再生: 新 Show のメイン音声デコードが整ったので再生開始。
       get().resolvePendingPlay();
-    }).catch(() => {});
+    }).catch((e) => {
+      console.error('[loadAudio] decode FAILED', e);
+    });
   },
 
   unloadAudio: () => {
+    console.debug('[unloadAudio] called');
     stopMainSource();
     mainBuffer = null;
     // 音声長をクリアし、再生上限を GO 点ベースへ戻す。
@@ -763,6 +861,32 @@ let mainBuffer: AudioBuffer | null = null;
 /** メイン用 gain と現在の出力デバイス（どのバスにいるかの判定用）。 */
 let mainGainEntry: { gain: GainNode; deviceId: string } | null = null;
 let mainSource: AudioBufferSourceNode | null = null;
+
+// メイン音声のデコード済みバッファを filePath 単位でキャッシュ（セットリスト先読み用）。
+// AudioBuffer は 1 曲で数十 MB になり得るため、直近数件だけ保持する（LRU 風）。
+const MAIN_BUFFER_CACHE_MAX = 3;
+const mainBufferCache = new Map<string, AudioBuffer>();
+/** 先読みデコード進行中の filePath（二重デコード防止）。 */
+const prefetchingFiles = new Set<string>();
+
+/**
+ * デコード済みメインバッファをキャッシュへ入れ、上限超過分を古い順に破棄する。
+ * 再挿入で recency を更新し、現在再生中（mainBuffer）のファイルは破棄しない。
+ */
+function cacheMainBuffer(filePath: string, buf: AudioBuffer): void {
+  mainBufferCache.delete(filePath); // 末尾（最新）へ入れ直す。
+  mainBufferCache.set(filePath, buf);
+  while (mainBufferCache.size > MAIN_BUFFER_CACHE_MAX) {
+    let removed = false;
+    for (const [fp, b] of mainBufferCache) {
+      if (b === mainBuffer) continue; // 再生中のバッファは残す。
+      mainBufferCache.delete(fp);
+      removed = true;
+      break;
+    }
+    if (!removed) break; // 残りが全て再生中バッファなら打ち切り。
+  }
+}
 
 // 追加トラック。クリップは filePath 単位でデコードをキャッシュ（同一ファイル共有）。
 /** trackId → gain と現在の出力デバイス。 */

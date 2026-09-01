@@ -3,7 +3,7 @@ import { pointsCrossed } from './timeline';
 import type { TimelinePoint } from '../shared/types';
 
 function pts(...ms: number[]): TimelinePoint[] {
-  return ms.map((timecodeMs) => ({ timecodeMs, type: 'go' as const }));
+  return ms.map((timecodeMs, i) => ({ id: `p${i}`, timecodeMs, type: 'go' as const }));
 }
 
 describe('pointsCrossed', () => {

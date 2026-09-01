@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Engine } from './Engine';
-import { defaultArtnetSettings } from '../shared/types';
+import { createDefaultProject, defaultArtnetSettings } from '../shared/types';
 
 /** Art-Net は既定で無効なので、送出パケットを見るテストでは明示的に有効化する。 */
 const artnetOn = () => ({ ...defaultArtnetSettings(), enabled: true });
@@ -82,5 +82,47 @@ describe('Engine', () => {
     // 直近 1 秒に入るティック数（おおよそ 40）。
     expect(state.measuredHz).toBeGreaterThanOrEqual(39);
     expect(state.measuredHz).toBeLessThanOrEqual(41);
+  });
+});
+
+describe('注入タイマー（scheduleProjectNotify）', () => {
+  it('間引き通知が注入タイマーに乗り、stop() で保留分が破棄される', () => {
+    const timers = new Map<ReturnType<typeof setTimeout>, () => void>();
+    let nextId = 1;
+    const engine = new Engine({
+      send: () => {},
+      setTimeoutFn: (cb) => {
+        const id = nextId++ as unknown as ReturnType<typeof setTimeout>;
+        timers.set(id, cb);
+        return id;
+      },
+      clearTimeoutFn: (h) => void timers.delete(h),
+    });
+    const p = createDefaultProject();
+    p.shows = [
+      {
+        id: 'show1',
+        name: 'S',
+        sequence: [{ kind: 'cue', cue: { id: 'c1', values: {}, fadeInMs: 0 } }],
+      },
+    ];
+    engine.loadProject(p);
+    engine.loadShow('show1');
+    engine.goTo(0, 0);
+
+    const onProject = vi.fn();
+    engine.onProject(onProject);
+    engine.setFader(0, 10); // CUE へのリアルタイム書き込み → trailing 通知を予約
+    expect(timers.size).toBe(1); // 生 setTimeout ではなく注入タイマーに乗る
+
+    const fire = [...timers.values()][0];
+    timers.clear();
+    fire();
+    expect(onProject).toHaveBeenCalled(); // trailing 通知が届く
+
+    engine.setFader(0, 20); // 再度予約
+    expect(timers.size).toBe(1);
+    engine.stop(); // 保留中の通知タイマーを破棄
+    expect(timers.size).toBe(0);
   });
 });

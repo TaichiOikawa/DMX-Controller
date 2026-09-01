@@ -22,9 +22,9 @@ function importable(name = 'Imported'): Show {
     ],
     timeline: {
       points: [
-        { timecodeMs: 1000, cueId: 'c1-old', type: 'go' },
-        { timecodeMs: 2000, groupId: 'g1-old', type: 'go' },
-        { timecodeMs: 3000, cueId: 'ghost', type: 'go' },
+        { id: 'p1', timecodeMs: 1000, cueId: 'c1-old', type: 'go' },
+        { id: 'p2', timecodeMs: 2000, groupId: 'g1-old', type: 'go' },
+        { id: 'p3', timecodeMs: 3000, cueId: 'ghost', type: 'go' },
       ],
     },
   };

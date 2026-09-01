@@ -756,6 +756,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   transportPlay: () =>
     set((s) => {
+      // 冪等ガード: 再生中の再呼び出し（リモートの timelinePlay 等）で scheduleAll が
+      // 既存ソースを止めずに二重スケジュールし、音の二重再生・位置の巻き戻りが起きるのを防ぐ。
+      if (s.transport.playing) return {};
       if (hasAudioContent()) {
         scheduleAll(startOffsetSec);
         startAudioRaf();

@@ -231,14 +231,14 @@ const api: DmxBridge = {
   addTimelinePoint(showId, timecodeMs, cueId) {
     ipcRenderer.send(Cmd.addTimelinePoint, showId, timecodeMs, cueId);
   },
-  deleteTimelinePoint(showId, index) {
-    ipcRenderer.send(Cmd.deleteTimelinePoint, showId, index);
+  deleteTimelinePoint(showId, pointId) {
+    ipcRenderer.send(Cmd.deleteTimelinePoint, showId, pointId);
   },
-  updateTimelinePoint(showId, index, timecodeMs) {
-    ipcRenderer.send(Cmd.updateTimelinePoint, showId, index, timecodeMs);
+  updateTimelinePoint(showId, pointId, timecodeMs) {
+    ipcRenderer.send(Cmd.updateTimelinePoint, showId, pointId, timecodeMs);
   },
-  setTimelinePointCue(showId, index, cueId) {
-    ipcRenderer.send(Cmd.setTimelinePointCue, showId, index, cueId);
+  setTimelinePointCue(showId, pointId, cueId) {
+    ipcRenderer.send(Cmd.setTimelinePointCue, showId, pointId, cueId);
   },
   pickShowAudio(showId) {
     return ipcRenderer.invoke(Cmd.pickShowAudio, showId) as ReturnType<DmxBridge['pickShowAudio']>;

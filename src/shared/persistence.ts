@@ -10,6 +10,7 @@ import {
   UNIVERSE_SIZE,
   createDefaultProject,
   type ActionButton,
+  type ActionStep,
   type ArtnetSettings,
   type OpenDmxSettings,
   type Cue,
@@ -270,9 +271,32 @@ function normalizeFaders(raw: unknown): number[] {
 }
 
 function normalizeActions(raw: unknown): ActionButton[] {
-  // Action はロードマップ6 で実装。保存されていればそのまま通す（緩く）。
   if (!Array.isArray(raw)) return [];
-  return raw.filter(isObject) as unknown as ActionButton[];
+  return (raw.filter(isObject) as Record<string, unknown>[]).map(normalizeAction);
+}
+
+/**
+ * Action を正規化する。steps が欠落・不正でも空配列へ倒し、
+ * Engine 側（applyActionLook / editCurrentAction）が steps 前提で落ちないようにする。
+ */
+function normalizeAction(raw: Record<string, unknown>): ActionButton {
+  const action: ActionButton = {
+    id: str(raw.id, fallbackId()),
+    steps: Array.isArray(raw.steps)
+      ? (raw.steps.filter(isObject) as Record<string, unknown>[]).map(normalizeActionStep)
+      : [],
+  };
+  if (typeof raw.name === 'string') action.name = raw.name;
+  return action;
+}
+
+function normalizeActionStep(raw: Record<string, unknown>): ActionStep {
+  const step: ActionStep = {
+    values: normalizeValues(raw.values),
+    fadeInMs: Math.max(0, num(raw.fadeInMs, 0)),
+  };
+  if (raw.holdMs !== undefined) step.holdMs = Math.max(0, num(raw.holdMs, 0));
+  return step;
 }
 
 /** フォルダ配列を正規化する（id/name のみ）。 */
@@ -420,7 +444,12 @@ function normalizeValues(raw: unknown): Record<number, number> {
  * トラック本数の補完（ensureAudioTracks）は編集時にエンジン側で行うため、ここでは存在分のみ整える。
  */
 function normalizeTimeline(raw: Record<string, unknown>): Timeline {
-  const points = (Array.isArray(raw.points) ? raw.points : []) as TimelinePoint[];
+  const points = Array.isArray(raw.points)
+    ? (raw.points.filter(isObject) as Record<string, unknown>[])
+        .map(normalizeTimelinePoint)
+        .filter((p): p is TimelinePoint => p !== null)
+        .sort((a, b) => a.timecodeMs - b.timecodeMs) // エンジン側の昇順不変条件に合わせる
+    : [];
   const timeline: Timeline = { points };
   if (Array.isArray(raw.audioTracks)) {
     timeline.audioTracks = (raw.audioTracks.filter(isObject) as Record<string, unknown>[]).map(
@@ -428,6 +457,20 @@ function normalizeTimeline(raw: Record<string, unknown>): Timeline {
     );
   }
   return timeline;
+}
+
+/** GO ポイントを正規化する。時刻が数値でないポイントは位置が定まらないので捨てる（null）。 */
+function normalizeTimelinePoint(raw: Record<string, unknown>): TimelinePoint | null {
+  if (typeof raw.timecodeMs !== 'number' || !Number.isFinite(raw.timecodeMs)) return null;
+  const point: TimelinePoint = {
+    // id の無い旧フォーマットには代替 id を振る（保存時に永続化される）。
+    id: str(raw.id, fallbackId()),
+    timecodeMs: Math.max(0, Math.round(raw.timecodeMs)),
+    type: 'go',
+  };
+  if (typeof raw.cueId === 'string' && raw.cueId) point.cueId = raw.cueId;
+  if (typeof raw.groupId === 'string' && raw.groupId) point.groupId = raw.groupId;
+  return point;
 }
 
 function normalizeAudioTrack(raw: Record<string, unknown>): AudioTrack {

@@ -410,16 +410,16 @@ export class EngineHost {
     ipcMain.on(Cmd.addTimelinePoint, (_e, showId: string, ms: number, cueId?: string) =>
       this.engine.addTimelinePoint(showId, ms, cueId),
     );
-    ipcMain.on(Cmd.deleteTimelinePoint, (_e, showId: string, index: number) =>
-      this.engine.deleteTimelinePoint(showId, index),
+    ipcMain.on(Cmd.deleteTimelinePoint, (_e, showId: string, pointId: string) =>
+      this.engine.deleteTimelinePoint(showId, pointId),
     );
-    ipcMain.on(Cmd.updateTimelinePoint, (_e, showId: string, index: number, ms: number) =>
-      this.engine.updateTimelinePoint(showId, index, ms),
+    ipcMain.on(Cmd.updateTimelinePoint, (_e, showId: string, pointId: string, ms: number) =>
+      this.engine.updateTimelinePoint(showId, pointId, ms),
     );
     ipcMain.on(
       Cmd.setTimelinePointCue,
-      (_e, showId: string, index: number, cueId: string | undefined) =>
-        this.engine.setTimelinePointCue(showId, index, cueId),
+      (_e, showId: string, pointId: string, cueId: string | undefined) =>
+        this.engine.setTimelinePointCue(showId, pointId, cueId),
     );
     ipcMain.handle(Cmd.pickShowAudio, (_e, showId: string) => this.pickShowAudio(showId));
     ipcMain.on(Cmd.clearShowAudio, (_e, showId: string) => this.engine.clearShowAudio(showId));

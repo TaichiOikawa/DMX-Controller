@@ -568,10 +568,10 @@ export interface DmxBridge {
   timelineSeek(ms: number): void;
   timelineStop(): void;
   addTimelinePoint(showId: string, timecodeMs: number, cueId?: string): void;
-  deleteTimelinePoint(showId: string, index: number): void;
-  updateTimelinePoint(showId: string, index: number, timecodeMs: number): void;
+  deleteTimelinePoint(showId: string, pointId: string): void;
+  updateTimelinePoint(showId: string, pointId: string, timecodeMs: number): void;
   /** GO ポイントに紐づく CUE を設定/解除（undefined で順送りに戻す）。 */
-  setTimelinePointCue(showId: string, index: number, cueId: string | undefined): void;
+  setTimelinePointCue(showId: string, pointId: string, cueId: string | undefined): void;
   /** 音声ファイルをダイアログで選び、Show に絶対パスを設定。 */
   pickShowAudio(showId: string): Promise<{ ok: boolean; path?: string }>;
   /** Show の音声を解除。 */

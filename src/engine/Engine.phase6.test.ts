@@ -480,6 +480,30 @@ describe('Action 発火（look を programmer へ取り込んで保持）', () =
     expect(engine.getOutput()[0]).toBe(200);
     expect(engine.getState().busking[0]).toBe(true);
   });
+
+  it('空 look の Action を発火しても進行中の faderFade を破棄しない', () => {
+    const { engine, clock } = makeEngine();
+    const p = projectWithSequence([]);
+    p.actions = [
+      actionButton({ 0: 200 }),
+      { id: 'empty', name: 'E', steps: [{ values: {}, fadeInMs: 0, holdMs: 1000 }] },
+    ];
+    engine.loadProject(p);
+    clock.now = 0;
+    engine.actionDown('act', 1000); // 0 -> 200 over 1000ms
+    clock.now = 500;
+    engine.tick(500);
+    expect(engine.getOutput()[0]).toBe(100); // フェード中間
+
+    engine.actionDown('empty'); // 空 look: no-op（フェードを巻き込まない）
+    clock.now = 750;
+    engine.tick(750);
+    expect(engine.getOutput()[0]).toBe(150); // フェードは継続
+
+    clock.now = 1000;
+    engine.tick(1000);
+    expect(engine.getOutput()[0]).toBe(200); // 完了
+  });
 });
 
 describe('Action authoring (global / overwrite)', () => {
@@ -605,8 +629,8 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 })), cueEntry(cue('c1', { 0: 20 }))]);
     p.shows[0].timeline = {
       points: [
-        { timecodeMs: 1000, type: 'go' },
-        { timecodeMs: 2000, type: 'go' },
+        { id: 'p1', timecodeMs: 1000, type: 'go' },
+        { id: 'p2', timecodeMs: 2000, type: 'go' },
       ],
     };
     engine.loadProject(p);
@@ -633,7 +657,7 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
       cueEntry(cue('c2', { 0: 30 })),
     ]);
     // 1点目で c2 へ直接頭出し（順送りなら c0 のはず）。
-    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go', cueId: 'c2' }] };
+    p.shows[0].timeline = { points: [{ id: 'p1', timecodeMs: 1000, type: 'go', cueId: 'c2' }] };
     engine.loadProject(p);
     engine.loadShow('show1');
 
@@ -646,7 +670,7 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
   it('falls back to sequential GO when the linked cue was deleted', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
-    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go', cueId: 'missing' }] };
+    p.shows[0].timeline = { points: [{ id: 'p1', timecodeMs: 1000, type: 'go', cueId: 'missing' }] };
     engine.loadProject(p);
     engine.loadShow('show1');
 
@@ -658,13 +682,13 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
   it('setTimelinePointCue links and unlinks a point', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
-    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go' }] };
+    p.shows[0].timeline = { points: [{ id: 'p1', timecodeMs: 1000, type: 'go' }] };
     engine.loadProject(p);
 
-    engine.setTimelinePointCue('show1', 0, 'c0');
+    engine.setTimelinePointCue('show1', 'p1', 'c0');
     expect(engine.getProject().shows[0].timeline!.points[0].cueId).toBe('c0');
 
-    engine.setTimelinePointCue('show1', 0, undefined);
+    engine.setTimelinePointCue('show1', 'p1', undefined);
     expect(engine.getProject().shows[0].timeline!.points[0].cueId).toBeUndefined();
   });
 
@@ -673,16 +697,17 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
     p.shows[0].timeline = {
       points: [
-        { timecodeMs: 1000, type: 'go' },
-        { timecodeMs: 2000, type: 'go' },
+        { id: 'p1', timecodeMs: 1000, type: 'go' },
+        { id: 'p2', timecodeMs: 2000, type: 'go' },
       ],
     };
     engine.loadProject(p);
 
     // 先頭(1000)を 3000 へ移動 -> 並べ替えで [2000, 3000] になる。
-    engine.updateTimelinePoint('show1', 0, 3000);
+    engine.updateTimelinePoint('show1', 'p1', 3000);
     const pts = engine.getProject().shows[0].timeline!.points;
     expect(pts.map((x) => x.timecodeMs)).toEqual([2000, 3000]);
+    expect(pts.map((x) => x.id)).toEqual(['p2', 'p1']); // 並べ替え後も id で追える
   });
 
   it('setShowAudio / clearShowAudio set and remove the audio path', () => {
@@ -699,7 +724,7 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
   it('seek backward does not re-fire', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);
-    p.shows[0].timeline = { points: [{ timecodeMs: 1000, type: 'go' }] };
+    p.shows[0].timeline = { points: [{ id: 'p1', timecodeMs: 1000, type: 'go' }] };
     engine.loadProject(p);
     engine.loadShow('show1');
 

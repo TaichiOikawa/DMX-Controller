@@ -55,6 +55,25 @@ describe('resolveProjectAudioPaths', () => {
     resolveProjectAudioPaths(p, projectDir);
     expect(p.shows[0].audio?.filePath).toBe(abs);
   });
+
+  it('絶対化してもミキサー設定（volume/muted/solo/outputDeviceId）を保持する', () => {
+    const p = projectWithAudio('audio/a.mp3');
+    p.shows[0].audio = {
+      ...p.shows[0].audio!,
+      volume: 0.5,
+      muted: true,
+      solo: true,
+      outputDeviceId: 'dev-1',
+    };
+    resolveProjectAudioPaths(p, projectDir);
+    expect(p.shows[0].audio).toEqual({
+      filePath: path.join(projectDir, 'audio', 'a.mp3'),
+      volume: 0.5,
+      muted: true,
+      solo: true,
+      outputDeviceId: 'dev-1',
+    });
+  });
 });
 
 describe('相対 ⇄ 絶対 の往復', () => {

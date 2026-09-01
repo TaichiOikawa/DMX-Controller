@@ -74,8 +74,9 @@ export function toPortableProject(project: Project, projectDir: string): Project
 export function resolveProjectAudioPaths(project: Project, projectDir: string): void {
   for (const show of project.shows) {
     const filePath = show.audio?.filePath;
-    if (filePath && !path.isAbsolute(filePath)) {
-      show.audio = { filePath: path.resolve(projectDir, filePath) };
+    if (show.audio && filePath && !path.isAbsolute(filePath)) {
+      // filePath 以外（volume/muted/solo/outputDeviceId）は保持したまま絶対化する。
+      show.audio = { ...show.audio, filePath: path.resolve(projectDir, filePath) };
     }
     const tracks = show.timeline?.audioTracks;
     if (tracks) {

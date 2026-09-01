@@ -32,27 +32,41 @@ function refreshMenu(): void {
   buildAppMenu(mainWindow, menuState);
 }
 
-/** 未保存があれば終了前に確認ダイアログを出す。保存/破棄/キャンセルを処理する。 */
-async function confirmCloseWhenDirty(): Promise<void> {
-  if (!mainWindow || !host) return;
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'warning',
-    buttons: ['保存して終了', '保存せず終了', 'キャンセル'],
-    defaultId: 0,
-    cancelId: 2,
-    message: '未保存の変更があります',
-    detail: '変更を保存してから終了しますか？',
-  });
-  if (response === 2) return; // キャンセル: そのまま開いておく
-  if (response === 0) {
-    const r = await host.saveActiveForClose();
-    if (!r.ok) return; // 保存をキャンセル/失敗 → 終了しない
+/** 確認ダイアログの多重表示防止（close と quit の両経路から呼ばれるため）。 */
+let confirmInFlight = false;
+
+/**
+ * 未保存があれば終了前に確認ダイアログを出す。保存/破棄/キャンセルを処理する。
+ * @param quitAfter true ならウィンドウを閉じる代わりにアプリを終了する（quit 経路用）。
+ */
+async function confirmCloseWhenDirty(quitAfter = false): Promise<void> {
+  if (!mainWindow || !host || confirmInFlight) return;
+  confirmInFlight = true;
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['保存して終了', '保存せず終了', 'キャンセル'],
+      defaultId: 0,
+      cancelId: 2,
+      message: '未保存の変更があります',
+      detail: '変更を保存してから終了しますか？',
+    });
+    if (response === 2) return; // キャンセル: そのまま開いておく
+    if (response === 0) {
+      const r = await host.saveActiveForClose();
+      if (!r.ok) return; // 保存をキャンセル/失敗 → 終了しない
+    }
+    allowClose = true;
+    if (quitAfter) app.quit();
+    else mainWindow.close();
+  } finally {
+    confirmInFlight = false;
   }
-  allowClose = true;
-  mainWindow.close();
 }
 
 function createWindow(): void {
+  // 前ウィンドウで終了確認を通過した状態を持ち越さない（macOS の Dock 再表示等）。
+  allowClose = false;
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -236,12 +250,20 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    host?.stop();
-    app.quit();
-  }
+  // 停止処理は will-quit（quit 確定後）に一元化する。
+  if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+// quit（メニュー「終了」/ Cmd+Q）でも未保存確認を通す。
+// before-quit はウィンドウの close（キャンセル可能）より先に発火するため、
+// ここで停止処理をすると quit キャンセル時にエンジンが止まったままになる。
+app.on('before-quit', (e) => {
+  if (allowClose || !host?.isDirty() || !mainWindow) return;
+  e.preventDefault();
+  void confirmCloseWhenDirty(true);
+});
+
+// quit が確定した（もうキャンセルされない）時点で停止する。
+app.on('will-quit', () => {
   host?.stop();
 });

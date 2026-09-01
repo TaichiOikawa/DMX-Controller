@@ -94,6 +94,9 @@ export class Engine {
   private readonly send: (packet: Buffer) => void;
   private readonly sendDmx: ((channels: readonly number[]) => void) | null;
   private readonly nowFn: () => number;
+  /** 注入可能なタイマー（テスト用）。Clock と Project 通知スロットルの双方で使う。 */
+  private readonly setTimeoutFn: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  private readonly clearTimeoutFn: (handle: ReturnType<typeof setTimeout>) => void;
   /**
    * 出力設定（Art-Net / OpenDMX）。Project ではなくアプリ設定に永続化されるため、
    * Project の読込・Undo では **変化しない**（保存も参照もしない）。
@@ -141,6 +144,8 @@ export class Engine {
     this.send = opts.send;
     this.sendDmx = opts.sendDmx ?? null;
     this.nowFn = opts.nowFn ?? (() => Date.now());
+    this.setTimeoutFn = opts.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms));
+    this.clearTimeoutFn = opts.clearTimeoutFn ?? ((h) => clearTimeout(h));
     this.project = createDefaultProject();
     this.artnet = opts.artnet ?? defaultArtnetSettings();
     this.openDmx = opts.openDmx ?? defaultOpenDmxSettings();
@@ -158,18 +163,15 @@ export class Engine {
       output: new Array(UNIVERSE_SIZE).fill(0),
     };
 
-    this.clock = this.makeClock(opts.setTimeoutFn, opts.clearTimeoutFn);
+    this.clock = this.makeClock();
   }
 
-  private makeClock(
-    setTimeoutFn?: EngineOptions['setTimeoutFn'],
-    clearTimeoutFn?: EngineOptions['clearTimeoutFn'],
-  ): Clock {
+  private makeClock(): Clock {
     return new Clock({
       hz: this.artnet.refreshRateHz,
       onTick: (now) => this.tick(now),
-      setTimeoutFn,
-      clearTimeoutFn,
+      setTimeoutFn: this.setTimeoutFn,
+      clearTimeoutFn: this.clearTimeoutFn,
       nowFn: this.nowFn,
     });
   }
@@ -182,6 +184,11 @@ export class Engine {
 
   stop(): void {
     this.clock.stop();
+    // 保留中の Project 通知は破棄する（停止後にタイマーが発火しないように）。
+    if (this.projectNotifyTimer !== null) {
+      this.clearTimeoutFn(this.projectNotifyTimer);
+      this.projectNotifyTimer = null;
+    }
   }
 
   // ===== Project / 永続化 =====
@@ -685,8 +692,10 @@ export class Engine {
     }
 
     // Timeline の cueId / groupId を新 id へ。対応が無ければ当該キーを外す（順送りにフォールバック）。
+    // ポイント自体の id も採番し直す（cue / group と同じく取り込み元との衝突を避ける）。
     if (show.timeline) {
       for (const p of show.timeline.points) {
+        p.id = genId();
         if (p.cueId !== undefined) {
           const mapped = idMap.get(p.cueId);
           if (mapped) p.cueId = mapped;
@@ -1088,10 +1097,8 @@ export class Engine {
     const entries = Object.entries(step.values)
       .map(([k, v]) => [Number(k), clamp255(v)] as const)
       .filter(([ch]) => ch >= 0 && ch < UNIVERSE_SIZE);
-    if (entries.length === 0) {
-      this.runtime.faderFade = null;
-      return false;
-    }
+    // 空 look は何もしない。進行中の faderFade（別 Action のフェード取り込み）も保持する。
+    if (entries.length === 0) return false;
 
     if (fadeMs <= 0) {
       // 即時取り込み。進行中フェードは破棄。
@@ -1287,7 +1294,11 @@ export class Engine {
     if (!show) return;
     this.pushUndo();
     if (!show.timeline) show.timeline = { points: [] };
-    const point: TimelinePoint = { timecodeMs: Math.max(0, Math.round(timecodeMs)), type: 'go' };
+    const point: TimelinePoint = {
+      id: genId(),
+      timecodeMs: Math.max(0, Math.round(timecodeMs)),
+      type: 'go',
+    };
     if (cueId) point.cueId = cueId;
     show.timeline.points.push(point);
     show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
@@ -1295,11 +1306,9 @@ export class Engine {
   }
 
   /** GO ポイントに紐づく CUE を設定/解除する（undefined で順送りに戻す）。 */
-  setTimelinePointCue(showId: string, index: number, cueId: string | undefined): void {
+  setTimelinePointCue(showId: string, pointId: string, cueId: string | undefined): void {
     if (!this.editable) return;
-    const show = this.project.shows.find((s) => s.id === showId);
-    if (!show?.timeline) return;
-    const point = show.timeline.points[index];
+    const point = this.findTimelinePoint(showId, pointId);
     if (!point) return;
     this.pushUndo();
     if (cueId) point.cueId = cueId;
@@ -1307,26 +1316,33 @@ export class Engine {
     this.notifyProject();
   }
 
-  deleteTimelinePoint(showId: string, index: number): void {
+  deleteTimelinePoint(showId: string, pointId: string): void {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show?.timeline) return;
-    if (index < 0 || index >= show.timeline.points.length) return;
+    const idx = show.timeline.points.findIndex((p) => p.id === pointId);
+    if (idx < 0) return;
     this.pushUndo();
-    show.timeline.points.splice(index, 1);
+    show.timeline.points.splice(idx, 1);
     this.notifyProject();
   }
 
   /** GO ポイントの時刻を更新（ドラッグ移動）。更新後に昇順ソート。 */
-  updateTimelinePoint(showId: string, index: number, timecodeMs: number): void {
+  updateTimelinePoint(showId: string, pointId: string, timecodeMs: number): void {
     if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
-    if (!show?.timeline) return;
-    if (index < 0 || index >= show.timeline.points.length) return;
+    const point = show?.timeline?.points.find((p) => p.id === pointId);
+    if (!show?.timeline || !point) return;
     this.pushUndo();
-    show.timeline.points[index].timecodeMs = Math.max(0, Math.round(timecodeMs));
+    point.timecodeMs = Math.max(0, Math.round(timecodeMs));
     show.timeline.points.sort((a, b) => a.timecodeMs - b.timecodeMs);
     this.notifyProject();
+  }
+
+  /** GO ポイントを showId + pointId で引く（無ければ null）。 */
+  private findTimelinePoint(showId: string, pointId: string): TimelinePoint | null {
+    const show = this.project.shows.find((s) => s.id === showId);
+    return show?.timeline?.points.find((p) => p.id === pointId) ?? null;
   }
 
   /** Show に音声ファイル（絶対パス）を設定。音量/ミュート/ソロは保持する。 */
@@ -1629,7 +1645,7 @@ export class Engine {
   /** Edit ドラッグ中の連続編集を間引いて Project 通知する（trailing, ~120ms）。 */
   private scheduleProjectNotify(): void {
     if (this.projectNotifyTimer !== null) return;
-    this.projectNotifyTimer = setTimeout(() => {
+    this.projectNotifyTimer = this.setTimeoutFn(() => {
       this.projectNotifyTimer = null;
       this.notifyProject();
     }, 120);

@@ -34,7 +34,7 @@ function sampleShow(): Show {
         },
       },
     ],
-    timeline: { points: [{ timecodeMs: 1000, cueId: 'c1', groupId: 'g1', type: 'go' }] },
+    timeline: { points: [{ id: 'p1', timecodeMs: 1000, cueId: 'c1', groupId: 'g1', type: 'go' }] },
   };
 }
 
@@ -379,5 +379,77 @@ describe('extractLegacyOutputSettings (旧 Project からのアプリ設定移�
   it('returns nothing for a current-format project or broken text', () => {
     expect(extractLegacyOutputSettings(serializeProject(createDefaultProject()))).toEqual({});
     expect(extractLegacyOutputSettings('not json')).toEqual({});
+  });
+});
+
+describe('normalizeActions (壊れた/手編集された actions の防御)', () => {
+  it('steps 欠落の Action を空 steps で通し、values/fadeInMs/holdMs を補修する', () => {
+    const p = migrateProject({
+      actions: [
+        { id: 'a1', name: 'NoSteps' }, // steps 欠落
+        { id: 'a2', steps: 'broken' }, // steps が配列でない
+        {
+          id: 'a3',
+          name: 'Fix',
+          steps: [
+            { values: { 5: 300, 999: 10, x: 1 }, fadeInMs: -100, holdMs: -5 }, // 範囲外を補修
+            'not-an-object', // オブジェクトでない step は捨てる
+          ],
+        },
+        'not-an-object', // オブジェクトでない Action は捨てる
+      ],
+    });
+    expect(p.actions).toHaveLength(3);
+    expect(p.actions[0]).toEqual({ id: 'a1', name: 'NoSteps', steps: [] });
+    expect(p.actions[1]).toEqual({ id: 'a2', steps: [] });
+    expect(p.actions[2].steps).toEqual([{ values: { 5: 255 }, fadeInMs: 0, holdMs: 0 }]);
+  });
+
+  it('id 欠落には代替 id を振る', () => {
+    const p = migrateProject({ actions: [{ steps: [] }] });
+    expect(p.actions[0].id).toBeTruthy();
+  });
+});
+
+describe('normalizeTimeline points (壊れた GO ポイントの防御)', () => {
+  it('timecodeMs が数値でないポイントを捨て、残りを昇順ソートする', () => {
+    const p = migrateProject({
+      shows: [
+        {
+          id: 's1',
+          name: 'S',
+          sequence: [],
+          timeline: {
+            points: [
+              { id: 'pa', timecodeMs: 2000, type: 'go' },
+              { id: 'pb', timecodeMs: 'bad', type: 'go' }, // 文字列 → 捨てる
+              { id: 'pc', type: 'go' }, // 欠落 → 捨てる
+              { id: 'pd', timecodeMs: -500, cueId: 'c1', type: 'go' }, // 負値 → 0 へ
+              'not-an-object', // 捨てる
+              { id: 'pe', timecodeMs: 100.7, cueId: '', groupId: 42, type: 'weird' }, // 丸め・空/非文字列 id 除去・type 強制
+            ],
+          },
+        },
+      ],
+    });
+    expect(p.shows[0].timeline?.points).toEqual([
+      { id: 'pd', timecodeMs: 0, cueId: 'c1', type: 'go' },
+      { id: 'pe', timecodeMs: 101, type: 'go' },
+      { id: 'pa', timecodeMs: 2000, type: 'go' },
+    ]);
+  });
+
+  it('id の無い旧フォーマットのポイントには代替 id を振る', () => {
+    const p = migrateProject({
+      shows: [
+        {
+          id: 's1',
+          name: 'S',
+          sequence: [],
+          timeline: { points: [{ timecodeMs: 1000, type: 'go' }] },
+        },
+      ],
+    });
+    expect(p.shows[0].timeline?.points[0].id).toBeTruthy();
   });
 });

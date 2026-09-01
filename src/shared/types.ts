@@ -261,6 +261,11 @@ export interface AudioTrack {
 }
 
 export interface TimelinePoint {
+  /**
+   * ポイント固有 id。更新・削除・CUE 紐づけの対象特定と React key に使う。
+   * （時刻でソートし直すと配列 index が動くため、index ベースの参照は使わない。）
+   */
+  id: string;
   /** 音声内の位置 */
   timecodeMs: number;
   /** 指定すればそのグループのみ GO / 省略で全グループ一斉（§11-③） */

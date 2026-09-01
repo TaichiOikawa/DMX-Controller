@@ -24,11 +24,10 @@ interface GoMarkersProps {
 export function GoMarkers({ showId, points, cues, durationMs, scale, editable, onSeek }: GoMarkersProps) {
   return (
     <>
-      {points.map((p, i) => (
+      {points.map((p) => (
         <GoMarker
-          key={i}
+          key={p.id}
           showId={showId}
-          index={i}
           point={p}
           cues={cues}
           durationMs={durationMs}
@@ -43,7 +42,6 @@ export function GoMarkers({ showId, points, cues, durationMs, scale, editable, o
 
 interface GoMarkerProps {
   showId: string;
-  index: number;
   point: TimelinePoint;
   cues: readonly CueOption[];
   durationMs: number;
@@ -52,7 +50,7 @@ interface GoMarkerProps {
   onSeek: (ms: number) => void;
 }
 
-function GoMarker({ showId, index, point, cues, durationMs, scale, editable, onSeek }: GoMarkerProps) {
+function GoMarker({ showId, point, cues, durationMs, scale, editable, onSeek }: GoMarkerProps) {
   const [dragMs, setDragMs] = useState<number | null>(null);
   const moved = useRef(false);
   const ms = dragMs ?? point.timecodeMs;
@@ -84,7 +82,7 @@ function GoMarker({ showId, index, point, cues, durationMs, scale, editable, onS
       if (moved.current) {
         const delta = pxToTime(ev.clientX - startX, scale);
         const newMs = Math.max(0, Math.min(durationMs, startMs + delta));
-        window.dmx.updateTimelinePoint(showId, index, newMs);
+        window.dmx.updateTimelinePoint(showId, point.id, newMs);
       } else {
         onSeek(point.timecodeMs);
       }
@@ -115,7 +113,7 @@ function GoMarker({ showId, index, point, cues, durationMs, scale, editable, onS
           value={point.cueId ?? ''}
           onMouseDown={(e) => e.stopPropagation()}
           onChange={(e) =>
-            window.dmx.setTimelinePointCue(showId, index, e.target.value || undefined)
+            window.dmx.setTimelinePointCue(showId, point.id, e.target.value || undefined)
           }
           className="mt-0.5 max-w-[6rem] rounded bg-neutral-800 px-0.5 text-[9px] text-neutral-200 outline-none ring-1 ring-neutral-700 focus:ring-sky-500"
           title="このポイントが頭出しする CUE"
@@ -141,7 +139,7 @@ function GoMarker({ showId, index, point, cues, durationMs, scale, editable, onS
         <button
           onClick={(e) => {
             e.stopPropagation();
-            window.dmx.deleteTimelinePoint(showId, index);
+            window.dmx.deleteTimelinePoint(showId, point.id);
           }}
           className="absolute -top-3 left-1/2 hidden -translate-x-1/2 text-neutral-500 hover:text-red-400 group-hover:block"
           title="GO点を削除"

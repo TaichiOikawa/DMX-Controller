@@ -30,6 +30,13 @@ import {
 } from '../projectFileOps';
 import type { Folder, Show } from '../../shared/types';
 
+/**
+ * フォルダ配下の Show 行の左インデント。
+ * フォルダ行は px-1.5(6px) + 開閉シェブロン(w-3 + gap-1 = 16px) の位置にアイコンが出るので、
+ * それより 1 段深く見えるよう 32px 取る。「（空）」表示も同じ量で揃える。
+ */
+const SHOW_INDENT = 'pl-8';
+
 /** 右クリックメニュー状態（画面座標）。Show / フォルダ / セットリスト用の判別共用体。 */
 type CtxMenu =
   | { kind: 'show'; id: string; name: string; folderId?: string; x: number; y: number }
@@ -214,7 +221,7 @@ export function ProjectSidebar() {
               }
             : undefined
         }
-        className={`group flex items-center gap-1 rounded px-1.5 py-1 ${indented ? 'pl-4' : ''} ${
+        className={`group flex items-center gap-1 rounded px-1.5 py-1 ${indented ? SHOW_INDENT : ''} ${
           active
             ? 'bg-amber-500/15 ring-1 ring-amber-500/50'
             : selected
@@ -385,7 +392,7 @@ export function ProjectSidebar() {
         {open && (
           <div className="space-y-0.5">
             {children.length === 0 ? (
-              <div className="px-2 py-1 pl-6 text-[11px] text-neutral-600">（空）</div>
+              <div className={`px-2 py-1 ${SHOW_INDENT} text-[11px] text-neutral-600`}>（空）</div>
             ) : (
               children.map((s) => renderShow(s, true))
             )}

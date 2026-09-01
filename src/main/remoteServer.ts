@@ -8,6 +8,9 @@
  *
  * 注意（セキュリティ）: 平文 HTTP・4 桁 PIN の簡易認証。信頼できる LAN 内での利用を前提とし、
  * 既定では無効。設定で明示的に有効化したときだけ listen する。
+ *
+ * 有効/無効・ポート・PIN はアプリ設定（userData/settings.json）に永続化され、
+ * 起動時に configure() で流し込まれる。Project ファイルには保存しない。
  */
 
 import http from 'node:http';
@@ -15,9 +18,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import type { RemoteCommand, RemoteInfo, RemoteState } from '../shared/ipc';
 import { REMOTE_CLIENT_HTML } from './remoteClient';
+import { DEFAULT_REMOTE_PORT, type RemoteSettings } from '../shared/appSettings';
 
-/** リモート操作サーバーの待受ポート。 */
-const DEFAULT_PORT = 3939;
 /** リクエストボディの最大長（DoS 抑止）。 */
 const MAX_BODY = 4096;
 
@@ -40,9 +42,11 @@ function localUrls(port: number): string[] {
 
 export class RemoteServer {
   private server: http.Server | null = null;
-  private port = DEFAULT_PORT;
+  private port = DEFAULT_REMOTE_PORT;
   private pin = genPin();
   private enabled = false;
+  /** 設定変更（PIN 採番・有効状態）の永続化フック。EngineHost が AppSettingsStore へ繋ぐ。 */
+  private onSettingsChange: ((patch: Partial<RemoteSettings>) => void) | null = null;
 
   /** 発行済みトークン（メモリ保持。プロセス再起動で失効）。 */
   private readonly tokens = new Set<string>();
@@ -56,6 +60,26 @@ export class RemoteServer {
   /** 受信コマンドの転送先を登録する。 */
   setCommandForwarder(cb: (cmd: RemoteCommand) => void): void {
     this.forwarder = cb;
+  }
+
+  /** 設定変更の永続化先を登録する（configure より先に呼ぶこと）。 */
+  setSettingsPersister(cb: (patch: Partial<RemoteSettings>) => void): void {
+    this.onSettingsChange = cb;
+  }
+
+  /**
+   * 永続化されたリモート設定を適用する（起動時に一度）。
+   * PIN 未生成（初回起動）ならここで採番し、保存フックへ書き戻す。
+   * enabled=true なら listen まで行う（前回終了時の状態を復元する）。
+   */
+  async configure(settings: RemoteSettings): Promise<void> {
+    this.port = settings.port;
+    if (settings.pin) {
+      this.pin = settings.pin;
+    } else {
+      this.onSettingsChange?.({ pin: this.pin });
+    }
+    if (settings.enabled) await this.setEnabled(true);
   }
 
   /** モニター用ビューモデルを更新し、全 SSE クライアントへ push する。 */
@@ -81,6 +105,8 @@ export class RemoteServer {
       // ポート使用中などで listen 失敗 → 無効のまま接続情報を返す（UI 側でトグルが戻る）。
       console.error('[remote] setEnabled failed:', e);
     }
+    // 実際に listen できたかを保存する（失敗時は無効のまま覚える）。
+    this.onSettingsChange?.({ enabled: this.enabled });
     return this.getInfo();
   }
 

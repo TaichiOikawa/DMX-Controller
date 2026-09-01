@@ -21,6 +21,8 @@ import {
   createSetlist,
   createSetlistEntry,
   createShowRuntime,
+  defaultArtnetSettings,
+  defaultOpenDmxSettings,
   genId,
   type ActionButton,
   type ArtnetSettings,
@@ -75,7 +77,10 @@ export interface EngineOptions {
    * 毎 tick 呼ばれ、渡す配列は Engine が使い回すので受け手は即座に読むかコピーする。
    */
   sendDmx?: (channels: readonly number[]) => void;
+  /** Art-Net 出力設定（アプリ設定由来）。省略時は既定値。 */
   artnet?: ArtnetSettings;
+  /** OpenDMX 出力設定（アプリ設定由来）。省略時は既定値。 */
+  openDmx?: OpenDmxSettings;
   setTimeoutFn?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimeoutFn?: (handle: ReturnType<typeof setTimeout>) => void;
   nowFn?: () => number;
@@ -89,6 +94,10 @@ export class Engine {
   private readonly send: (packet: Buffer) => void;
   private readonly sendDmx: ((channels: readonly number[]) => void) | null;
   private readonly nowFn: () => number;
+  /**
+   * 出力設定（Art-Net / OpenDMX）。Project ではなくアプリ設定に永続化されるため、
+   * Project の読込・Undo では **変化しない**（保存も参照もしない）。
+   */
   private artnet: ArtnetSettings;
   private openDmx: OpenDmxSettings;
   private clock: Clock;
@@ -133,8 +142,8 @@ export class Engine {
     this.sendDmx = opts.sendDmx ?? null;
     this.nowFn = opts.nowFn ?? (() => Date.now());
     this.project = createDefaultProject();
-    this.artnet = opts.artnet ?? { ...this.project.settings.artnet };
-    this.openDmx = { ...this.project.settings.openDmx };
+    this.artnet = opts.artnet ?? defaultArtnetSettings();
+    this.openDmx = opts.openDmx ?? defaultOpenDmxSettings();
 
     this.runtime = {
       activeShowId: null,
@@ -180,8 +189,7 @@ export class Engine {
   loadProject(project: Project): void {
     this.project = project;
     this.runtime.faderLive = project.faders.slice();
-    this.applyArtnet(project.settings.artnet);
-    this.openDmx = { ...project.settings.openDmx };
+    // 出力設定（Art-Net / OpenDMX）はアプリ設定側の持ち物なので Project 読込では触らない。
     this.unloadShow();
     // 別ドキュメントを開いた／新規にしたら Undo 履歴はリセットする。
     this.undoStack = [];
@@ -198,8 +206,6 @@ export class Engine {
 
   getProject(): Project {
     this.project.faders = this.runtime.faderLive.slice();
-    this.project.settings.artnet = { ...this.artnet };
-    this.project.settings.openDmx = { ...this.openDmx };
     return this.project;
   }
 
@@ -243,8 +249,7 @@ export class Engine {
   private restoreProject(json: string): void {
     this.project = deserializeProject(json);
     this.runtime.faderLive = this.project.faders.slice();
-    this.applyArtnet(this.project.settings.artnet);
-    this.openDmx = { ...this.project.settings.openDmx };
+    // 出力設定は Project 外（アプリ設定）なので Undo / Redo の対象外。
     const showId = this.runtime.activeShowId;
     if (showId) {
       this.activeShow = this.project.shows.find((s) => s.id === showId) ?? null;
@@ -394,14 +399,17 @@ export class Engine {
   }
 
   /**
-   * OpenDMX 設定を更新する。実際のポート開閉は state を購読する main 側が行う。
-   * Project にも書き戻すので、保存すればポート選択は次回起動時に復元される。
+   * USB-DMX 設定を更新する。実際のポート開閉は state を購読する main 側が行う。
+   * 永続化はアプリ設定（userData/settings.json）側の責務で、Project には保存しない。
    */
   updateOpenDmxSettings(settings: OpenDmxSettings): void {
-    this.openDmx = { enabled: !!settings.enabled, portPath: settings.portPath ?? '' };
-    this.project.settings.openDmx = { ...this.openDmx };
+    this.openDmx = {
+      enabled: !!settings.enabled,
+      portPath: settings.portPath ?? '',
+      // 旧データや外部から来た値でも、知らない種別は従来どおりの opendmx に倒す。
+      kind: settings.kind === 'pico' ? 'pico' : 'opendmx',
+    };
     this.emitState();
-    this.notifyProject();
   }
 
   /** ch ラベルを設定（空文字で削除）。 */

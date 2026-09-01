@@ -1,5 +1,7 @@
 /**
- * OpenDMX（Enttec Open DMX USB 等の FTDI ベース I/F）への送出ドライバ。
+ * USB シリアル経由の DMX 送出ドライバ。2 種類の出力先を扱う（kind で切り替える）。
+ *
+ * ■ kind='opendmx' — Enttec Open DMX USB 等の FTDI ベース I/F
  *
  * この種の I/F はマイコンを持たず、DMX の物理フレームをホストが全部作る:
  *
@@ -14,11 +16,20 @@
  * 追いつかない。そこで setFrame() は最新フレームを上書きするだけにし、
  * 送出ループは常に「最新の 1 枚」を出す（積み残しを作らない）。
  *
+ * ■ kind='pico' — Raspberry Pi Pico W のネイティブ USB CDC（LCS Serial Protocol v1）
+ *
+ * こちらは DMX の物理層を Pico 側が作るので、ホストは BREAK も 250kbaud も要らない。
+ * CDC の上に「SOF(A5 5A) + type + len(LE16) + payload + XOR」の電文を乗せて値を渡す。
+ * 仕様は LightingControllSystem/USB_SERIAL_PROTOCOL.md を参照。
+ *
+ * 差分は「ポートの開き方」と「1 フレームの書き方」だけで、接続管理・再接続・
+ * レート計測・IPC・UI の骨格は 2 種類で共通。
+ *
  * serialport はネイティブモジュールなのでバンドルせず、動的 import で読み込む。
  * 読み込みに失敗しても Art-Net 出力は動き続けるよう、例外は status に落とす。
  */
 
-import { UNIVERSE_SIZE } from '../shared/types';
+import { UNIVERSE_SIZE, type DmxDeviceKind } from '../shared/types';
 import type { OpenDmxStatus, SerialPortInfo } from '../shared/ipc';
 
 /** DMX のボーレート（250kbps 固定）。 */
@@ -38,6 +49,15 @@ const MIN_FRAME_INTERVAL_MS = 25;
 const RECONNECT_INTERVAL_MS = 2000;
 /** FTDI のベンダー ID。OpenDMX I/F の判別に使う。 */
 const FTDI_VENDOR_ID = '0403';
+/** Raspberry Pi のベンダー ID。Pico W の CDC(2E8A:000A) の判別に使う。 */
+const PICO_VENDOR_ID = '2e8a';
+/** Pico のボーレート。CDC なので名目値で、実効速度には関係しない。 */
+const PICO_BAUD_RATE = 115_200;
+/** LCS 電文の先頭 2 バイト（SOF）。 */
+const LCS_SOF_0 = 0xa5;
+const LCS_SOF_1 = 0x5a;
+/** LCS 電文の type: DMX 値の書き込み（Host → Device）。 */
+const LCS_TYPE_DMX = 0x01;
 
 /** serialport の SerialPort（型のみ。実体は動的 import）。 */
 type SerialPortClass = typeof import('serialport').SerialPort;
@@ -58,8 +78,14 @@ export interface DmxSerialPort {
   removeAllListeners(): void;
 }
 
-/** ポートを開いて返す関数。既定は serialport を使う実装（テストで差し替え可）。 */
-export type DmxSerialPortFactory = (portPath: string) => Promise<DmxSerialPort>;
+/**
+ * ポートを開いて返す関数。既定は serialport を使う実装（テストで差し替え可）。
+ * シリアルの設定が種別で違うので kind を受け取る。
+ */
+export type DmxSerialPortFactory = (
+  portPath: string,
+  kind: DmxDeviceKind,
+) => Promise<DmxSerialPort>;
 
 let cachedSerialPort: SerialPortClass | null = null;
 
@@ -104,6 +130,28 @@ export function allocDmxFrame(): Buffer {
   return Buffer.alloc(FRAME_SIZE);
 }
 
+/**
+ * LCS プロトコル（Pico W）の 1 電文を組み立てる。
+ *
+ *   A5 5A | type | len_lo | len_hi | payload(len) | cksum
+ *
+ * `len` はリトルエンディアンの 16bit、`cksum` は type 以降の全バイトの XOR（初期値 0）。
+ * 長さで区切るのでバイトスタッフィングは不要（payload に 0xA5 が出てもよい）。
+ */
+export function encodeLcsPacket(type: number, payload: Uint8Array): Buffer {
+  const out = Buffer.allocUnsafe(6 + payload.length);
+  out[0] = LCS_SOF_0;
+  out[1] = LCS_SOF_1;
+  out[2] = type;
+  out[3] = payload.length & 0xff;
+  out[4] = (payload.length >> 8) & 0xff;
+  out.set(payload, 5);
+  let cksum = out[2] ^ out[3] ^ out[4];
+  for (let i = 0; i < payload.length; i++) cksum ^= payload[i];
+  out[5 + payload.length] = cksum;
+  return out;
+}
+
 /** シリアルポートを列挙する（OpenDMX らしいポートを先頭に並べる）。 */
 export async function listSerialPorts(): Promise<SerialPortInfo[]> {
   const SerialPort = await loadSerialPort();
@@ -111,6 +159,9 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
   const infos: SerialPortInfo[] = ports.map((p) => {
     const vendorId = p.vendorId?.toLowerCase();
     const manufacturer = p.manufacturer ?? undefined;
+    // VID が分かるものは種別まで推定して返す（UI がポート選択時に自動で合わせる）。
+    const kindHint: DmxDeviceKind | undefined =
+      vendorId === PICO_VENDOR_ID ? 'pico' : vendorId === FTDI_VENDOR_ID ? 'opendmx' : undefined;
     return {
       path: p.path,
       // friendlyName は Windows のみ返る。型に無いので存在確認して拾う。
@@ -118,11 +169,11 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
       manufacturer,
       vendorId: p.vendorId,
       productId: p.productId,
-      likelyDmx:
-        vendorId === FTDI_VENDOR_ID || /ftdi/i.test(manufacturer ?? ''),
+      likelyDmx: kindHint !== undefined || /ftdi/i.test(manufacturer ?? ''),
+      kindHint,
     };
   });
-  // FTDI 製を先に、その中はパス順。選択ミスを減らすための並べ替えのみ。
+  // FTDI / Pico 製を先に、その中はパス順。選択ミスを減らすための並べ替えのみ。
   return infos.sort((a, b) => {
     if (a.likelyDmx !== b.likelyDmx) return a.likelyDmx ? -1 : 1;
     return a.path.localeCompare(b.path);
@@ -130,20 +181,26 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
 }
 
 /**
- * DMX の物理設定でポートを開く既定の実装。
- * 250kbps / 8bit / パリティなし / ストップ 2bit、フロー制御なし。
+ * ポートを開く既定の実装。シリアルの設定は種別で変える。
+ *
+ * - opendmx: DMX の物理設定そのもの（250kbps / 8bit / パリティなし / ストップ 2bit）。
+ * - pico   : CDC なのでボーレートは名目値。250kbaud / ストップ 2bit は意味が無い上に
+ *   一部の環境で弾かれるので、素直に 115200 / 8N1 で開く。
+ *
+ * どちらもフロー制御は使わない（DTR は serialport が既定で上げる）。
  */
-const defaultPortFactory: DmxSerialPortFactory = async (portPath) => {
+const defaultPortFactory: DmxSerialPortFactory = async (portPath, kind) => {
   const SerialPort = await loadSerialPort();
+  const line =
+    kind === 'pico'
+      ? { baudRate: PICO_BAUD_RATE, dataBits: 8 as const, stopBits: 1 as const }
+      : { baudRate: BAUD_RATE, dataBits: 8 as const, stopBits: 2 as const };
   return new Promise<DmxSerialPort>((resolve, reject) => {
     const port = new SerialPort(
       {
         path: portPath,
-        baudRate: BAUD_RATE,
-        dataBits: 8,
-        stopBits: 2,
+        ...line,
         parity: 'none',
-        // OpenDMX は送信専用。フロー制御は使わない。
         rtscts: false,
         xon: false,
         xoff: false,
@@ -174,6 +231,7 @@ export class OpenDmxDriver {
   /** 望ましい状態（設定由来）。 */
   private enabled = false;
   private portPath = '';
+  private kind: DmxDeviceKind = 'opendmx';
 
   /** 送出ループが動作中か（多重起動防止）。 */
   private looping = false;
@@ -205,15 +263,18 @@ export class OpenDmxDriver {
   }
 
   /**
-   * 設定を反映する。有効化／ポート変更なら開き直し、無効化なら閉じる。
+   * 設定を反映する。有効化／ポート変更／種別変更なら開き直し、無効化なら閉じる。
    * 実際のオープンは非同期に進み、結果は status で通知する。
    */
-  apply(settings: { enabled: boolean; portPath: string }): void {
+  apply(settings: { enabled: boolean; portPath: string; kind?: DmxDeviceKind }): void {
     const enabled = !!settings.enabled;
     const portPath = settings.portPath ?? '';
-    if (enabled === this.enabled && portPath === this.portPath) return;
+    // 種別はシリアルの開き方そのものが変わるので、変更されたら開き直す。
+    const kind: DmxDeviceKind = settings.kind === 'pico' ? 'pico' : 'opendmx';
+    if (enabled === this.enabled && portPath === this.portPath && kind === this.kind) return;
     this.enabled = enabled;
     this.portPath = portPath;
+    this.kind = kind;
     this.clearReconnect();
 
     if (!enabled) {
@@ -244,18 +305,19 @@ export class OpenDmxDriver {
     if (this.disposed || !this.enabled || !this.portPath) return;
 
     const target = this.portPath;
+    const kind = this.kind;
     this.setStatus({ state: 'opening', portPath: target, measuredHz: 0 });
 
     let port: DmxSerialPort;
     try {
-      port = await this.openPort(target);
+      port = await this.openPort(target, kind);
     } catch (e) {
       this.failAndScheduleReconnect(target, `ポートを開けませんでした: ${errorMessage(e)}`);
       return;
     }
 
     // オープン完了までに設定が変わっていたら、開いたポートは捨てる。
-    if (this.disposed || !this.enabled || this.portPath !== target) {
+    if (this.disposed || !this.enabled || this.portPath !== target || this.kind !== kind) {
       port.close(() => {});
       return;
     }
@@ -335,10 +397,21 @@ export class OpenDmxDriver {
     }
   }
 
-  /** BREAK → MAB → スタートコード + 512ch を 1 回送る。 */
+  /**
+   * 最新フレームを 1 回送る。
+   * - pico   : LCS の DMX 電文（ch1..512 の実データ）を 1 本書くだけ。
+   * - opendmx: BREAK → MAB → スタートコード + 512ch。
+   */
   private async writeFrame(port: DmxSerialPort): Promise<void> {
     // write 中に setFrame が来ても混ざらないよう、送る内容をここで固定する。
     this.pending.copy(this.outgoing);
+
+    if (this.kind === 'pico') {
+      // outgoing[0] はスタートコード。Pico へは ch1.. の実データだけを渡す。
+      await write(port, encodeLcsPacket(LCS_TYPE_DMX, this.outgoing.subarray(1)));
+      await drain(port);
+      return;
+    }
 
     await setBreak(port, true);
     await delay(BREAK_MS);

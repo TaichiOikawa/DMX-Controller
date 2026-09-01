@@ -9,8 +9,6 @@ import {
   PROJECT_VERSION,
   UNIVERSE_SIZE,
   createDefaultProject,
-  defaultArtnetSettings,
-  defaultOpenDmxSettings,
   type ActionButton,
   type ArtnetSettings,
   type OpenDmxSettings,
@@ -28,6 +26,8 @@ import {
   type AudioTrack,
   type AudioClip,
 } from './types';
+import { normalizeArtnet, normalizeOpenDmx } from './appSettings';
+import { clampInt, isObject, num, str } from './normalize';
 
 /** Project を整形 JSON 文字列へ。 */
 export function serializeProject(project: Project): string {
@@ -225,38 +225,40 @@ function normalizeLabels(raw: unknown, count: number): Record<number, string> | 
   return any ? out : undefined;
 }
 
+/**
+ * Project の settings を正規化する。
+ * 出力系（artnet / openDmx）はアプリ設定へ移したので、旧ファイルに残っていても捨てる
+ * （移行は {@link extractLegacyOutputSettings} 経由でアプリ設定側が一度だけ拾う）。
+ */
 function normalizeSettings(raw: unknown): Project['settings'] {
   const def = createDefaultProject().settings;
   if (!isObject(raw)) return def;
   return {
     universeCount: clampInt(num(raw.universeCount, def.universeCount), 1, 8),
-    artnet: normalizeArtnet(raw.artnet),
-    openDmx: normalizeOpenDmx(raw.openDmx),
     releaseFadeMs: Math.max(0, num(raw.releaseFadeMs, def.releaseFadeMs)),
   };
 }
 
-function normalizeArtnet(raw: unknown): ArtnetSettings {
-  const def = defaultArtnetSettings();
-  if (!isObject(raw)) return def;
-  return {
-    // enabled は後付けフィールド。旧ファイル（未定義）は「有効」として扱う。
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : def.enabled,
-    targetIp: str(raw.targetIp, def.targetIp),
-    universe: clampInt(num(raw.universe, def.universe), 0, 15),
-    net: clampInt(num(raw.net, def.net), 0, 127),
-    subnet: clampInt(num(raw.subnet, def.subnet), 0, 15),
-    refreshRateHz: clampInt(num(raw.refreshRateHz, def.refreshRateHz), 1, 60),
-  };
-}
-
-function normalizeOpenDmx(raw: unknown): OpenDmxSettings {
-  const def = defaultOpenDmxSettings();
-  if (!isObject(raw)) return def;
-  return {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : def.enabled,
-    portPath: str(raw.portPath, def.portPath),
-  };
+/**
+ * 旧フォーマットの Project JSON に残っている出力設定（settings.artnet / settings.openDmx）を取り出す。
+ * v1.x では Project に保存していたので、アプリ設定が未作成のときだけ一度だけ引き継ぐために使う。
+ * 該当フィールドが無ければ undefined。
+ */
+export function extractLegacyOutputSettings(text: string): {
+  artnet?: ArtnetSettings;
+  openDmx?: OpenDmxSettings;
+} {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return {};
+  }
+  if (!isObject(raw) || !isObject(raw.settings)) return {};
+  const out: { artnet?: ArtnetSettings; openDmx?: OpenDmxSettings } = {};
+  if (isObject(raw.settings.artnet)) out.artnet = normalizeArtnet(raw.settings.artnet);
+  if (isObject(raw.settings.openDmx)) out.openDmx = normalizeOpenDmx(raw.settings.openDmx);
+  return out;
 }
 
 function normalizeFaders(raw: unknown): number[] {
@@ -455,22 +457,6 @@ function normalizeAudioClip(raw: Record<string, unknown>): AudioClip | null {
     startMs: Math.max(0, num(raw.startMs, 0)),
     durationMs: Math.max(0, num(raw.durationMs, 0)),
   };
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function num(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
-
-function str(v: unknown, fallback: string): string {
-  return typeof v === 'string' ? v : fallback;
-}
-
-function clampInt(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.round(v)));
 }
 
 let idCounter = 0;

@@ -3,6 +3,7 @@ import {
   collectShowChannels,
   deserializeProject,
   deserializeShow,
+  extractLegacyOutputSettings,
   migrateProject,
   remapShowChannels,
   serializeLyrics,
@@ -138,34 +139,22 @@ describe('migrateProject (tolerant loading)', () => {
     expect(p.shows).toEqual([]);
   });
 
-  it('treats a legacy project without output flags as Art-Net on / OpenDMX off', () => {
-    // enabled / openDmx は後付けフィールド。既存プロジェクトの挙動を変えてはいけない。
-    const p = migrateProject({
-      settings: { artnet: { targetIp: '10.0.0.5', universe: 3 } },
-    });
-    expect(p.settings.artnet.enabled).toBe(true);
-    expect(p.settings.artnet.targetIp).toBe('10.0.0.5');
-    expect(p.settings.openDmx).toEqual({ enabled: false, portPath: '' });
-  });
-
-  it('round-trips OpenDMX settings and honours an explicitly disabled Art-Net', () => {
+  it('drops output settings from a legacy project (they live in app settings now)', () => {
     const p = migrateProject({
       settings: {
-        artnet: { enabled: false },
+        universeCount: 1,
+        releaseFadeMs: 120,
+        artnet: { targetIp: '10.0.0.5', universe: 3 },
         openDmx: { enabled: true, portPath: 'COM7' },
       },
     });
-    expect(p.settings.artnet.enabled).toBe(false);
-    expect(p.settings.openDmx).toEqual({ enabled: true, portPath: 'COM7' });
-
-    const reloaded = deserializeProject(serializeProject(p));
-    expect(reloaded.settings.artnet.enabled).toBe(false);
-    expect(reloaded.settings.openDmx).toEqual({ enabled: true, portPath: 'COM7' });
-  });
-
-  it('falls back to defaults for a malformed openDmx block', () => {
-    const p = migrateProject({ settings: { openDmx: { enabled: 'yes', portPath: 42 } } });
-    expect(p.settings.openDmx).toEqual({ enabled: false, portPath: '' });
+    expect(p.settings).toEqual({ universeCount: 1, releaseFadeMs: 120 });
+    // 書き出しにも混入しない（Project を配っても他マシンの出力設定を壊さない）。
+    expect(serializeProject(p)).not.toContain('artnet');
+    expect(deserializeProject(serializeProject(p)).settings).toEqual({
+      universeCount: 1,
+      releaseFadeMs: 120,
+    });
   });
 
   it('migrates legacy parallel groups[] into group entries', () => {
@@ -370,5 +359,25 @@ describe('serializeLyrics', () => {
       sequence: [{ kind: 'cue', cue: { id: 'c1', lyrics: '  ', values: {}, fadeInMs: 0 } }],
     };
     expect(serializeLyrics(show)).toBe('# Empty 歌詞\n\n（歌詞が登録された CUE はありません）\n');
+  });
+});
+
+describe('extractLegacyOutputSettings (旧 Project からのアプリ設定移行)', () => {
+  it('picks up output settings stored in an old project file', () => {
+    const legacy = JSON.stringify({
+      settings: {
+        artnet: { enabled: false, targetIp: '10.0.0.5', universe: 3 },
+        openDmx: { enabled: true, portPath: 'COM7' },
+      },
+    });
+    const out = extractLegacyOutputSettings(legacy);
+    expect(out.artnet).toMatchObject({ enabled: false, targetIp: '10.0.0.5', universe: 3 });
+    // 旧 Project に kind は無いので、従来どおりの opendmx に倒す。
+    expect(out.openDmx).toEqual({ enabled: true, portPath: 'COM7', kind: 'opendmx' });
+  });
+
+  it('returns nothing for a current-format project or broken text', () => {
+    expect(extractLegacyOutputSettings(serializeProject(createDefaultProject()))).toEqual({});
+    expect(extractLegacyOutputSettings('not json')).toEqual({});
   });
 });

@@ -17,6 +17,7 @@
 import type {
   ArtnetSettings,
   Cue,
+  DmxDeviceKind,
   EngineMode,
   OpenDmxSettings,
   Project,
@@ -189,6 +190,7 @@ export type MenuAction =
   | 'view:tabTimeline'
   | 'view:toggleSidebar'
   | 'view:toggleFaders'
+  | 'view:resetLayout'
   // ショー
   | 'show:go'
   | 'show:goBack'
@@ -312,7 +314,7 @@ export interface RemoteCommand {
 export interface RemoteInfo {
   enabled: boolean;
   port: number;
-  /** 接続 PIN（4 桁）。無効時も一度生成済みなら表示する。 */
+  /** 接続 PIN（4 桁）。アプリ設定に永続化され、再起動しても変わらない。 */
   pin: string;
   /** LAN 上の接続 URL 一覧（複数 NIC 対応）。 */
   urls: string[];
@@ -407,8 +409,13 @@ export interface SerialPortInfo {
   manufacturer?: string;
   vendorId?: string;
   productId?: string;
-  /** FTDI(VID 0403) 等、OpenDMX I/F として尤もらしいポートか。UI の並べ替えに使う。 */
+  /** FTDI(VID 0403) / Pico(VID 2e8a) 等、DMX I/F として尤もらしいポートか。UI の並べ替えに使う。 */
   likelyDmx: boolean;
+  /**
+   * VID から推定した出力先の種別。UI でポートを選んだ瞬間に種別を自動で合わせるのに使う。
+   * 判別できないポートでは undefined。
+   */
+  kindHint?: DmxDeviceKind;
 }
 
 /** OpenDMX 接続の実行時状態。設定（OpenDmxSettings）とは別で、非永続。 */

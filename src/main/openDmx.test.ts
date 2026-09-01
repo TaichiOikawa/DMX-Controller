@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { allocDmxFrame, writeDmxFrame } from './openDmx';
+import { allocDmxFrame, encodeLcsPacket, writeDmxFrame } from './openDmx';
 import { UNIVERSE_SIZE } from '../shared/types';
 
 describe('writeDmxFrame', () => {
@@ -47,5 +47,37 @@ describe('writeDmxFrame', () => {
     writeDmxFrame(new Array(UNIVERSE_SIZE).fill(200), buf);
     writeDmxFrame(new Array(UNIVERSE_SIZE).fill(0), buf);
     expect(buf.subarray(1).every((v) => v === 0)).toBe(true);
+  });
+});
+
+/** payload の XOR に type / len を混ぜた、仕様どおりのチェックサム。 */
+const cksumOf = (packet: Buffer) =>
+  packet.subarray(2, packet.length - 1).reduce((a, b) => a ^ b, 0);
+
+describe('encodeLcsPacket', () => {
+  it('SOF + type + len(LE) + payload + cksum の枠に入れる', () => {
+    const packet = encodeLcsPacket(0x01, Uint8Array.from([0x10, 0x20, 0x30]));
+    expect(packet).toHaveLength(6 + 3);
+    expect([...packet.subarray(0, 5)]).toEqual([0xa5, 0x5a, 0x01, 0x03, 0x00]);
+    expect([...packet.subarray(5, 8)]).toEqual([0x10, 0x20, 0x30]);
+    expect(packet[8]).toBe(cksumOf(packet));
+  });
+
+  it('長さをリトルエンディアンで書く（512ch なら 00 02）', () => {
+    const packet = encodeLcsPacket(0x01, new Uint8Array(UNIVERSE_SIZE));
+    expect([...packet.subarray(0, 5)]).toEqual([0xa5, 0x5a, 0x01, 0x00, 0x02]);
+    expect(packet).toHaveLength(6 + UNIVERSE_SIZE);
+  });
+
+  it('空 payload（PING / BLACKOUT）は 6 バイトになる', () => {
+    const packet = encodeLcsPacket(0x02, new Uint8Array(0));
+    expect([...packet]).toEqual([0xa5, 0x5a, 0x02, 0x00, 0x00, 0x02]);
+  });
+
+  it('cksum は type / len / payload 全部の XOR', () => {
+    // 0xA5 が payload に出てもスタッフィングしない（長さで区切るため）。
+    const packet = encodeLcsPacket(0x01, Uint8Array.from([0xa5, 0x5a, 0xff]));
+    expect(packet).toHaveLength(6 + 3);
+    expect(packet[packet.length - 1]).toBe(0x01 ^ 0x03 ^ 0x00 ^ 0xa5 ^ 0x5a ^ 0xff);
   });
 });

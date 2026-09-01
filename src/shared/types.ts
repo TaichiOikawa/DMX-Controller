@@ -74,6 +74,10 @@ export interface Setlist {
   entries: SetlistEntry[];
 }
 
+/**
+ * Art-Net(UDP) 送出設定。Project ではなくアプリ自体に永続化する
+ * （送信先 IP はマシン・現場に紐づくため。src/shared/appSettings.ts）。
+ */
 export interface ArtnetSettings {
   /** Art-Net(UDP) 送出の有効/無効。false でも出力ループ自体は回る。 */
   enabled: boolean;
@@ -91,28 +95,47 @@ export interface ArtnetSettings {
 }
 
 /**
- * OpenDMX（Enttec Open DMX USB 等の FTDI ベース I/F）の送出設定。
+ * USB 経由の DMX 出力先の種別。
  *
- * この種の I/F はマイコンを持たず、ホストが 250kbps・8N2 のシリアルで
- * BREAK / MAB / スタートコード込みの DMX フレームを直接生成する。
+ * - `opendmx`: Enttec Open DMX USB 等の FTDI ベース I/F。マイコンを持たないので、
+ *   ホストが 250kbps・8N2 のシリアルで BREAK / MAB / スタートコード込みの
+ *   DMX フレームを直接生成する。
+ * - `pico`: Raspberry Pi Pico W のネイティブ USB CDC。DMX の物理層は Pico 側が作るので、
+ *   ホストは CDC の上に LCS 独自電文（USB_SERIAL_PROTOCOL.md）で値を渡すだけ。
+ */
+export type DmxDeviceKind = 'opendmx' | 'pico';
+
+/**
+ * USB-DMX（OpenDMX / Pico W）の送出設定。
+ *
  * 実送出は main プロセスの OpenDmxDriver が担当する（src/main/openDmx.ts）。
+ * ポートはマシン固有なので Project ではなくアプリ自体に永続化する
+ * （src/shared/appSettings.ts）。
  */
 export interface OpenDmxSettings {
-  /** OpenDMX 送出の有効/無効。Art-Net とは独立に ON/OFF できる。 */
+  /** USB-DMX 送出の有効/無効。Art-Net とは独立に ON/OFF できる。 */
   enabled: boolean;
   /**
    * シリアルポートのパス（Windows: `COM3` / macOS: `/dev/tty.usbserial-XXXX`）。
-   * 空文字は未選択。マシン固有なので Project を配布しても再選択が必要になりうる。
+   * 空文字は未選択。
    */
   portPath: string;
+  /**
+   * 出力先の種別。ポートの開き方とフレームの書き方がこれで変わる。
+   * 旧 settings.json には無いフィールドなので、未定義は `'opendmx'` へ倒す。
+   */
+  kind: DmxDeviceKind;
 }
 
+/**
+ * Project（演目データ）に保存する設定。
+ *
+ * 出力系（Art-Net / OpenDMX）とリモート操作の設定は **ここには入れない**。
+ * それらはマシン・現場に紐づくのでアプリ自体へ保存する（src/shared/appSettings.ts）。
+ */
 export interface ProjectSettings {
   /** 当面 1 */
   universeCount: number;
-  artnet: ArtnetSettings;
-  /** OpenDMX(USB-DMX) 出力設定。Art-Net と同時に出せる。 */
-  openDmx: OpenDmxSettings;
   /** リリース時の戻りフェード（デフォルト 0 = 即時 / §11-①） */
   releaseFadeMs: number;
 }
@@ -326,10 +349,10 @@ export interface EngineRuntime {
   output: number[];
 }
 
-/** デフォルトの Art-Net 設定（ローカルのビジュアライザ/ノード向け）。 */
+/** デフォルトの Art-Net 設定（既定は無効・ローカルのビジュアライザ/ノード向け）。 */
 export function defaultArtnetSettings(): ArtnetSettings {
   return {
-    enabled: true,
+    enabled: false,
     targetIp: '127.0.0.1',
     universe: 0,
     net: 0,
@@ -338,11 +361,12 @@ export function defaultArtnetSettings(): ArtnetSettings {
   };
 }
 
-/** デフォルトの OpenDMX 設定（既定は無効・ポート未選択）。 */
+/** デフォルトの USB-DMX 設定（既定は無効・ポート未選択・OpenDMX）。 */
 export function defaultOpenDmxSettings(): OpenDmxSettings {
   return {
     enabled: false,
     portPath: '',
+    kind: 'opendmx',
   };
 }
 
@@ -356,8 +380,6 @@ export function createDefaultProject(): Project {
     name: 'Untitled',
     settings: {
       universeCount: 1,
-      artnet: defaultArtnetSettings(),
-      openDmx: defaultOpenDmxSettings(),
       releaseFadeMs: 0,
     },
     faders: new Array(UNIVERSE_SIZE).fill(0),

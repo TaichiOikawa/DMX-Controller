@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { OpenDmxDriver, type DmxSerialPort } from './openDmx';
 import type { OpenDmxStatus } from '../shared/ipc';
-import { UNIVERSE_SIZE } from '../shared/types';
+import { UNIVERSE_SIZE, type DmxDeviceKind } from '../shared/types';
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,19 +60,22 @@ class FakePort implements DmxSerialPort {
 }
 
 /** driver / 記録された status / 開かれた FakePort をまとめて用意する。 */
-function makeDriver(onOpen?: (path: string) => Promise<DmxSerialPort>) {
+function makeDriver(onOpen?: (path: string, kind: DmxDeviceKind) => Promise<DmxSerialPort>) {
   const statuses: OpenDmxStatus[] = [];
   const ports: FakePort[] = [];
+  /** openPort が受け取った種別（ポートの開き方が種別で変わることの検証用）。 */
+  const openedKinds: DmxDeviceKind[] = [];
   const driver = new OpenDmxDriver({
     onStatus: (s) => statuses.push(s),
-    openPort: async (path) => {
-      if (onOpen) return onOpen(path);
+    openPort: async (path, kind) => {
+      openedKinds.push(kind);
+      if (onOpen) return onOpen(path, kind);
       const p = new FakePort();
       ports.push(p);
       return p;
     },
   });
-  return { driver, statuses, ports };
+  return { driver, statuses, ports, openedKinds };
 }
 
 const stateSeq = (statuses: OpenDmxStatus[]) => statuses.map((s) => s.state);
@@ -81,7 +84,7 @@ describe('OpenDmxDriver: 送出プロトコル', () => {
   it('BREAK → MAB → スタートコード+512ch → drain の順で 1 フレームを送る', async () => {
     const { driver, ports } = makeDriver();
     driver.setFrame(new Array(UNIVERSE_SIZE).fill(0));
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(80);
     await driver.stop();
 
@@ -96,7 +99,7 @@ describe('OpenDmxDriver: 送出プロトコル', () => {
   it('送出するのは常に最新フレーム（積み残しを作らない）', async () => {
     const { driver, ports } = makeDriver();
     driver.setFrame(new Array(UNIVERSE_SIZE).fill(10));
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(40);
     driver.setFrame(new Array(UNIVERSE_SIZE).fill(200));
     await wait(120);
@@ -111,11 +114,65 @@ describe('OpenDmxDriver: 送出プロトコル', () => {
 
   it('物理上限（約 40Hz）を超えて送らない', async () => {
     const { driver, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(300);
     await driver.stop();
     // 300ms なら最大 12 フレーム程度。偽ポートは即応答なので上限で頭打ちになるはず。
     expect(ports[0].writes.length).toBeLessThanOrEqual(14);
+  });
+});
+
+describe('OpenDmxDriver: 送出プロトコル（Pico W / LCS）', () => {
+  it('BREAK を作らず、LCS の DMX 電文を 1 本書いて drain する', async () => {
+    const { driver, ports, openedKinds } = makeDriver();
+    driver.setFrame(new Array(UNIVERSE_SIZE).fill(0));
+    driver.apply({ enabled: true, portPath: 'COM_PICO', kind: 'pico' });
+    await wait(80);
+    await driver.stop();
+
+    const port = ports[0];
+    expect(openedKinds).toEqual(['pico']);
+    // DMX の物理層は Pico 側が作るので、ホストは制御線を触らない。
+    expect(port.calls).not.toContain('brk:on');
+    expect(port.calls).not.toContain('brk:off');
+    expect(port.calls.slice(0, 2)).toEqual(['write', 'drain']);
+  });
+
+  it('SOF + type + 512ch 分の長さ(LE) で始まり、スタートコードは含めない', async () => {
+    const channels = new Array(UNIVERSE_SIZE).fill(0);
+    channels[0] = 0x11;
+    channels[511] = 0x22;
+    const { driver, ports } = makeDriver();
+    driver.setFrame(channels);
+    driver.apply({ enabled: true, portPath: 'COM_PICO', kind: 'pico' });
+    await wait(80);
+    await driver.stop();
+
+    const packet = ports[0].writes[0];
+    expect([...packet.subarray(0, 5)]).toEqual([0xa5, 0x5a, 0x01, 0x00, 0x02]);
+    expect(packet).toHaveLength(6 + UNIVERSE_SIZE);
+    // payload[0] が ch1。スタートコード 0x00 が混ざっていない。
+    expect(packet[5]).toBe(0x11);
+    expect(packet[5 + 511]).toBe(0x22);
+    // cksum は type 以降の XOR。
+    expect(packet[packet.length - 1]).toBe(
+      packet.subarray(2, packet.length - 1).reduce((a, b) => a ^ b, 0),
+    );
+  });
+
+  it('種別だけ変えても開き直す', async () => {
+    const { driver, ports, openedKinds } = makeDriver();
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
+    await wait(60);
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'pico' });
+    await wait(60);
+    await driver.stop();
+
+    expect(openedKinds).toEqual(['opendmx', 'pico']);
+    expect(ports).toHaveLength(2);
+    expect(ports[0].closed).toBe(true);
+    // 開き直した後は LCS 電文になっている。
+    expect(ports[1].writes[0][0]).toBe(0xa5);
   });
 });
 
@@ -124,7 +181,7 @@ describe('OpenDmxDriver: 状態通知', () => {
     // 毎秒何度も変わる値を push すると、512 要素を含む state 配信が IPC を溢れさせる。
     // 通知は接続/切断/エラーの遷移だけに絞る契約。
     const { driver, statuses } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(300);
 
     expect(driver.getStatus().measuredHz).toBeGreaterThan(0);
@@ -137,9 +194,9 @@ describe('OpenDmxDriver: 状態通知', () => {
 describe('OpenDmxDriver: 接続ライフサイクル', () => {
   it('無効化するとポートを閉じ、状態を disabled にする', async () => {
     const { driver, statuses, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(60);
-    driver.apply({ enabled: false, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: false, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(60);
 
     expect(ports[0].closed).toBe(true);
@@ -153,7 +210,7 @@ describe('OpenDmxDriver: 接続ライフサイクル', () => {
 
   it('有効だがポート未選択なら closed のまま何も開かない', async () => {
     const { driver, statuses, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: '' });
+    driver.apply({ enabled: true, portPath: '', kind: 'opendmx' });
     await wait(40);
     expect(ports).toHaveLength(0);
     expect(statuses[statuses.length - 1].state).toBe('closed');
@@ -162,9 +219,9 @@ describe('OpenDmxDriver: 接続ライフサイクル', () => {
 
   it('ポートを変更すると開き直す', async () => {
     const { driver, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_A' });
+    driver.apply({ enabled: true, portPath: 'COM_A', kind: 'opendmx' });
     await wait(60);
-    driver.apply({ enabled: true, portPath: 'COM_B' });
+    driver.apply({ enabled: true, portPath: 'COM_B', kind: 'opendmx' });
     await wait(60);
     await driver.stop();
 
@@ -177,7 +234,7 @@ describe('OpenDmxDriver: 接続ライフサイクル', () => {
     const { driver, statuses } = makeDriver(async () => {
       throw new Error('File not found');
     });
-    driver.apply({ enabled: true, portPath: 'COM_MISSING' });
+    driver.apply({ enabled: true, portPath: 'COM_MISSING', kind: 'opendmx' });
     await wait(60);
     await driver.stop();
 
@@ -189,7 +246,7 @@ describe('OpenDmxDriver: 接続ライフサイクル', () => {
 
   it('本番中に抜線されたら error にして再接続を試みる', async () => {
     const { driver, statuses, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(60);
     ports[0].emit('close');
     await wait(60);
@@ -206,7 +263,7 @@ describe('OpenDmxDriver: 接続ライフサイクル', () => {
 
   it('stop 後は再接続しない', async () => {
     const { driver, ports } = makeDriver();
-    driver.apply({ enabled: true, portPath: 'COM_FAKE' });
+    driver.apply({ enabled: true, portPath: 'COM_FAKE', kind: 'opendmx' });
     await wait(60);
     await driver.stop();
     ports[0].emit('close');

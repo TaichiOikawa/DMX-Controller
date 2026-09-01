@@ -64,7 +64,13 @@ DMX は一定レートで出し続ける必要があり、レンダラ（React�
 - ArtDMX パケットを UDP 6454 へ送出
 - **ハード無しでのテスト**: Art-Net ビジュアライザ / ソフトノードで受信確認できるようにする
 
-### 4.2 OpenDMX（Enttec Open DMX USB 等）
+### 4.2 USB-DMX（OpenDMX / Pico W）
+
+USB シリアル経由の出力は 2 種類あり、設定の `openDmx.kind` で切り替える。
+接続管理・自動再接続・レート計測・UI は共通で、**差分は「ポートの開き方」と
+「1 フレームの書き方」だけ**。
+
+#### 4.2.1 `kind: 'opendmx'` — Enttec Open DMX USB 等（FTDI ベース）
 
 FTDI ベースの I/F はマイコンを持たないため、DMX の物理フレームをホストが全部組み立てる。
 
@@ -74,8 +80,25 @@ FTDI ベースの I/F はマイコンを持たないため、DMX の物理フレ
   BREAK/MAB は「最小長」の規定なので長い分には問題ない
 - **送出レートの物理上限は約 40Hz**（513 バイト × 11bit / 250kbps ≒ 22.6ms/フレーム）。
   エンジンのクロックと送出は分離し、送出側は常に「最新の 1 枚」を出す（積み残しを作らない）
+#### 4.2.2 `kind: 'pico'` — Raspberry Pi Pico W のネイティブ USB CDC
+
+自作機（LightingControllSystem）向け。DMX の物理層は Pico 側が作るので、ホストは
+CDC の上に独自電文（LCS Serial Protocol v1）で値を渡すだけ。追加ハード不要。
+
+- シリアル設定: **115200 / 8N1**（CDC なのでボーレートは名目値）。VID:PID = `2E8A:000A`
+- 1 電文: `A5 5A | type | len_lo | len_hi | payload | cksum`。`len` は LE16、
+  `cksum` は type 以降の XOR（初期値 0）。長さで区切るのでバイトスタッフィング不要
+- DMX 値の書き込みは `type=0x01`、payload[0] が ch1（スタートコードは載せない）
+- 送出は **40Hz（25ms 間隔）**。ファームは 2 秒無通信で `link=0` にするが**出力値は保持する**
+- **Art-Net と同時に流さないこと**（後から来た方が勝つ）
+- 仕様の全文: `LightingControllSystem/USB_SERIAL_PROTOCOL.md`
+
+#### 4.2.3 共通
+
 - 抜線・オープン失敗はエラー状態として UI に出し、一定間隔で自動再接続する
 - ポート名はマシン固有のため、Project に保存はするが可搬ではない
+- ポート列挙では VID から種別を推定し（FTDI `0403` → opendmx / Raspberry Pi `2e8a` → pico）、
+  UI でポートを選んだ瞬間に `kind` を自動で合わせる
 
 ---
 
@@ -173,6 +196,13 @@ interface Project {
 
 interface ProjectSettings {
   universeCount: number;     // 当面 1
+  releaseFadeMs: number;     // リリース時の戻りフェード（デフォルト 0 = 即時 / §11-①）
+}
+
+// ===== アプリ設定（Project ではなくアプリ自体に永続化）=====
+// 出力先・リモート操作はマシン/現場に紐づくので Project へは保存せず、
+// userData/settings.json に置く（実装: src/shared/appSettings.ts）。
+interface AppSettings {
   artnet: {
     enabled: boolean;        // Art-Net(UDP) 送出の有効/無効
     targetIp: string;        // 送信先ノード or ブロードキャスト
@@ -181,11 +211,16 @@ interface ProjectSettings {
     subnet: number;
     refreshRateHz: number;   // ~40（出力ループ全体のレート。OpenDMX にも効く）
   };
-  openDmx: {                 // OpenDMX(USB-DMX)。Art-Net と同時に出せる
+  openDmx: {                 // USB-DMX。Art-Net と同時に出せる
     enabled: boolean;
     portPath: string;        // 'COM3' / '/dev/tty.usbserial-XXXX'。空 = 未選択
+    kind: 'opendmx' | 'pico';// 出力先の種別。未定義の旧設定は 'opendmx' 扱い
   };
-  releaseFadeMs: number;     // リリース時の戻りフェード（デフォルト 0 = 即時 / §11-①）
+  remote: {                  // リモート操作サーバー（スマホ等）
+    enabled: boolean;        // 起動時に自動で listen するか
+    port: number;            // 既定 3939
+    pin: string;             // 4 桁。再起動しても変わらない
+  };
 }
 
 // ===== Show =====

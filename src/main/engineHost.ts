@@ -6,6 +6,7 @@
  * - 出力フレームを ~30Hz に間引いて renderer へ転送（IPC 氾濫防止 §3）
  * - Project 変更・状態を renderer へ転送
  * - Project の保存/読込（dialog + fs）
+ * - アプリ設定（Art-Net / OpenDMX / リモート）の読込・永続化（AppSettingsStore）
  */
 
 import dgram from 'node:dgram';
@@ -31,15 +32,12 @@ import {
 } from '../shared/ipc';
 import { RemoteServer } from './remoteServer';
 import { OpenDmxDriver, listSerialPorts } from './openDmx';
-import {
-  type ArtnetSettings,
-  type OpenDmxSettings,
-  type Show,
-  defaultArtnetSettings,
-} from '../shared/types';
+import { AppSettingsStore } from './appSettingsStore';
+import { type ArtnetSettings, type OpenDmxSettings, type Show } from '../shared/types';
 import {
   deserializeProject,
   deserializeShow,
+  extractLegacyOutputSettings,
   serializeLyrics,
   serializeProject,
   serializeShow,
@@ -80,6 +78,8 @@ type SaveLoadResult = { ok: boolean; path?: string; error?: string };
 
 export class EngineHost {
   private readonly engine: Engine;
+  /** アプリ自体に保存する設定（出力系 / リモート）。Project とは独立に永続化する。 */
+  private readonly appSettings = new AppSettingsStore();
   private readonly socket: dgram.Socket;
   private artnet: ArtnetSettings;
   /** OpenDMX(USB-DMX) の送出ドライバ。Art-Net とは独立に動く。 */
@@ -104,9 +104,11 @@ export class EngineHost {
   private lastSavedJson: string;
   private currentFilePath: string | null = null;
   private autosaveTimer: ReturnType<typeof setInterval> | null = null;
+  /** 旧 Project からの出力設定の引き継ぎを済ませたか（起動後 1 回だけ・最初に開いた Project のみ）。 */
+  private legacySettingsAdopted = false;
 
   constructor() {
-    this.artnet = defaultArtnetSettings();
+    this.artnet = this.appSettings.getArtnet();
     this.socket = dgram.createSocket('udp4');
     this.socket.on('error', (err) => {
       console.error('[artnet] socket error:', err);
@@ -131,15 +133,16 @@ export class EngineHost {
 
     this.engine = new Engine({
       artnet: this.artnet,
+      openDmx: this.appSettings.getOpenDmx(),
       send: (packet) => this.sendPacket(packet),
       sendDmx: (channels) => this.openDmxDriver.setFrame(channels),
     });
 
     this.engine.onFrame((frame) => this.forwardFrame(frame));
     this.engine.onState((state) => {
-      // 送信先 IP 等は Engine 側が真実（loadProject で変わりうる）。常に追従。
+      // 送信先 IP 等は Engine 側が真実。常に追従。
       this.artnet = state.artnet;
-      // Project 読込 / Undo でもポート設定が変わりうるので、常に Driver へ反映する。
+      // ポートの開閉は Driver 側で冪等。設定変更に追従させるため毎回渡す。
       this.openDmxDriver.apply(state.openDmx);
       this.broadcast(Evt.engineState, state);
       this.engineStateListener?.(state);
@@ -159,6 +162,8 @@ export class EngineHost {
         this.mainWebContents.send(Evt.remoteCommand, cmd);
       }
     });
+    // 有効/無効・PIN の変更はアプリ設定へ書き戻す（次回起動時に復元する）。
+    this.remoteServer.setSettingsPersister((patch) => this.appSettings.setRemote(patch));
   }
 
   // ===== 未保存（dirty）状態の管理 =====
@@ -240,8 +245,10 @@ export class EngineHost {
 
   start(): void {
     this.engine.start();
-    // 起動時点の Project 設定で OpenDMX を接続する（以降は onState 経由で追従）。
+    // 起動時点のアプリ設定で OpenDMX を接続する（以降は onState 経由で追従）。
     this.openDmxDriver.apply(this.engine.getOpenDmxSettings());
+    // リモート操作サーバーも前回終了時の状態（有効なら listen・同じ PIN）を復元する。
+    void this.remoteServer.configure(this.appSettings.getRemote());
     if (this.autosaveTimer === null) {
       this.autosaveTimer = setInterval(() => void this.autosaveBackup(), AUTOSAVE_INTERVAL_MS);
     }
@@ -255,6 +262,8 @@ export class EngineHost {
     }
     void this.openDmxDriver.stop();
     void this.remoteServer.close();
+    // 遅延書き込み中のアプリ設定を取りこぼさない。
+    this.appSettings.flush();
     try {
       this.socket.close();
     } catch {
@@ -266,12 +275,15 @@ export class EngineHost {
   registerIpc(): void {
     // --- フェーダー / 設定 ---
     ipcMain.on(Cmd.setFader, (_e, p: SetFaderPayload) => this.engine.setFader(p.ch, p.value));
-    ipcMain.on(Cmd.updateArtnetSettings, (_e, s: ArtnetSettings) =>
-      this.engine.updateArtnetSettings(s),
-    );
-    ipcMain.on(Cmd.updateOpenDmxSettings, (_e, s: OpenDmxSettings) =>
-      this.engine.updateOpenDmxSettings(s),
-    );
+    // 出力設定は Project ではなくアプリ設定へ保存する（マシン・現場に紐づくため）。
+    ipcMain.on(Cmd.updateArtnetSettings, (_e, s: ArtnetSettings) => {
+      this.engine.updateArtnetSettings(s);
+      this.appSettings.setArtnet(this.engine.getArtnetSettings());
+    });
+    ipcMain.on(Cmd.updateOpenDmxSettings, (_e, s: OpenDmxSettings) => {
+      this.engine.updateOpenDmxSettings(s);
+      this.appSettings.setOpenDmx(this.engine.getOpenDmxSettings());
+    });
     ipcMain.handle(Cmd.listSerialPorts, () => this.listSerialPorts());
     ipcMain.handle(Cmd.getEngineState, () => this.engine.getState());
     ipcMain.handle(Cmd.getProject, () => this.engine.getProject());
@@ -520,6 +532,7 @@ export class EngineHost {
     if (res.canceled || res.filePaths.length === 0) return { ok: false };
     try {
       const text = await fs.readFile(res.filePaths[0], 'utf-8');
+      this.adoptLegacyOutputSettings(text);
       const project = deserializeProject(text);
       // 相対パスで保存された音声を絶対パスへ戻す（以降のメモリ処理は絶対パス前提）。
       resolveProjectAudioPaths(project, path.dirname(res.filePaths[0]));
@@ -530,6 +543,26 @@ export class EngineHost {
       return { ok: true, path: res.filePaths[0], missingFiles };
     } catch (e) {
       return { ok: false, error: String(e) };
+    }
+  }
+
+  /**
+   * 旧バージョンで Project に保存されていた出力設定を、アプリ設定へ一度だけ引き継ぐ。
+   *
+   * 出力設定はアプリ側へ移したが、初回起動（settings.json 未作成）で旧 Project を開いた場合だけは
+   * 送信先 IP / ポート選択が失われないように拾い上げる。以降は Project 側の値を一切見ない。
+   */
+  private adoptLegacyOutputSettings(projectJson: string): void {
+    if (this.legacySettingsAdopted || !this.appSettings.isFirstRun()) return;
+    this.legacySettingsAdopted = true;
+    const legacy = extractLegacyOutputSettings(projectJson);
+    if (legacy.artnet) {
+      this.engine.updateArtnetSettings(legacy.artnet);
+      this.appSettings.setArtnet(legacy.artnet);
+    }
+    if (legacy.openDmx) {
+      this.engine.updateOpenDmxSettings(legacy.openDmx);
+      this.appSettings.setOpenDmx(legacy.openDmx);
     }
   }
 

@@ -1,10 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Engine } from './Engine';
+import { defaultArtnetSettings } from '../shared/types';
+
+/** Art-Net は既定で無効なので、送出パケットを見るテストでは明示的に有効化する。 */
+const artnetOn = () => ({ ...defaultArtnetSettings(), enabled: true });
 
 describe('Engine', () => {
   it('reflects setFader into the composed output on tick', () => {
     const sent: Buffer[] = [];
-    const engine = new Engine({ send: (p) => sent.push(p) });
+    const engine = new Engine({ send: (p) => sent.push(p), artnet: artnetOn() });
 
     engine.setFader(0, 255);
     engine.setFader(1, 100);
@@ -34,7 +38,7 @@ describe('Engine', () => {
 
   it('increments the ArtDMX sequence each tick, skipping 0', () => {
     const sent: Buffer[] = [];
-    const engine = new Engine({ send: (p) => sent.push(p) });
+    const engine = new Engine({ send: (p) => sent.push(p), artnet: artnetOn() });
     for (let i = 0; i < 3; i++) engine.tick(i);
     expect(sent[0].readUInt8(12)).toBe(1);
     expect(sent[1].readUInt8(12)).toBe(2);

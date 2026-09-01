@@ -175,15 +175,18 @@ Undo には積む（フォルダ一括再リンクは 1 スナップショット
   パターン（B1 参照）は再発しやすい。optional フィールドを持つオブジェクトの部分更新は
   ヘルパ関数に寄せると安全。
 
-### コード衛生
+### コード衛生 ✅対応済み（2026-09-01）
 
-- `console.debug` の残骸: `store.ts` の `loadAudio` / `unloadAudio`（`:824, 830, 858, 884` 付近）。
-- `mixer.ts` の冒頭コメントが「マイルストーン 1〜2 では層 1〜3 未実装」のまま古い
-  （実際は show 層まで実装済み）。`resolveChannel` の未使用フック
-  （`actionControls` / `actionValue`）も、Action を programmer 取り込み方式に統一した今は
-  整理してよい。
-- `App.tsx` のリモート報告 `JSON.stringify` 比較（`:397-417`）は毎レンダー全 VM を直列化する。
-  実害は小さいが、変化検知は依存配列で十分になっている。
+対応内容: `store.ts` の `console.debug` を削除（decode 失敗の `console.error` は保持）。
+`mixer.ts` を現状（busking / show / フェーダーの 3 層・Action 層なし）に合わせて書き直し、
+未使用の `actionControls` / `actionValue` フックを削除、旧「グループ間 HTP」時代の
+`anyGroupControls` / `htpOverGroups` を `showControls` / `showValue` へ改名。
+
+- ~~`console.debug` の残骸~~ → 削除済み。
+- ~~`mixer.ts` の古いコメント・未使用フック~~ → 書き直し済み。
+- `App.tsx` のリモート報告 `JSON.stringify` 比較（`:397-417`）: **再評価の結果、現状維持**。
+  依存の `project` はフェーダー編集のたびに参照が変わる（内容同一でも effect が走る）ため、
+  この比較が SSE への重複 push を実際に抑止している。VM は小さく直列化コストも軽微。
 
 ---
 

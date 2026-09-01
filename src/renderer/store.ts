@@ -839,13 +839,11 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   },
 
   loadAudio: (_url, arrayBuffer, filePath) => {
-    console.debug('[loadAudio] called');
     // 既存メイン音源だけ破棄（クリップ・クロックは触らない）。
     stopMainSource();
     // 先読み済みならデコードを待たず即座に再生できる（セットリスト GO の先頭欠落を防ぐ）。
     const cached = filePath ? mainBufferCache.get(filePath) : undefined;
     if (cached) {
-      console.debug('[loadAudio] cache hit durationMs=', Math.round(cached.duration * 1000));
       mainBuffer = cached;
       cacheMainBuffer(filePath!, cached); // recency 更新 & live として保護
       ensureGraph(); // グラフ（既定バス + メイン gain）を用意。デコードは不要。
@@ -873,9 +871,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     ensureGraph();
     // 生成直後の gain に現在のメインミキサー値（音量/ミュート/ソロ）を反映する。
     applyTrackGains();
-    console.debug('[loadAudio] start decode bytes=', arrayBuffer.byteLength, 'ctxState=', ctx.state);
     void ctx.decodeAudioData(arrayBuffer).then((buf) => {
-      console.debug('[loadAudio] decode ok durationMs=', Math.round(buf.duration * 1000));
       mainBuffer = buf;
       if (filePath) cacheMainBuffer(filePath, buf);
       const ms = Math.round(buf.duration * 1000);
@@ -899,7 +895,6 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   },
 
   unloadAudio: () => {
-    console.debug('[unloadAudio] called');
     stopMainSource();
     mainBuffer = null;
     // 音声長をクリアし、再生上限を GO 点ベースへ戻す。

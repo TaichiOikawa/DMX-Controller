@@ -19,34 +19,22 @@ describe('resolveChannel priority stack (§6)', () => {
 
   it('busking channel outputs the fader value (HTP ignored, can go down)', () => {
     const ctx = baseCtx({
-      anyGroupControls: () => true,
-      htpOverGroups: () => 255,
+      showControls: () => true,
+      showValue: () => 255,
     });
     ctx.faderLive[3] = 40;
     ctx.busking[3] = true;
-    // busking 層が show(HTP) 層より優先 → 40（下げれば下がる）。
+    // busking 層が show 層より優先 → 40（下げれば下がる）。
     expect(resolveChannel(ctx, 3)).toBe(40);
   });
 
-  it('show layer HTP applies when a group controls the channel and not busking', () => {
+  it('show layer applies when the show controls the channel and not busking', () => {
     const ctx = baseCtx({
-      anyGroupControls: (ch) => ch === 5,
-      htpOverGroups: () => 180,
+      showControls: (ch) => ch === 5,
+      showValue: () => 180,
     });
     ctx.faderLive[5] = 10;
     expect(resolveChannel(ctx, 5)).toBe(180);
-  });
-
-  it('action layer overrides everything', () => {
-    const ctx = baseCtx({
-      actionControls: (ch) => ch === 7,
-      actionValue: () => 99,
-      anyGroupControls: () => true,
-      htpOverGroups: () => 255,
-    });
-    ctx.faderLive[7] = 5;
-    ctx.busking[7] = true;
-    expect(resolveChannel(ctx, 7)).toBe(99);
   });
 });
 

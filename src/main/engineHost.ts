@@ -254,14 +254,15 @@ export class EngineHost {
     }
   }
 
-  stop(): void {
+  /** 停止処理。シリアルポートの close 完了まで待てるよう Promise を返す（呼び出し側で待つ）。 */
+  async stop(): Promise<void> {
     this.engine.stop();
     if (this.autosaveTimer !== null) {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    void this.openDmxDriver.stop();
-    void this.remoteServer.close();
+    await this.openDmxDriver.stop();
+    await this.remoteServer.close();
     // 遅延書き込み中のアプリ設定を取りこぼさない。
     this.appSettings.flush();
     try {
@@ -490,6 +491,8 @@ export class EngineHost {
       await fs.writeFile(filePath, serializeProject(portable), 'utf-8');
       this.currentFilePath = filePath;
       this.markClean();
+      // 保存済みより古い自動バックアップは誤復元のもとなので掃除する（失敗しても本保存は成功）。
+      void this.cleanupBackups(filePath);
       return { ok: true, path: filePath };
     } catch (e) {
       return { ok: false, error: String(e) };
@@ -677,6 +680,21 @@ export class EngineHost {
       return { ok: true, path: res.filePaths[0], payload: deserializeShow(text) };
     } catch (e) {
       return { ok: false, error: String(e) };
+    }
+  }
+
+  /**
+   * 正常保存後に自動バックアップの残骸を削除する（保存先の .bak と未保存用リカバリ）。
+   * 未保存変更が再び生まれれば autosaveBackup が作り直す。存在しない等の失敗は無視。
+   */
+  private async cleanupBackups(filePath: string): Promise<void> {
+    const targets = [`${filePath}.bak`, path.join(app.getPath('userData'), 'recovery.dmxproj')];
+    for (const target of targets) {
+      try {
+        await fs.unlink(target);
+      } catch {
+        // 無ければ何もしない。
+      }
     }
   }
 

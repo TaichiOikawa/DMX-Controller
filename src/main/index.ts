@@ -264,6 +264,12 @@ app.on('before-quit', (e) => {
 });
 
 // quit が確定した（もうキャンセルされない）時点で停止する。
-app.on('will-quit', () => {
-  host?.stop();
+// シリアルポートの close 等の完了を待ってから終了する（ハング防止に上限 2 秒）。
+let quitCleanupDone = false;
+app.on('will-quit', (e) => {
+  if (quitCleanupDone || !host) return;
+  e.preventDefault();
+  quitCleanupDone = true;
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000));
+  void Promise.race([host.stop(), timeout]).finally(() => app.exit(0));
 });

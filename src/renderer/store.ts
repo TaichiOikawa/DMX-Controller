@@ -528,9 +528,24 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       const selectedSetlistExists =
         project.setlists?.some((sl) => sl.id === s.selectedSetlistId) ?? false;
 
+      // Project から参照が消えたクリップ音源の読込状態を落とす（Project を跨いだ無限成長防止）。
+      const referencedClips = new Set<string>();
+      for (const sh of project.shows) {
+        for (const t of sh.timeline?.audioTracks ?? []) {
+          for (const c of t.clips) referencedClips.add(c.filePath);
+        }
+      }
+      let audioFileStatus = s.audioFileStatus;
+      if (Object.keys(audioFileStatus).some((fp) => !referencedClips.has(fp))) {
+        audioFileStatus = Object.fromEntries(
+          Object.entries(audioFileStatus).filter(([fp]) => referencedClips.has(fp)),
+        );
+      }
+
       return {
         project,
         faders,
+        audioFileStatus,
         selectedShowId,
         selectedSetlistId: selectedSetlistExists ? s.selectedSetlistId : null,
         ...(s.activeSetlistId && !activeSetlistExists
@@ -1003,6 +1018,11 @@ function cacheMainBuffer(filePath: string, buf: AudioBuffer): void {
 // 追加トラック。クリップは filePath 単位でデコードをキャッシュ（同一ファイル共有）。
 /** trackId → gain と現在の出力デバイス。 */
 const trackGainEntries = new Map<string, { gain: GainNode; deviceId: string }>();
+/**
+ * デコード済みクリップバッファ（filePath 単位・Map の挿入順を recency として使う）。
+ * AudioBuffer は数十 MB になり得るため、アクティブ Show が参照しないものは上限まで間引く。
+ */
+const CLIP_BUFFER_CACHE_MAX = 16;
 const clipBuffers = new Map<string, AudioBuffer>();
 const decodingFiles = new Set<string>();
 /** trackId → 再生中のクリップソース（デバイス変更時の張り替えに使う）。 */
@@ -1245,6 +1265,48 @@ function applyTrackGains(): void {
     // 再生中にデバイスが変わったトラックは、現在位置から新バスへ張り替える。
     if (prev && prev.deviceId !== dev && audioPlaying) rescheduleTrack(t, entry);
   }
+
+  releaseUnusedAudioResources();
+}
+
+/**
+ * 使われなくなったトラック gain と出力バス（AudioContext）を解放する。
+ * Show 切替のたびにトラック id が変わり gain/バスが溜まるのを防ぐ。
+ * 既定バス（''）はクロック源なので常に残す。
+ */
+function releaseUnusedAudioResources(): void {
+  // 現在のトラック定義に無い gain / 再生中ノードを破棄。
+  for (const [trackId, entry] of trackGainEntries) {
+    if (currentTracks.some((t) => t.id === trackId)) continue;
+    const nodes = activeClipNodes.get(trackId);
+    if (nodes) {
+      for (const n of nodes) {
+        try {
+          n.stop();
+        } catch {
+          // 未開始ノード等は無視。
+        }
+        n.disconnect();
+      }
+      activeClipNodes.delete(trackId);
+    }
+    try {
+      entry.gain.disconnect();
+    } catch {
+      // 既に切れている等は無視。
+    }
+    trackGainEntries.delete(trackId);
+  }
+
+  // どの gain からも参照されなくなったバスを閉じる（emitLevels の走査対象からも外れる）。
+  const used = new Set<string>(['']);
+  if (mainGainEntry) used.add(mainGainEntry.deviceId);
+  for (const e of trackGainEntries.values()) used.add(e.deviceId);
+  for (const [dev, bus] of buses) {
+    if (used.has(dev)) continue;
+    void bus.ctx.close().catch(() => {});
+    buses.delete(dev);
+  }
 }
 
 /** 1 トラックのクリップ群を、現在位置から entry のバスへ張り替える（デバイス変更時）。 */
@@ -1283,11 +1345,30 @@ function reconcileShowAudio(
   if (hasClips) {
     for (const t of tracks) for (const c of t.clips) decodeClipFile(c.filePath);
   }
+  // アクティブ Show が参照しないデコード済みバッファを上限まで間引く（無限成長防止）。
+  pruneClipBuffers(new Set(tracks.flatMap((t) => t.clips.map((c) => c.filePath))));
+}
+
+/** clipBuffers を上限内へ間引く。referenced（アクティブ Show のクリップ）は残す。 */
+function pruneClipBuffers(referenced: Set<string>): void {
+  if (clipBuffers.size <= CLIP_BUFFER_CACHE_MAX) return;
+  for (const fp of [...clipBuffers.keys()]) {
+    if (clipBuffers.size <= CLIP_BUFFER_CACHE_MAX) break;
+    if (referenced.has(fp)) continue;
+    clipBuffers.delete(fp); // 挿入順＝古いものから捨てる
+  }
 }
 
 /** クリップ音源を読み込み・デコードしてキャッシュ（filePath 単位・状態を store へ反映）。 */
 function decodeClipFile(filePath: string): void {
-  if (clipBuffers.has(filePath) || decodingFiles.has(filePath)) return;
+  const cached = clipBuffers.get(filePath);
+  if (cached) {
+    // 再挿入で recency を更新する（pruneClipBuffers が古い順に捨てるため）。
+    clipBuffers.delete(filePath);
+    clipBuffers.set(filePath, cached);
+    return;
+  }
+  if (decodingFiles.has(filePath)) return;
   decodingFiles.add(filePath);
   setFileStatus(filePath, 'loading');
   window.dmx

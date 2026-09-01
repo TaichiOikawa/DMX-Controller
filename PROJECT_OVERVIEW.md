@@ -259,3 +259,7 @@ electron-builder は `dist/`（renderer）、`dist-electron/`（main + preload�
 - Art-Net の検証はノード側リスナーではなくビジュアライザで行う（ループバック束縛の都合）
 - wavesurfer は幅 0（非表示タブ）で生成すると canvas を描かないため、
   `timeline/utils.ts` の `onceVisible()` を経由してマウントする
+- メイン音声のロードは store（`syncMainAudio`）が所有する。View 層で読み込むと
+  セットリスト GO の再生がコンポーネントのレンダーサイクルに従属してしまう
+- wavesurfer には URL ではなく `peaks` + `duration` を渡す。URL を渡すと再生用とは別に
+  同じファイルをもう一度 fetch + decode し、GO の音出しを待たせる

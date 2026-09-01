@@ -33,25 +33,6 @@ import {
 /** 左ヘッダ列の幅（px）。全トラックの t=0 をここで揃える。 */
 const HEADER_W = 144;
 
-function mimeFor(path: string): string {
-  const ext = path.toLowerCase().split(".").pop();
-  switch (ext) {
-    case "mp3":
-      return "audio/mpeg";
-    case "wav":
-      return "audio/wav";
-    case "ogg":
-      return "audio/ogg";
-    case "m4a":
-    case "aac":
-      return "audio/aac";
-    case "flac":
-      return "audio/flac";
-    default:
-      return "audio/*";
-  }
-}
-
 export function TimelineView({ active }: { active: boolean }) {
   const project = useDmxStore((s) => s.project);
   const activeShowId = useDmxStore((s) => s.activeShowId);
@@ -60,21 +41,21 @@ export function TimelineView({ active }: { active: boolean }) {
   const pause = useDmxStore((s) => s.transportPause);
   const stop = useDmxStore((s) => s.transportStop);
   const seek = useDmxStore((s) => s.transportSeek);
-  const loadAudio = useDmxStore((s) => s.loadAudio);
-  const unloadAudio = useDmxStore((s) => s.unloadAudio);
   const playback = useDmxStore((s) => s.playback);
   const editable = useDmxStore((s) => s.mode === "edit");
   const audioFileStatus = useDmxStore((s) => s.audioFileStatus);
+  const waveformPeaks = useDmxStore((s) => s.waveformPeaks);
+  const audioMs = useDmxStore((s) => s.audioDurationMs);
+  // 音声ファイルが読み込めなかった（移動/リネーム/削除された）か。読込状態はストアが持つ。
+  const audioMissing = useDmxStore((s) => s.mainAudioStatus === "missing");
+  const reloadMainAudio = useDmxStore((s) => s.reloadMainAudio);
   const audioDevices = useAudioOutputDevices();
 
   const [zoom, setZoom] = useState(1);
   const [labelMode, setLabelMode] = useState<CueLabelMode>("lyrics");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [audioMs, setAudioMs] = useState(0);
-  // 音声ファイルが読み込めなかった（移動/リネーム/削除された）状態と、再リンクモーダルを
-  // 一旦閉じたかどうか。filePath が変わるたびにリセットして再プロンプトする。
-  const [audioMissing, setAudioMissing] = useState(false);
-  const [relinkDismissed, setRelinkDismissed] = useState(false);
+  // 再リンクモーダルを一旦閉じた filePath。パスで持つことで、別ファイルになれば
+  // 自動的に再プロンプトされる（effect でのリセットが要らない）。
+  const [relinkDismissedPath, setRelinkDismissedPath] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // タブ非表示（display:none）でスクロール位置がリセットされても復元できるよう保持する。
   const savedScrollLeft = useRef(0);
@@ -83,6 +64,7 @@ export function TimelineView({ active }: { active: boolean }) {
   const points = show?.timeline?.points ?? [];
   const audioTracks = show?.timeline?.audioTracks ?? [];
   const filePath = show?.audio?.filePath ?? null;
+  const mainPeaks = filePath ? (waveformPeaks[filePath] ?? null) : null;
   const loaded = show !== null;
   const cues = useMemo(
     () => (show ? cueOptions(show.sequence, labelMode) : []),
@@ -136,42 +118,6 @@ export function TimelineView({ active }: { active: boolean }) {
     }
     window.dmx.addAudioClip(activeShowId, i, res.path, snapMs(transport.playheadMs), clipMs);
   };
-
-  // 音声ファイルが設定されたらバイト列を取得して Blob URL 化、ストアの <audio> へ読み込む。
-  // setState は非同期コールバックと cleanup でのみ呼ぶ（同期 setState によるカスケード再描画を回避）。
-  useEffect(() => {
-    let cancelled = false;
-    let createdUrl: string | null = null;
-    if (filePath) {
-      window.dmx.readAudioFile(filePath).then((res) => {
-        if (cancelled) return;
-        if (!res.ok || !res.data) {
-          // ファイルが見つからない/読めない → 再リンクを促す。
-          setAudioMissing(true);
-          return;
-        }
-        setAudioMissing(false);
-        // Blob は res.data をコピーするため先に生成する（直後の decodeAudioData が
-        // ArrayBuffer を detach するため。WaveSurfer 表示用 URL は影響を受けない）。
-        const url = URL.createObjectURL(
-          new Blob([res.data], { type: mimeFor(filePath) }),
-        );
-        createdUrl = url;
-        setAudioUrl(url);
-        loadAudio(url, res.data, filePath);
-      });
-    }
-    return () => {
-      cancelled = true;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-      setAudioUrl(null);
-      setAudioMs(0);
-      // filePath が変わったら欠損状態と「閉じた」フラグをリセットして再プロンプトできるようにする。
-      setAudioMissing(false);
-      setRelinkDismissed(false);
-      unloadAudio();
-    };
-  }, [filePath, loadAudio, unloadAudio]);
 
   // 再生中、プレイヘッドが表示域の右端を超えたら追従スクロール。
   useEffect(() => {
@@ -393,16 +339,12 @@ export function TimelineView({ active }: { active: boolean }) {
 
             {/* メイン音声トラック（時刻0固定・マスター） */}
             <div className="relative flex h-20 items-center border-b border-neutral-800 p-1">
-              <AudioTrack
-                audioUrl={audioUrl}
-                scale={scale}
-                onDurationMs={setAudioMs}
-              />
+              <AudioTrack peaks={mainPeaks} hasAudio={filePath !== null} scale={scale} />
               {audioMissing && (
                 <div className="absolute inset-1 flex items-center gap-2 rounded bg-neutral-900/80 px-2 text-[11px] text-red-400 ring-1 ring-red-500/40">
                   <span>音声ファイルが見つかりません</span>
                   <button
-                    onClick={() => setRelinkDismissed(false)}
+                    onClick={() => setRelinkDismissedPath(null)}
                     className="rounded bg-neutral-800 px-2 py-0.5 text-sky-300 hover:bg-neutral-700"
                   >
                     再リンク
@@ -437,16 +379,19 @@ export function TimelineView({ active }: { active: boolean }) {
       </div>
 
       {/* 音声欠損時の再リンクモーダル（Timeline タブ表示中のみ） */}
-      {active && audioMissing && !relinkDismissed && filePath && (
+      {active && audioMissing && relinkDismissedPath !== filePath && filePath && (
         <AudioRelinkModal
           filePath={filePath}
-          onClose={() => setRelinkDismissed(true)}
+          onClose={() => setRelinkDismissedPath(filePath)}
           onRelink={() => {
             if (!activeShowId) return;
-            // 別ファイルを選ぶと filePath が変わり読み込み useEffect が再走する。
+            // 別ファイルを選ぶと filePath が変わり、ストアの syncMainAudio が読み直す。
+            // 同じパスを選び直した（ファイルを戻した）場合のために明示リトライも掛ける。
             // 選択（ok）したらモーダルは閉じる。キャンセル時は警告を残す。
             window.dmx.pickShowAudio(activeShowId).then((res) => {
-              if (res.ok) setRelinkDismissed(true);
+              if (!res.ok) return;
+              setRelinkDismissedPath(filePath);
+              reloadMainAudio();
             });
           }}
         />

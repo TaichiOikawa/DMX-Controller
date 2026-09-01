@@ -1,38 +1,32 @@
 /**
- * 音声トラック。WaveSurfer で波形を表示する（表示専用・実再生はストアの <audio>）。
- * 波形は音声長を時間軸に合わせて全幅表示する（width = timeToPx(audioMs)）。
+ * 音声トラック。WaveSurfer で波形を表示する（表示専用・実再生はストアの Web Audio）。
+ * 波形はストアが再生用バッファから作ったピークを描くだけで、音声の fetch も decode もしない。
+ * 波形は音声長を時間軸に合わせて全幅表示する（width = timeToPx(durationMs)）。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import WaveSurfer from 'wavesurfer.js';
+import type { WaveformPeaks } from '../../store';
 import { onceVisible, timeToPx, type TimeScale } from './utils';
 
 interface AudioTrackProps {
-  audioUrl: string | null;
+  /** 波形データ。音声が設定済みでも生成前は null になる（描画待ちが再生を妨げないため）。 */
+  peaks: WaveformPeaks | null;
+  /** Show にメイン音声が設定されているか（未設定と読込中を区別する）。 */
+  hasAudio: boolean;
   scale: TimeScale;
-  /** 波形読込後に音声長（ms）を親へ通知。 */
-  onDurationMs?: (ms: number) => void;
 }
 
-export function AudioTrack({ audioUrl, scale, onDurationMs }: AudioTrackProps) {
+export function AudioTrack({ peaks, hasAudio, scale }: AudioTrackProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
-  const [audioMs, setAudioMs] = useState(0);
-  const onDurationRef = useRef(onDurationMs);
-  useEffect(() => {
-    onDurationRef.current = onDurationMs;
-  }, [onDurationMs]);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !audioUrl) {
-      setAudioMs(0);
-      return;
-    }
+    if (!el || !peaks || peaks.durationMs <= 0) return;
     let ws: WaveSurfer | null = null;
     // Timeline タブ非表示中（幅 0）に生成すると canvas が作られないため、幅が付くまで待つ。
     const cancelVisible = onceVisible(el, () => {
-      const instance = WaveSurfer.create({
+      ws = WaveSurfer.create({
         container: el,
         waveColor: '#34d399',
         progressColor: '#34d399',
@@ -42,29 +36,23 @@ export function AudioTrack({ audioUrl, scale, onDurationMs }: AudioTrackProps) {
         interact: false,
         hideScrollbar: true,
         fillParent: true,
+        // peaks + duration を渡すと WaveSurfer は音声を読みに行かない（再デコードなし）。
+        peaks: peaks.peaks,
+        duration: peaks.durationMs / 1000,
       });
-      ws = instance;
-      wsRef.current = instance;
-      instance.on('ready', () => {
-        const ms = Math.round(instance.getDuration() * 1000);
-        setAudioMs(ms);
-        onDurationRef.current?.(ms);
-      });
-      instance.on('error', (e) => console.error('[AudioTrack] wavesurfer error', e));
-      void instance.load(audioUrl).catch((e) => console.error('[AudioTrack] load rejected', e));
+      ws.on('error', (e) => console.error('[AudioTrack] wavesurfer error', e));
     });
 
     return () => {
       cancelVisible();
       ws?.destroy();
-      wsRef.current = null;
     };
-  }, [audioUrl]);
+  }, [peaks]);
 
-  if (!audioUrl) {
+  if (!peaks) {
     return (
       <div className="flex h-12 items-center px-2 text-[11px] text-neutral-600">
-        音声未設定
+        {hasAudio ? '波形を生成中…' : '音声未設定'}
       </div>
     );
   }
@@ -73,7 +61,7 @@ export function AudioTrack({ audioUrl, scale, onDurationMs }: AudioTrackProps) {
     <div
       ref={containerRef}
       className="h-12 rounded bg-emerald-950/30"
-      style={{ width: timeToPx(audioMs, scale) || '100%' }}
+      style={{ width: timeToPx(peaks.durationMs, scale) || '100%' }}
     />
   );
 }

@@ -190,14 +190,19 @@ function openMonitorWindow(): void {
 app.whenReady().then(() => {
   // オーディオ出力デバイスの列挙でデバイス「名」を露出するには media 権限が要る。
   // 信頼済みの自前アプリなので media 系はプロンプトなしで許可する（マイクは名前解放のため一瞬使うのみ）。
+  // speaker-selection は出力デバイス選択（AudioContext.setSinkId）に必要。
   const allowMedia = (permission: string): boolean =>
-    permission === 'media' || permission === 'audioCapture' || permission === 'mediaKeySystem';
+    permission === 'media' ||
+    permission === 'audioCapture' ||
+    permission === 'mediaKeySystem' ||
+    permission === 'speaker-selection';
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
     cb(allowMedia(permission)),
   );
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowMedia(permission));
-  // 出力デバイス選択（setSinkId）を許可する。
-  session.defaultSession.setDevicePermissionHandler(() => true);
+  // このハンドラが扱うのは WebHID / Web Serial / WebUSB で、renderer からは一切使わないため拒否する
+  // （シリアルは main プロセスの serialport が扱う。音声出力の選択は上の media / speaker-selection で足りる）。
+  session.defaultSession.setDevicePermissionHandler(() => false);
 
   host = new EngineHost();
   host.registerIpc();

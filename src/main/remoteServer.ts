@@ -23,6 +23,19 @@ import { DEFAULT_REMOTE_PORT, type RemoteSettings } from '../shared/appSettings'
 /** リクエストボディの最大長（DoS 抑止）。 */
 const MAX_BODY = 4096;
 
+/** PIN 連続失敗がこの回数に達した IP は、クールダウン中の認証を拒否する（総当たり対策）。 */
+const AUTH_MAX_FAILURES = 5;
+/** 認証クールダウン時間（ms）。4 桁 PIN の全探索を現実的でない時間に引き延ばす。 */
+const AUTH_COOLDOWN_MS = 30_000;
+/** 失敗記録を持つ IP の上限（メモリ抑止。超えたら古いものから捨てる）。 */
+const AUTH_FAILURES_MAX_ENTRIES = 64;
+/** 発行済みトークンの上限（超えたら古い順に失効）。 */
+const MAX_TOKENS = 32;
+/** トークンの有効期限（ms）。使用のたびに延長するスライド方式。 */
+const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+/** SSE ハートビート間隔（ms）。切断された接続の検出と中間機器のタイムアウト回避。 */
+const SSE_HEARTBEAT_MS = 30_000;
+
 /** 4 桁 PIN を生成する（先頭ゼロ許容）。 */
 function genPin(): string {
   return String(crypto.randomInt(0, 10000)).padStart(4, '0');
@@ -48,10 +61,14 @@ export class RemoteServer {
   /** 設定変更（PIN 採番・有効状態）の永続化フック。EngineHost が AppSettingsStore へ繋ぐ。 */
   private onSettingsChange: ((patch: Partial<RemoteSettings>) => void) | null = null;
 
-  /** 発行済みトークン（メモリ保持。プロセス再起動で失効）。 */
-  private readonly tokens = new Set<string>();
+  /** 発行済みトークン → 失効時刻（ms）。メモリ保持でプロセス再起動により失効。 */
+  private readonly tokens = new Map<string, number>();
+  /** IP ごとの認証失敗記録（総当たり対策）。 */
+  private readonly authFailures = new Map<string, { count: number; lockUntil: number }>();
   /** 接続中の SSE レスポンス。 */
   private readonly sseClients = new Set<http.ServerResponse>();
+  /** SSE ハートビートのタイマー（listen 中のみ動く）。 */
+  private sseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   /** 直近のビューモデル（新規接続へ即時送信）。 */
   private lastState: RemoteState | null = null;
   /** 受信コマンドの転送先（EngineHost が主ウィンドウへ送る）。 */
@@ -123,6 +140,10 @@ export class RemoteServer {
   /** サーバーを停止し、接続を破棄する（アプリ終了時にも呼ぶ）。 */
   close(): Promise<void> {
     return new Promise((resolve) => {
+      if (this.sseHeartbeatTimer !== null) {
+        clearInterval(this.sseHeartbeatTimer);
+        this.sseHeartbeatTimer = null;
+      }
       for (const res of this.sseClients) {
         try {
           res.end();
@@ -151,15 +172,83 @@ export class RemoteServer {
       srv.listen(this.port, () => {
         this.server = srv;
         this.enabled = true;
+        // port=0（エフェメラル・テスト用）でも実際に割り当てられたポートを報告できるようにする。
+        const addr = srv.address();
+        if (addr && typeof addr === 'object') this.port = addr.port;
+        this.startSseHeartbeat();
         resolve();
       });
     });
   }
 
-  /** URL クエリ / ヘッダからトークンを取り出し、有効か判定する。 */
+  /**
+   * SSE へ定期的にコメント行（: ping）を流す。
+   * 黙って切れた接続の検出（write 失敗で除去）と、中間機器のアイドルタイムアウト回避のため。
+   */
+  private startSseHeartbeat(): void {
+    if (this.sseHeartbeatTimer !== null) return;
+    this.sseHeartbeatTimer = setInterval(() => {
+      for (const res of this.sseClients) {
+        try {
+          res.write(': ping\n\n');
+        } catch {
+          this.sseClients.delete(res);
+        }
+      }
+    }, SSE_HEARTBEAT_MS);
+  }
+
+  /** URL クエリ / ヘッダからトークンを取り出し、有効か判定する（使用のたびに期限を延長）。 */
   private authed(req: http.IncomingMessage, url: URL): boolean {
     const token = url.searchParams.get('token') ?? req.headers['x-token'];
-    return typeof token === 'string' && this.tokens.has(token);
+    if (typeof token !== 'string') return false;
+    const expiresAt = this.tokens.get(token);
+    if (expiresAt === undefined) return false;
+    if (Date.now() >= expiresAt) {
+      this.tokens.delete(token); // 期限切れは失効
+      return false;
+    }
+    this.tokens.set(token, Date.now() + TOKEN_TTL_MS); // スライド延長
+    return true;
+  }
+
+  /** 新しいトークンを発行する。上限を超えたら古い順に失効させる。 */
+  private issueToken(): string {
+    const now = Date.now();
+    for (const [t, exp] of this.tokens) {
+      if (now >= exp) this.tokens.delete(t); // 期限切れの掃除
+    }
+    while (this.tokens.size >= MAX_TOKENS) {
+      const oldest = this.tokens.keys().next().value;
+      if (oldest === undefined) break;
+      this.tokens.delete(oldest);
+    }
+    const token = crypto.randomUUID();
+    this.tokens.set(token, now + TOKEN_TTL_MS);
+    return token;
+  }
+
+  /** この IP が認証クールダウン中か。 */
+  private authLocked(ip: string): boolean {
+    const rec = this.authFailures.get(ip);
+    return !!rec && Date.now() < rec.lockUntil;
+  }
+
+  /** 認証失敗を記録し、上限に達したらクールダウンへ入れる。 */
+  private recordAuthFailure(ip: string): void {
+    // 記録数の上限（古い IP から捨てる）。
+    while (this.authFailures.size >= AUTH_FAILURES_MAX_ENTRIES && !this.authFailures.has(ip)) {
+      const oldest = this.authFailures.keys().next().value;
+      if (oldest === undefined) break;
+      this.authFailures.delete(oldest);
+    }
+    const rec = this.authFailures.get(ip) ?? { count: 0, lockUntil: 0 };
+    rec.count += 1;
+    if (rec.count >= AUTH_MAX_FAILURES) {
+      rec.lockUntil = Date.now() + AUTH_COOLDOWN_MS;
+      rec.count = 0; // クールダウン明けは数え直し
+    }
+    this.authFailures.set(ip, rec);
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -173,18 +262,23 @@ export class RemoteServer {
       return;
     }
 
-    // PIN 認証 → トークン発行
+    // PIN 認証 → トークン発行（連続失敗した IP はクールダウン中 429 で拒否）
     if (req.method === 'POST' && path === '/api/auth') {
+      const ip = req.socket.remoteAddress ?? '';
+      if (this.authLocked(ip)) {
+        res.writeHead(429).end();
+        return;
+      }
       void this.readJson(req).then((body) => {
         const pin = typeof body?.pin === 'string' ? body.pin : '';
         if (pin !== this.pin) {
+          this.recordAuthFailure(ip);
           res.writeHead(401).end();
           return;
         }
-        const token = crypto.randomUUID();
-        this.tokens.add(token);
+        this.authFailures.delete(ip);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ token }));
+        res.end(JSON.stringify({ token: this.issueToken() }));
       });
       return;
     }

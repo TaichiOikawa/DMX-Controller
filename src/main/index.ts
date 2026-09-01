@@ -92,7 +92,7 @@ function createWindow(): void {
   });
 }
 
-/** RGB カラーピッカーを別ウィンドウで開く（既に開いていれば前面化）。 */
+/** RGB カラーピッカーを別ウィンドウで開く（既に開いていれば前面化・常にメインより前面）。 */
 function openColorPickerWindow(): void {
   if (pickerWindow) {
     if (pickerWindow.isMinimized()) pickerWindow.restore();
@@ -108,6 +108,8 @@ function openColorPickerWindow(): void {
     backgroundColor: '#0a0a0a',
     title: 'RGB Picker',
     autoHideMenuBar: true,
+    // メインの子ウィンドウにして常にメインより前面に出す（modal ではないのでメイン側も操作可）。
+    parent: mainWindow ?? undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -131,7 +133,7 @@ function openColorPickerWindow(): void {
   });
 }
 
-/** 音量モニターを別ウィンドウで開く（既に開いていれば前面化）。 */
+/** 音量モニターを別ウィンドウで開く（既に開いていれば前面化・常にメインより前面）。 */
 function openMonitorWindow(): void {
   if (monitorWindow) {
     if (monitorWindow.isMinimized()) monitorWindow.restore();
@@ -140,13 +142,15 @@ function openMonitorWindow(): void {
   }
 
   monitorWindow = new BrowserWindow({
-    width: 280,
+    width: 180,
     height: 460,
-    minWidth: 200,
+    minWidth: 120,
     minHeight: 240,
     backgroundColor: '#0a0a0a',
     title: '音量モニター',
     autoHideMenuBar: true,
+    // メインの子ウィンドウにして常にメインより前面に出す（modal ではないのでメイン側も操作可）。
+    parent: mainWindow ?? undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

@@ -81,22 +81,23 @@ export function MonitorApp() {
         const padTop = 18;
         const padBottom = 16;
         const meterH = h - padTop - padBottom;
-        const gap = 10;
-        const labelW = 26;
+        const gap = 8;
+        const labelW = 20;
         const barW = (w - labelW - gap) / 2;
 
-        // dB 目盛り（右側ラベル）。
+        // dB 目盛り。数値は左のラベル列に置き、目盛り線はバー上へ引く
+        // （幅を詰めてもバーに数字が重ならないように）。
         ctx.font = '9px monospace';
         ctx.fillStyle = '#525252';
         ctx.textAlign = 'right';
         for (const db of [0, -6, -12, -24, -48]) {
           const frac = (db - MIN_DB) / -MIN_DB;
           const y = padTop + (1 - frac) * meterH;
-          ctx.fillText(`${db}`, w, y + 3);
+          ctx.fillText(`${db}`, labelW - 3, y + 3);
           ctx.strokeStyle = '#262626';
           ctx.beginPath();
           ctx.moveTo(labelW, y);
-          ctx.lineTo(w - labelW + 2, y);
+          ctx.lineTo(w, y);
           ctx.stroke();
         }
 
@@ -154,14 +155,14 @@ export function MonitorApp() {
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
-      <header className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800 px-3 py-2 text-xs font-semibold text-sky-400">
+      <header className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800 px-2 py-2 text-xs font-semibold text-sky-400">
         <Volume2 size={14} /> 音量モニター
       </header>
-      <div className="min-h-0 flex-1 p-3">
+      <div className="min-h-0 flex-1 px-2 py-3">
         <canvas ref={canvasRef} className="h-full w-full" />
       </div>
-      <footer className="shrink-0 border-t border-neutral-800 px-3 py-1.5 text-[10px] text-neutral-500">
-        ミックス出力（メイン + 全トラック）/ dBFS
+      <footer className="shrink-0 border-t border-neutral-800 px-2 py-1.5 text-[10px] leading-tight text-neutral-500">
+        ミックス出力 / dBFS
       </footer>
     </div>
   );

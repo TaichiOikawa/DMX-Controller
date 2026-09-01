@@ -122,13 +122,32 @@ release/win-unpacked/resources/
 
 `public/favicon.svg` を元に変換して配置すると統一できます。
 
-## 8. クロスプラットフォーム注意
+## 8. ファイル関連付け（.dmxproj）
+
+`electron-builder.yml` の `fileAssociations` で **`.dmxproj` をアプリに関連付け**しています。
+エクスプローラ等でプロジェクトファイルをダブルクリックすると、DMX Console が起動して
+そのファイルを開きます（アプリが起動中なら、そのウィンドウで開きます）。
+
+| OS      | 登録される仕組み                        | 備考                                   |
+| ------- | --------------------------------------- | -------------------------------------- |
+| Windows | NSIS インストーラが拡張子を登録         | **ポータブル版（`*-portable.exe`）は登録されません** |
+| macOS   | `Info.plist` の `CFBundleDocumentTypes`  | `open-file` イベントで受け取る          |
+| Linux   | `.desktop` の `MimeType`                | AppImage の統合時に登録                 |
+
+ファイルアイコンを付けたい場合は `build/dmxproj.ico`（macOS は `build/dmxproj.icns`）を
+置いてください。無ければアプリアイコンが流用されます。
+
+> 関連付けから開く経路は**多重起動を抑止**しています（`app.requestSingleInstanceLock`）。
+> 2 個目のプロセスは開くファイルのパスだけを先行インスタンスへ渡して終了するため、
+> Art-Net の UDP ポートや OpenDMX のシリアルポートを二重に掴むことはありません。
+
+## 9. クロスプラットフォーム注意
 
 - **Windows の .exe は Windows 上でのみ**確実にビルドできます。
 - macOS / Linux 向けは原則それぞれの OS（または CI）でビルドしてください。
 - コード署名は未設定です（社内/個人配布向け）。配布時に SmartScreen/Gatekeeper の警告が出ます。署名が必要な場合は証明書を用意し `electron-builder.yml` に追記してください。
 
-## 9. DMX 出力（Art-Net / OpenDMX）
+## 10. DMX 出力（Art-Net / OpenDMX）
 
 出力は **設定 → 接続** から設定します。2 系統は独立に ON/OFF でき、同時出力もできます
 （Art-Net でビジュアライザへ送りながら、OpenDMX で実機を鳴らす等）。
@@ -155,7 +174,7 @@ release/win-unpacked/resources/
 - 選択したポートは Project に保存されますが、**ポート名はマシン固有**です
   （別 PC では選び直しが必要）。
 
-## 10. トラブルシューティング
+## 11. トラブルシューティング
 
 - **初回パッケージ時に時間がかかる**: electron-builder が Electron バイナリをダウンロード・キャッシュします（2 回目以降は高速）。
 - **OpenDMX のポート一覧が空**: I/F が接続されていないか、FTDI ドライバが未導入です。

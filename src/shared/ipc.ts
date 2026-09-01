@@ -142,6 +142,10 @@ export const Cmd = {
   saveProject: 'cmd:saveProject',
   saveProjectOverwrite: 'cmd:saveProjectOverwrite',
   loadProject: 'cmd:loadProject',
+  /** パス指定で Project を開く（ファイル関連付けからの起動・ドロップ用。ダイアログを出さない）。 */
+  loadProjectFromPath: 'cmd:loadProjectFromPath',
+  /** OS から渡された「開くべきファイル」を 1 件取り出す（取り出すと main 側からは消える）。 */
+  consumePendingOpenFile: 'cmd:consumePendingOpenFile',
 
   // --- Show 単体の書き出し / 読み込み（.dmxshow） ---
   exportShow: 'cmd:exportShow',
@@ -168,6 +172,8 @@ export const Evt = {
   audioLevels: 'evt:audioLevels',
   /** リモート（スマホ等）からのコマンド（main → 主ウィンドウ renderer） */
   remoteCommand: 'evt:remoteCommand',
+  /** OS から開くよう指示されたファイルが届いた合図（main → 主ウィンドウ renderer。ペイロードなし） */
+  pendingOpenFile: 'evt:pendingOpenFile',
 } as const;
 
 /**
@@ -631,6 +637,15 @@ export interface DmxBridge {
     error?: string;
     missingFiles?: MissingFile[];
   }>;
+  /** パス指定で Project を開く（ダイアログなし。ファイル関連付けからの起動用）。 */
+  loadProjectFromPath(filePath: string): Promise<{
+    ok: boolean;
+    path?: string;
+    error?: string;
+    missingFiles?: MissingFile[];
+  }>;
+  /** OS から渡された「開くべきファイル」を 1 件取り出す（無ければ null）。 */
+  consumePendingOpenFile(): Promise<string | null>;
 
   // Show 単体の書き出し / 読み込み（.dmxshow）
   /** 指定 Show を .dmxshow として書き出す（保存ダイアログ）。 */
@@ -667,6 +682,8 @@ export interface DmxBridge {
   onMenuAction(cb: (action: MenuAction) => void): () => void;
   /** ミックス済みオーディオ出力レベルを購読する（解除関数を返す）。 */
   onAudioLevels(cb: (levels: AudioLevels) => void): () => void;
+  /** OS から開くよう指示されたファイルが届いた合図を購読する（解除関数を返す）。 */
+  onPendingOpenFile(cb: () => void): () => void;
 }
 
 /** Cue 単体を export 型として再公開（preload/renderer の利便のため）。 */

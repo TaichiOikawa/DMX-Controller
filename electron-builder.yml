@@ -34,6 +34,19 @@ directories:
   output: release
   buildResources: build
 
+# ファイル関連付け。.dmxproj をダブルクリックするとこのアプリで開く。
+#  - Windows(NSIS): インストーラが拡張子を登録する（ポータブル版は登録されない）
+#  - macOS: Info.plist の CFBundleDocumentTypes（main の open-file イベントで受ける）
+#  - Linux: .desktop の MimeType
+# アイコンは build/dmxproj.ico（mac は .icns）があればファイルアイコンに使われ、
+# 無ければアプリアイコンが使われる。
+fileAssociations:
+  - ext: dmxproj
+    name: DMX Console Project
+    description: DMX Console プロジェクト
+    role: Editor
+    mimeType: application/x-dmxproj
+
 # Windows: NSIS インストーラ + ポータブル exe（インストール不要で実行可能）。
 win:
   target:

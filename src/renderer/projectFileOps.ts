@@ -5,7 +5,28 @@
  * ここに一元化する。store の dirty 状態は呼び出し時に getState() で参照する。
  */
 
+import type { MissingFile } from '../shared/ipc';
 import { useDmxStore } from './store';
+
+/** 未保存確認の共通文言（「開く」ダイアログ経由 / 関連付け経由の双方で使う）。 */
+function confirmDiscardWhenDirty(): boolean {
+  const { dirty } = useDmxStore.getState();
+  return !dirty || window.confirm('未保存の変更があります。プロジェクトを開きますか？');
+}
+
+/**
+ * Project 読込後の共通処理。失敗を通知し、参照ファイル（音声）の欠損があれば
+ * まとめて再リンクできるモーダル（フォルダ自動マッチ＋行ごとの個別選択）を開く。
+ */
+function afterLoadProject(r: { ok: boolean; error?: string; missingFiles?: MissingFile[] }): void {
+  if (r.error) {
+    alert(`読込に失敗しました: ${r.error}`);
+    return;
+  }
+  if (r.ok && r.missingFiles && r.missingFiles.length > 0) {
+    useDmxStore.getState().setMissingFiles(r.missingFiles);
+  }
+}
 
 /** 新規プロジェクト（未保存なら確認）。 */
 export function fileNewProject(): void {
@@ -16,18 +37,19 @@ export function fileNewProject(): void {
 
 /** プロジェクトを開く（未保存なら確認）。 */
 export async function fileOpenProject(): Promise<void> {
-  const { dirty } = useDmxStore.getState();
-  if (dirty && !window.confirm('未保存の変更があります。プロジェクトを開きますか？')) return;
-  const r = await window.dmx.loadProject();
-  if (r.error) {
-    alert(`読込に失敗しました: ${r.error}`);
-    return;
-  }
-  // 開いた直後に参照ファイル（音声）の欠損を検知したら、まとめて再リンクできる
-  // モーダルを開く（フォルダ自動マッチ＋行ごとの個別選択）。
-  if (r.ok && r.missingFiles && r.missingFiles.length > 0) {
-    useDmxStore.getState().setMissingFiles(r.missingFiles);
-  }
+  if (!confirmDiscardWhenDirty()) return;
+  afterLoadProject(await window.dmx.loadProject());
+}
+
+/**
+ * OS から渡されたファイル（.dmxproj のダブルクリック / D&D）を開く。
+ * main が控えているパスを 1 件取り出し、通常の「開く」と同じ未保存確認・欠損検知を通す。
+ */
+export async function fileOpenPendingProject(): Promise<void> {
+  const filePath = await window.dmx.consumePendingOpenFile();
+  if (!filePath) return;
+  if (!confirmDiscardWhenDirty()) return;
+  afterLoadProject(await window.dmx.loadProjectFromPath(filePath));
 }
 
 /**

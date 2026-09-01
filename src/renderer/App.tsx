@@ -21,6 +21,7 @@ import { SplitHandle } from './components/SplitHandle';
 import { useDmxStore } from './store';
 import {
   fileNewProject,
+  fileOpenPendingProject,
   fileOpenProject,
   fileRelinkAudio,
   fileSaveProjectAs,
@@ -331,6 +332,13 @@ export default function App() {
       }
     };
     return window.dmx.onMenuAction(onMenu);
+  }, []);
+
+  // ファイル関連付け（.dmxproj のダブルクリック）で渡されたファイルを開く。
+  // 起動直後（main が控えている分）とアプリ起動中の受信（合図イベント）の両方を拾う。
+  useEffect(() => {
+    void fileOpenPendingProject();
+    return window.dmx.onPendingOpenFile(() => void fileOpenPendingProject());
   }, []);
 
   // リモート（スマホ等）からのコマンドを受け、既存のストア/GO ロジックへディスパッチする。

@@ -301,6 +301,16 @@ const api: DmxBridge = {
   loadProject() {
     return ipcRenderer.invoke(Cmd.loadProject) as ReturnType<DmxBridge['loadProject']>;
   },
+  loadProjectFromPath(filePath: string) {
+    return ipcRenderer.invoke(Cmd.loadProjectFromPath, filePath) as ReturnType<
+      DmxBridge['loadProjectFromPath']
+    >;
+  },
+  consumePendingOpenFile() {
+    return ipcRenderer.invoke(Cmd.consumePendingOpenFile) as ReturnType<
+      DmxBridge['consumePendingOpenFile']
+    >;
+  },
 
   // Show 単体の書き出し / 読み込み
   exportShow(showId) {
@@ -350,6 +360,9 @@ const api: DmxBridge = {
   },
   onAudioLevels(cb) {
     return subscribe<AudioLevels>(Evt.audioLevels, cb);
+  },
+  onPendingOpenFile(cb) {
+    return subscribe<void>(Evt.pendingOpenFile, cb);
   },
 };
 

@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { EngineHost } from './engineHost';
 import { buildAppMenu, defaultMenuState, type MenuState } from './menu';
-import { Cmd } from '../shared/ipc';
+import { projectPathFromArgv } from './openFileArgs';
+import { Cmd, Evt } from '../shared/ipc';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +24,36 @@ let monitorWindow: BrowserWindow | null = null;
 let host: EngineHost | null = null;
 /** 終了確認を通過した（または不要）ことを示すフラグ。再入防止。 */
 let allowClose = false;
+
+/**
+ * OS から「開け」と指示されたファイル（.dmxproj のダブルクリック / D&D / `open` 引数）。
+ * renderer が consumePendingOpenFile で取り出すまでここに置く。
+ *
+ * main から一方的に送りつけると renderer のマウント前に取りこぼすため、
+ * 「合図（Evt.pendingOpenFile）を送る + renderer 側が起動時にも取りに来る」の二段構えにしている。
+ */
+let pendingOpenPath: string | null = null;
+
+/** 開くべきファイルを控え、renderer が起動済みなら合図を送る。 */
+function queueOpenFile(filePath: string | null): void {
+  if (!filePath) return;
+  pendingOpenPath = filePath;
+  mainWindow?.webContents.send(Evt.pendingOpenFile);
+}
+
+/**
+ * メインウィンドウを前面に出す（無ければ作る）。
+ * 別インスタンスからのファイル起動や macOS の open-file から呼ぶ。
+ */
+function showMainWindow(): void {
+  if (!mainWindow) {
+    // ready 前は EngineHost 未生成なので、whenReady 内の createWindow に任せる。
+    if (app.isReady()) createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
 
 /** メニューの動的状態。engine state と renderer の UI 状態から更新し、変化時に再構築する。 */
 let menuState: MenuState = { ...defaultMenuState };
@@ -187,7 +218,31 @@ function openMonitorWindow(): void {
   });
 }
 
+/**
+ * 多重起動の抑止。.dmxproj を関連付けから開くと OS は「新しいプロセス」を起動するため、
+ * ロックを取れなかった側は引数（開くファイル）を先行インスタンスへ渡して終了する。
+ * 出力（Art-Net の UDP ポート / OpenDMX のシリアル）を二重に掴まないためにも必要。
+ */
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+
+// 2 個目以降の起動から引数を受け取る（Windows / Linux のダブルクリック経路）。
+app.on('second-instance', (_e, argv, workingDirectory) => {
+  queueOpenFile(projectPathFromArgv(argv, workingDirectory, app.isPackaged));
+  showMainWindow();
+});
+
+// macOS はコマンドライン引数ではなく open-file イベントでファイルが渡る（ready 前にも発火しうる）。
+app.on('open-file', (e, filePath) => {
+  e.preventDefault();
+  queueOpenFile(filePath);
+  showMainWindow();
+});
+
 app.whenReady().then(() => {
+  // ロックを取れなかったインスタンスは何も初期化せずに終了する（上の app.quit() が進行中）。
+  if (!hasSingleInstanceLock) return;
+
   // オーディオ出力デバイスの列挙でデバイス「名」を露出するには media 権限が要る。
   // 信頼済みの自前アプリなので media 系はプロンプトなしで許可する（マイクは名前解放のため一瞬使うのみ）。
   // speaker-selection は出力デバイス選択（AudioContext.setSinkId）に必要。
@@ -243,6 +298,12 @@ app.whenReady().then(() => {
   ipcMain.on(Cmd.openColorPicker, () => openColorPickerWindow());
   // 音量モニターを別ウィンドウで開く要求（renderer → main）。
   ipcMain.on(Cmd.openMonitor, () => openMonitorWindow());
+  // OS から渡された「開くべきファイル」を renderer が取り出す（取り出したら消える）。
+  ipcMain.handle(Cmd.consumePendingOpenFile, () => {
+    const p = pendingOpenPath;
+    pendingOpenPath = null;
+    return p;
+  });
 
   host.start();
 
@@ -255,6 +316,10 @@ app.whenReady().then(() => {
     canUndo: initial.canUndo,
     canRedo: initial.canRedo,
   };
+
+  // 関連付け（.dmxproj のダブルクリック）で起動した場合の引数を拾う。
+  // 実際の読み込みは renderer がマウント後に取りに来る。
+  queueOpenFile(projectPathFromArgv(process.argv, process.cwd(), app.isPackaged));
 
   createWindow();
   refreshMenu();

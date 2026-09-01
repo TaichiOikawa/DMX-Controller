@@ -540,6 +540,9 @@ export class EngineHost {
     ipcMain.handle(Cmd.saveProject, () => this.saveProject());
     ipcMain.handle(Cmd.saveProjectOverwrite, () => this.saveProjectOverwrite());
     ipcMain.handle(Cmd.loadProject, () => this.loadProject());
+    ipcMain.handle(Cmd.loadProjectFromPath, (_e, filePath: string) =>
+      this.loadProjectFromPath(filePath),
+    );
 
     // --- Show 単体の書き出し / 読み込み ---
     ipcMain.handle(Cmd.exportShow, (_e, showId: string) => this.exportShow(showId));
@@ -605,17 +608,27 @@ export class EngineHost {
       filters: PROJECT_FILTERS,
     });
     if (res.canceled || res.filePaths.length === 0) return { ok: false };
+    return this.loadProjectFromPath(res.filePaths[0]);
+  }
+
+  /**
+   * パス指定で Project を読み込む（ダイアログを出さない）。
+   * 「開く」ダイアログ経由と、ファイル関連付け（.dmxproj のダブルクリック）経由の共通処理。
+   */
+  async loadProjectFromPath(
+    filePath: string,
+  ): Promise<SaveLoadResult & { missingFiles?: MissingFile[] }> {
     try {
-      const text = await fs.readFile(res.filePaths[0], 'utf-8');
+      const text = await fs.readFile(filePath, 'utf-8');
       this.adoptLegacyOutputSettings(text);
       const project = deserializeProject(text);
       // 相対パスで保存された音声を絶対パスへ戻す（以降のメモリ処理は絶対パス前提）。
-      resolveProjectAudioPaths(project, path.dirname(res.filePaths[0]));
+      resolveProjectAudioPaths(project, path.dirname(filePath));
       this.engine.loadProject(project);
-      this.currentFilePath = res.filePaths[0];
+      this.currentFilePath = filePath;
       this.markClean();
       const missingFiles = await this.findMissingFiles();
-      return { ok: true, path: res.filePaths[0], missingFiles };
+      return { ok: true, path: filePath, missingFiles };
     } catch (e) {
       return { ok: false, error: String(e) };
     }

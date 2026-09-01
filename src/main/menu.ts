@@ -115,6 +115,10 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
           checked: !state.fadersCollapsed,
           click: dispatch('view:toggleFaders'),
         },
+        {
+          label: 'パネルの大きさを既定に戻す',
+          click: dispatch('view:resetLayout'),
+        },
         { type: 'separator' },
         { role: 'reload', label: '再読み込み' },
         { role: 'toggleDevTools', label: '開発者ツール' },

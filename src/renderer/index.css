@@ -18,28 +18,25 @@ body {
 }
 
 /*
- * 縦フェーダー。input[type=range] を -rotate-90 で縦化しているため、
- * トラック/つまみの見た目だけここで整える。
+ * 縦フェーダー。ネイティブの縦向き range（writing-mode: vertical-lr + direction: rtl）
+ * を使い、トラック長をパネル高さに追従させる（回転方式だと長さを px 固定にするしかない）。
+ * トラックの見た目は Fader.tsx 側の div で描き、この range は透明な操作面＋つまみだけ。
  */
 .fader-vertical {
   -webkit-appearance: none;
   appearance: none;
-  height: 6px;
-  border-radius: 9999px;
-  background: linear-gradient(
-    to right,
-    #0284c7 0%,
-    #0284c7 var(--pct, 0%),
-    #404040 var(--pct, 0%),
-    #404040 100%
-  );
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 24px;
+  height: 100%;
+  background: transparent;
 }
 
 .fader-vertical::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 26px;
+  width: 26px;
+  height: 14px;
   border-radius: 4px;
   background: #e5e5e5;
   border: 1px solid #737373;

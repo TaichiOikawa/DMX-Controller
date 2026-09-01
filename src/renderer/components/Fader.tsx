@@ -67,7 +67,7 @@ export function Fader({
 
   return (
     <div
-      className={`flex w-12 shrink-0 flex-col items-center gap-1 rounded-md py-1 ring-1 transition-colors ${
+      className={`flex h-full min-h-0 w-12 shrink-0 flex-col items-center gap-1 rounded-md py-1 ring-1 transition-colors ${
         busking
           ? 'bg-purple-500/10 ring-purple-500/70'
           : cueHi
@@ -109,11 +109,21 @@ export function Fader({
         />
       </div>
 
-      <div className="relative h-44 w-8">
+      {/* スライダー領域。高さはパネルに追従（min-h でつぶれ過ぎを防ぐ）。 */}
+      <div className="relative min-h-12 w-8 flex-1">
+        {/* 実出力バー（右端） */}
         <div className="absolute inset-y-0 right-0 w-1 rounded bg-neutral-800">
           <div
             className={`absolute bottom-0 w-full rounded ${diverged ? 'bg-amber-400' : 'bg-emerald-500'}`}
             style={{ height: `${outPct}%` }}
+          />
+        </div>
+
+        {/* フェーダーのトラック（見た目のみ。操作は上に重ねた透明な range が受ける） */}
+        <div className="absolute inset-y-0 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-neutral-700">
+          <div
+            className="absolute bottom-0 w-full rounded-full bg-sky-600"
+            style={{ height: `${pct}%` }}
           />
         </div>
 
@@ -123,8 +133,7 @@ export function Fader({
           max={255}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="fader-vertical absolute left-1/2 top-1/2 h-6 w-44 -translate-x-1/2 -translate-y-1/2 -rotate-90 cursor-pointer accent-sky-500"
-          style={{ ['--pct' as string]: `${pct}%` }}
+          className="fader-vertical absolute inset-y-0 left-1/2 -translate-x-1/2 cursor-pointer"
         />
       </div>
 

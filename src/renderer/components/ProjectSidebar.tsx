@@ -57,6 +57,8 @@ export function ProjectSidebar() {
   const mode = useDmxStore((s) => s.mode);
   const projectPath = useDmxStore((s) => s.projectPath);
   const collapsed = useDmxStore((s) => s.sidebarCollapsed);
+  // 幅は可変レイアウト（App のスプリッタで変更・localStorage 永続化）。
+  const width = useDmxStore((s) => s.panelLayout.sidebarWidth);
   const toggleCollapsed = useDmxStore((s) => s.toggleSidebarCollapsed);
   const showSort = useDmxStore((s) => s.showSort);
   const setShowSort = useDmxStore((s) => s.setShowSort);
@@ -394,7 +396,10 @@ export function ProjectSidebar() {
   };
 
   return (
-    <div className="flex h-full w-60 shrink-0 flex-col rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800">
+    <div
+      className="flex h-full shrink-0 flex-col rounded-lg bg-neutral-900/60 ring-1 ring-neutral-800"
+      style={{ width }}
+    >
       {/* ヘッダ */}
       <div className="flex items-center gap-1 border-b border-neutral-800 px-2 py-1.5">
         <button

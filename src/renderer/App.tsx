@@ -17,6 +17,7 @@ import { ActionPanel } from './components/ActionPanel';
 import { TimelineView } from './components/timeline/TimelineView';
 import { FaderBank } from './components/FaderBank';
 import { OutputMeter } from './components/OutputMeter';
+import { SplitHandle } from './components/SplitHandle';
 import { useDmxStore } from './store';
 import {
   fileNewProject,
@@ -117,6 +118,10 @@ export default function App() {
   const fadersCollapsed = useDmxStore((s) => s.fadersCollapsed);
   const sidebarCollapsed = useDmxStore((s) => s.sidebarCollapsed);
   const applyPanelLayoutForContext = useDmxStore((s) => s.applyPanelLayoutForContext);
+  // 可変レイアウトの寸法（スプリッタで変更・localStorage へ永続化）。
+  const panelLayout = useDmxStore((s) => s.panelLayout);
+  const setPanelLayout = useDmxStore((s) => s.setPanelLayout);
+  const resetPanelLayout = useDmxStore((s) => s.resetPanelLayout);
   const mode = useDmxStore((s) => s.mode);
   // ウィンドウタイトル用：Project 名・対象 Show 名・未保存状態。
   const project = useDmxStore((s) => s.project);
@@ -145,6 +150,34 @@ export default function App() {
   useEffect(() => {
     tabRef.current = tab;
   }, [tab]);
+
+  // --- 可変レイアウト（スプリッタ）-----------------------------------------
+  // 分割対象パネルの実 DOM。ドラッグ開始時の実寸から新しい配分比を求める。
+  const centerRef = useRef<HTMLDivElement>(null);
+  const faderRef = useRef<HTMLDivElement>(null);
+  const setlistRef = useRef<HTMLDivElement>(null);
+  const cueRef = useRef<HTMLDivElement>(null);
+  /** ドラッグ開始時の寸法（a=手前側 / b=奥側。px 直接指定では a のみ使う）。 */
+  const dragStart = useRef({ a: 0, b: 0 });
+
+  /** 隣接 2 パネルの現在サイズを控える（比率ドラッグの基準）。 */
+  const beginSplit = (a: HTMLElement | null, b: HTMLElement | null, axis: 'x' | 'y') => {
+    const size = (el: HTMLElement | null) =>
+      el ? (axis === 'x' ? el.offsetWidth : el.offsetHeight) : 0;
+    dragStart.current = { a: size(a), b: size(b) };
+  };
+  /** ドラッグ量から手前側パネルの取り分（0-1）を求める。両側に最小 px を確保する。 */
+  const splitRatio = (delta: number, minPx = 96): number => {
+    const total = dragStart.current.a + dragStart.current.b;
+    if (total <= 0) return 0.5;
+    if (total < minPx * 2) return dragStart.current.a / total;
+    const a = Math.min(total - minPx, Math.max(minPx, dragStart.current.a + delta));
+    return a / total;
+  };
+  /** px 直接指定のドラッグ開始（サイドバー幅・出力モニター高さ）。 */
+  const beginPx = (value: number) => {
+    dragStart.current = { a: value, b: 0 };
+  };
 
   useEffect(() => {
     const offFrame = window.dmx.onOutputFrame((frame) => setOutput(frame));
@@ -273,6 +306,9 @@ export default function App() {
           break;
         case 'view:toggleFaders':
           st.toggleFadersCollapsed();
+          break;
+        case 'view:resetLayout':
+          st.resetPanelLayout();
           break;
         case 'show:go':
           window.dmx.go();
@@ -424,15 +460,15 @@ export default function App() {
 
   // CUE / Timeline のタブ領域（通常時は中央、セットリスト時は右半分で再利用）。
   const cueTimelinePanel = (
-    <>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* タブバー：CUE / Timeline を切り替え */}
-      <div className="flex items-center gap-1 border-b border-neutral-800">
+      <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800">
         <TabButton label="CUE" active={tab === 'cue'} onClick={() => setTab('cue')} />
         <TabButton label="Timeline" active={tab === 'timeline'} onClick={() => setTab('timeline')} />
       </div>
       {/* タブ内容（共通の高さ領域）。CUE はマスター列、Timeline はトランスポート。
           両方マウントしたまま表示切替し、Timeline のスクロール位置・再生状態を保持する。 */}
-      <div className="min-h-0 flex-[2]">
+      <div className="min-h-0 flex-1">
         <div className={`h-full ${tab === 'cue' ? '' : 'hidden'}`}>
           <PlaybackPanel />
         </div>
@@ -440,15 +476,29 @@ export default function App() {
           <TimelineView active={tab === 'timeline'} />
         </div>
       </div>
-    </>
+    </div>
   );
+
+  // 中央領域（CUE/Timeline・セットリスト・Action 大）とフェーダーバンクの高さ配分。
+  // フェーダー折りたたみ時は相方の grow が無くなるため、中央が余白を全部取る
+  // （grow の合計が 1 未満だと余白がその割合しか配られず、下に隙間が残る）。
+  const centerStyle = { flexGrow: fadersCollapsed ? 1 : panelLayout.centerRatio, flexBasis: 0 };
 
   return (
     <div className="flex h-screen gap-2 bg-neutral-950 p-2 text-neutral-100">
-      {/* 左サイド：Project / Show ツリー（開閉可） */}
+      {/* 左サイド：Project / Show ツリー（開閉可・幅はスプリッタで可変） */}
       <ProjectSidebar />
+      {!sidebarCollapsed && (
+        <SplitHandle
+          axis="x"
+          onStart={() => beginPx(panelLayout.sidebarWidth)}
+          onMove={(d) => setPanelLayout({ sidebarWidth: dragStart.current.a + d })}
+          onReset={() => resetPanelLayout('sidebarWidth')}
+          title="サイドバーの幅を変更（ダブルクリックで既定に戻す）"
+        />
+      )}
 
-      {/* 右側：従来の縦積みレイアウト */}
+      {/* 右側：縦積みレイアウト（中央 / フェーダー / 出力モニターの高さが可変） */}
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <ProjectBar />
         <MasterBar />
@@ -457,35 +507,79 @@ export default function App() {
         <NowNextPanel />
 
         {/* 中央領域: セットリスト読込中は左右2分割（左=セットリスト / 右=CUE・Timeline）。
-            そうでなければ Show 読込中に CUE / Timeline を表示。どちらも無ければ Action を大きく。 */}
+            そうでなければ Show 読込中に CUE / Timeline を表示。どちらも無ければ Action を大きく。
+            高さは centerRatio（フェーダーバンクとの配分）で可変。 */}
         {activeSetlistId ? (
-          <div className="flex min-h-0 flex-[2] gap-2">
+          <div ref={centerRef} className="flex min-h-0 gap-2" style={centerStyle}>
             {/* 左: セットリスト（マスター GO） */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div
+              ref={setlistRef}
+              className="flex min-h-0 min-w-0 flex-col"
+              style={{ flexGrow: panelLayout.setlistRatio, flexBasis: 0 }}
+            >
               <SetlistPanel />
             </div>
+            <SplitHandle
+              axis="x"
+              onStart={() => beginSplit(setlistRef.current, cueRef.current, 'x')}
+              onMove={(d) => setPanelLayout({ setlistRatio: splitRatio(d, 160) })}
+              onReset={() => resetPanelLayout('setlistRatio')}
+              title="セットリストと CUE/Timeline の幅を変更（ダブルクリックで既定に戻す）"
+            />
             {/* 右: 再生中 Show の CUE / Timeline */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+            <div
+              ref={cueRef}
+              className="flex min-h-0 min-w-0 flex-col"
+              style={{ flexGrow: 1 - panelLayout.setlistRatio, flexBasis: 0 }}
+            >
               {cueTimelinePanel}
             </div>
           </div>
-        ) : (
-          !released && cueTimelinePanel
-        )}
-
-        {/* Action パネル。CUE/Timeline/セットリストのいずれも無い時だけ大きく（領域占有）。 */}
-        {released && !activeSetlistId ? (
-          <div className="min-h-0 flex-[2]">
+        ) : released ? (
+          <div ref={centerRef} className="min-h-0" style={centerStyle}>
             <ActionPanel big />
           </div>
         ) : (
-          <ActionPanel />
+          <div ref={centerRef} className="flex min-h-0 flex-col" style={centerStyle}>
+            {cueTimelinePanel}
+          </div>
+        )}
+
+        {/* Action パネル（中央を占有していない時だけ通常サイズで表示） */}
+        {!(released && !activeSetlistId) && <ActionPanel />}
+
+        {/* 中央 ↔ フェーダーバンクの高さスプリッタ（折りたたみ時は分割不要） */}
+        {!fadersCollapsed && (
+          <SplitHandle
+            axis="y"
+            onStart={() => beginSplit(centerRef.current, faderRef.current, 'y')}
+            onMove={(d) => setPanelLayout({ centerRatio: splitRatio(d) })}
+            onReset={() => resetPanelLayout('centerRatio')}
+            title="中央パネルとフェーダーの高さを変更（ダブルクリックで既定に戻す）"
+          />
         )}
 
         {/* フェーダーバンク（折りたたみ時は高さを解放） */}
-        <div className={fadersCollapsed ? 'shrink-0' : 'min-h-0 flex-[3]'}>
+        <div
+          ref={faderRef}
+          className={fadersCollapsed ? 'shrink-0' : 'min-h-0'}
+          style={
+            fadersCollapsed
+              ? undefined
+              : { flexGrow: 1 - panelLayout.centerRatio, flexBasis: 0 }
+          }
+        >
           <FaderBank />
         </div>
+
+        {/* 出力モニターの高さスプリッタ（モニターだけは px 指定） */}
+        <SplitHandle
+          axis="y"
+          onStart={() => beginPx(panelLayout.meterHeight)}
+          onMove={(d) => setPanelLayout({ meterHeight: dragStart.current.a - d })}
+          onReset={() => resetPanelLayout('meterHeight')}
+          title="出力モニターの高さを変更（ダブルクリックで既定に戻す）"
+        />
         <OutputMeter />
       </div>
 

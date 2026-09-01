@@ -105,6 +105,70 @@ function persistPanelToggle(
   return { actionsCollapsed, fadersCollapsed, panelCollapse };
 }
 
+/**
+ * 可変レイアウトの寸法（ソフト本体＝localStorage に永続化）。
+ * 比率は「その領域を分け合う 2 パネルのうち先頭側の取り分」を表す（0-1）。
+ */
+export interface PanelLayout {
+  /** 左サイドバー幅（px）。 */
+  sidebarWidth: number;
+  /** 中央（CUE/Timeline・Action 大）と フェーダーバンク の縦分割比。 */
+  centerRatio: number;
+  /** セットリスト表示時の 左(セットリスト) と 右(CUE/Timeline) の横分割比。 */
+  setlistRatio: number;
+  /** 出力モニターのバー高さ（px）。 */
+  meterHeight: number;
+}
+
+const PANEL_LAYOUT_KEY = 'dmx.panelLayout';
+
+/** 既定の寸法（従来の固定レイアウト相当: w-60 / flex-2:flex-3 / 半々 / h-16）。 */
+export const DEFAULT_PANEL_LAYOUT: PanelLayout = {
+  sidebarWidth: 240,
+  centerRatio: 0.4,
+  setlistRatio: 0.5,
+  meterHeight: 64,
+};
+
+/** 各寸法の下限・上限（潰れて操作不能になるのを防ぐ）。 */
+const PANEL_LAYOUT_RANGE: Record<keyof PanelLayout, [number, number]> = {
+  sidebarWidth: [160, 640],
+  centerRatio: [0.15, 0.85],
+  setlistRatio: [0.2, 0.8],
+  meterHeight: [32, 320],
+};
+
+function clampLayoutValue(key: keyof PanelLayout, value: number): number {
+  const [min, max] = PANEL_LAYOUT_RANGE[key];
+  if (!Number.isFinite(value)) return DEFAULT_PANEL_LAYOUT[key];
+  return Math.min(max, Math.max(min, value));
+}
+
+/** localStorage から復元（壊れていれば既定）。 */
+function loadPanelLayout(): PanelLayout {
+  const def = { ...DEFAULT_PANEL_LAYOUT };
+  try {
+    const raw = localStorage.getItem(PANEL_LAYOUT_KEY);
+    if (!raw) return def;
+    const p = JSON.parse(raw) as Partial<PanelLayout>;
+    for (const key of Object.keys(def) as (keyof PanelLayout)[]) {
+      const v = p[key];
+      if (typeof v === 'number') def[key] = clampLayoutValue(key, v);
+    }
+    return def;
+  } catch {
+    return def;
+  }
+}
+
+function savePanelLayout(layout: PanelLayout): void {
+  try {
+    localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    // localStorage 不可時は無視（永続化のみスキップ）。
+  }
+}
+
 interface DmxState {
   faders: number[];
   output: number[];
@@ -129,6 +193,8 @@ interface DmxState {
   actionFadeMs: number;
   /** 左サイド（Project/Show ツリー）を折りたたんでいるか（UI のみ）。 */
   sidebarCollapsed: boolean;
+  /** 可変レイアウトの寸法（スプリッタで変更・localStorage へ永続化）。 */
+  panelLayout: PanelLayout;
   /** 環境設定モーダルを開いているか（UI のみ）。 */
   prefsOpen: boolean;
   /** Show 読込パッチモーダルの入力（非 null で表示・UI のみ）。 */
@@ -189,6 +255,10 @@ interface DmxState {
   setActionFadeMs: (ms: number) => void;
   /** 左サイドバーの折りたたみを切り替える。 */
   toggleSidebarCollapsed: () => void;
+  /** 可変レイアウトの寸法を部分更新する（範囲内へ丸めて永続化）。 */
+  setPanelLayout: (patch: Partial<PanelLayout>) => void;
+  /** 指定した寸法（省略時は全て）を既定へ戻す。 */
+  resetPanelLayout: (key?: keyof PanelLayout) => void;
   /** 環境設定モーダルの開閉を設定する。 */
   setPrefsOpen: (open: boolean) => void;
   /** Show 読込パッチモーダルの入力を設定する（null で閉じる）。 */
@@ -320,6 +390,7 @@ export const useDmxStore = create<DmxState>((set, get) => ({
   panelCollapse: loadPanelCollapse(),
   actionFadeMs: 2000,
   sidebarCollapsed: false,
+  panelLayout: loadPanelLayout(),
   prefsOpen: false,
   showImport: null,
   missingFiles: null,
@@ -396,6 +467,25 @@ export const useDmxStore = create<DmxState>((set, get) => ({
 
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
+  setPanelLayout: (patch) =>
+    set((s) => {
+      const next = { ...s.panelLayout };
+      for (const [key, value] of Object.entries(patch) as [keyof PanelLayout, number][]) {
+        if (typeof value === 'number') next[key] = clampLayoutValue(key, value);
+      }
+      savePanelLayout(next);
+      return { panelLayout: next };
+    }),
+
+  resetPanelLayout: (key) =>
+    set((s) => {
+      const next = key
+        ? { ...s.panelLayout, [key]: DEFAULT_PANEL_LAYOUT[key] }
+        : { ...DEFAULT_PANEL_LAYOUT };
+      savePanelLayout(next);
+      return { panelLayout: next };
+    }),
+
   setPrefsOpen: (open) => set({ prefsOpen: open }),
 
   setShowImport: (payload) => set({ showImport: payload }),
@@ -441,8 +531,6 @@ export const useDmxStore = create<DmxState>((set, get) => ({
       return {
         project,
         faders,
-        artnet: project.settings.artnet,
-        openDmx: project.settings.openDmx,
         selectedShowId,
         selectedSetlistId: selectedSetlistExists ? s.selectedSetlistId : null,
         ...(s.activeSetlistId && !activeSetlistExists
@@ -462,6 +550,9 @@ export const useDmxStore = create<DmxState>((set, get) => ({
     const prevShowId = get().activeShowId;
     set({
       measuredHz: state.measuredHz,
+      // 出力設定は Project ではなくアプリ設定の持ち物。engine state が唯一の反映経路。
+      artnet: state.artnet,
+      openDmx: state.openDmx,
       openDmxStatus: state.openDmxStatus,
       playback: state.playback,
       activeShowId: state.activeShowId,

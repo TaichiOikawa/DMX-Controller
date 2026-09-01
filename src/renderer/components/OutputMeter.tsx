@@ -9,13 +9,15 @@ import { useDmxStore } from '../store';
 
 export function OutputMeter() {
   const output = useDmxStore((s) => s.output);
+  // バーの高さは可変レイアウト（App のスプリッタで変更・localStorage 永続化）。
+  const height = useDmxStore((s) => s.panelLayout.meterHeight);
 
   return (
     <div className="rounded-lg bg-neutral-900/60 p-2 ring-1 ring-neutral-800">
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[11px] font-medium text-neutral-400">出力モニター（全 512ch）</span>
       </div>
-      <div className="flex h-16 gap-px">
+      <div className="flex gap-px" style={{ height }}>
         {Array.from({ length: UNIVERSE_SIZE }, (_, ch) => {
           const v = output[ch] ?? 0;
           const h = (v / 255) * 100;

@@ -103,7 +103,7 @@ export function FaderBank() {
   return (
     <div className="flex h-full flex-col gap-3">
       {/* バンク切替タブ + プログラマー状態 */}
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex shrink-0 flex-wrap items-center gap-1">
         <button
           onClick={toggleCollapsed}
           className="inline-flex items-center rounded bg-neutral-800 px-2 py-1 text-neutral-200 hover:bg-neutral-700"
@@ -175,7 +175,7 @@ export function FaderBank() {
       </div>
 
       {/* フェーダー列 */}
-      <div className="flex flex-1 gap-1 overflow-x-auto rounded-lg bg-neutral-900/60 p-3 ring-1 ring-neutral-800">
+      <div className="flex min-h-0 flex-1 gap-1 overflow-x-auto rounded-lg bg-neutral-900/60 p-3 ring-1 ring-neutral-800">
         {channels.map((ch) => {
           const inEditTarget = editChannels.has(ch);
           return (

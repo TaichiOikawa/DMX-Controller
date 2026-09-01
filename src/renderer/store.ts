@@ -195,7 +195,7 @@ interface DmxState {
   sidebarCollapsed: boolean;
   /** 可変レイアウトの寸法（スプリッタで変更・localStorage へ永続化）。 */
   panelLayout: PanelLayout;
-  /** 環境設定モーダルを開いているか（UI のみ）。 */
+  /** 設定モーダルを開いているか（UI のみ）。 */
   prefsOpen: boolean;
   /** Show 読込パッチモーダルの入力（非 null で表示・UI のみ）。 */
   showImport: ShowFilePayload | null;
@@ -259,7 +259,7 @@ interface DmxState {
   setPanelLayout: (patch: Partial<PanelLayout>) => void;
   /** 指定した寸法（省略時は全て）を既定へ戻す。 */
   resetPanelLayout: (key?: keyof PanelLayout) => void;
-  /** 環境設定モーダルの開閉を設定する。 */
+  /** 設定モーダルの開閉を設定する。 */
   setPrefsOpen: (open: boolean) => void;
   /** Show 読込パッチモーダルの入力を設定する（null で閉じる）。 */
   setShowImport: (payload: ShowFilePayload | null) => void;

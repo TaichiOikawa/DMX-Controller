@@ -1,11 +1,12 @@
 /**
  * トップ操作バー。
- * モード切替（EDIT/SHOW）、保存状態表示、Undo/Redo、環境設定の起動。
+ * モード切替（EDIT/SHOW）、保存状態表示、Undo/Redo、出力レートの実測表示、設定の起動。
  * Project の新規/保存/開く と Show の選択は左サイドツリーへ分離。
  */
 
 import { Circle, Lock, Redo2, Settings, Undo2 } from "lucide-react";
 import { useDmxStore } from "../store";
+import { openDmxRateLabel } from "../openDmxStatus";
 
 export function ProjectBar() {
   const mode = useDmxStore((s) => s.mode);
@@ -15,6 +16,10 @@ export function ProjectBar() {
   const canUndo = useDmxStore((s) => s.canUndo);
   const canRedo = useDmxStore((s) => s.canRedo);
   const setPrefsOpen = useDmxStore((s) => s.setPrefsOpen);
+  const measuredHz = useDmxStore((s) => s.measuredHz);
+  const artnetEnabled = useDmxStore((s) => s.artnet.enabled);
+  const openDmxStatus = useDmxStore((s) => s.openDmxStatus);
+  const [openDmxLabel, openDmxTone] = openDmxRateLabel(openDmxStatus);
 
   const fileName = projectPath
     ? projectPath.replace(/^.*[\\/]/, "")
@@ -86,13 +91,56 @@ export function ProjectBar() {
         {dirty && <span>(未保存)</span>}
       </span>
 
+      {/* 出力レートの実測値（設定 → 接続 と同じ値）。 */}
+      <div className="ml-auto flex items-center gap-1.5">
+        <RateBadge
+          label="実測"
+          value={`${measuredHz} Hz`}
+          tone={artnetEnabled ? "text-emerald-400" : "text-neutral-500"}
+          title={
+            artnetEnabled
+              ? "出力ループの実測レート（Art-Net の送出レート）"
+              : "出力ループの実測レート（Art-Net は無効）"
+          }
+        />
+        <RateBadge
+          label="USB-DMX"
+          value={openDmxLabel}
+          tone={openDmxTone}
+          title="USB-DMX の送出状態・実測レート"
+        />
+      </div>
+
       <button
         onClick={() => setPrefsOpen(true)}
-        className="ml-auto inline-flex items-center gap-1 rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
-        title="環境設定（Ctrl+,）"
+        className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+        title="設定（Ctrl+,）"
       >
-        <Settings size={13} /> 環境設定
+        <Settings size={13} /> 設定
       </button>
     </div>
+  );
+}
+
+/** 出力レート 1 つぶんの表示（ラベル + 値）。 */
+function RateBadge({
+  label,
+  value,
+  tone,
+  title,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+  title: string;
+}) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px]"
+      title={title}
+    >
+      <span className="text-neutral-500">{label}</span>
+      <span className={`font-mono ${tone}`}>{value}</span>
+    </span>
   );
 }

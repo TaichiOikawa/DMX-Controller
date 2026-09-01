@@ -84,7 +84,7 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
           click: dispatch('edit:redo'),
         },
         { type: 'separator' },
-        { label: '環境設定…', accelerator: 'CmdOrCtrl+,', click: dispatch('edit:prefs') },
+        { label: '設定…', accelerator: 'CmdOrCtrl+,', click: dispatch('edit:prefs') },
       ],
     },
     {
@@ -195,7 +195,7 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
                 '← / Backspace   1つ戻る',
                 'Ctrl+S   上書き保存',
                 'Ctrl+Z / Ctrl+Shift+Z   元に戻す / やり直し',
-                'Ctrl+,   環境設定',
+                'Ctrl+,   設定',
               ].join('\n'),
             });
           },

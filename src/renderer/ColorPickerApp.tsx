@@ -39,7 +39,7 @@ export function ColorPickerApp() {
 
       {fixtures.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-4 text-center text-[11px] text-neutral-500">
-          フィクスチャ未登録です。メインウィンドウの環境設定で RGB フィクスチャを追加してください。
+          フィクスチャ未登録です。メインウィンドウの設定で RGB フィクスチャを追加してください。
         </div>
       ) : (
         <>

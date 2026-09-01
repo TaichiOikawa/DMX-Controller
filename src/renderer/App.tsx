@@ -211,7 +211,7 @@ export default function App() {
         void window.dmx.saveProjectOverwrite();
         return;
       }
-      // Ctrl/Cmd+, で環境設定を開く。
+      // Ctrl/Cmd+, で設定を開く。
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         useDmxStore.getState().setPrefsOpen(true);
@@ -583,7 +583,7 @@ export default function App() {
         <OutputMeter />
       </div>
 
-      {/* 環境設定モーダル（prefsOpen で表示） */}
+      {/* 設定モーダル（prefsOpen で表示） */}
       <PreferencesModal />
       <ShowImportPatchModal />
       <MissingFilesModal />

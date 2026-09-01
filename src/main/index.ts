@@ -9,6 +9,7 @@ import path from 'node:path';
 import { EngineHost } from './engineHost';
 import { buildAppMenu, defaultMenuState, type MenuState } from './menu';
 import { Cmd } from '../shared/ipc';
+import { flushPendingUpdatePrompt, initAutoUpdater } from './updater';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,11 +37,17 @@ function refreshMenu(): void {
 let confirmInFlight = false;
 
 /**
- * 未保存があれば終了前に確認ダイアログを出す。保存/破棄/キャンセルを処理する。
- * @param quitAfter true ならウィンドウを閉じる代わりにアプリを終了する（quit 経路用）。
+ * 終了してよい状態にする。未保存があれば確認ダイアログを出し、保存/破棄/キャンセルを処理する。
+ * 終了してよければ allowClose を立てて true を返す（キャンセル/保存失敗なら false）。
+ * 自動アップデートのインストール前にも同じ経路を通す（updater.ts の prepareQuit）。
  */
-async function confirmCloseWhenDirty(quitAfter = false): Promise<void> {
-  if (!mainWindow || !host || confirmInFlight) return;
+async function confirmSaveBeforeExit(): Promise<boolean> {
+  if (!mainWindow || !host) return true;
+  if (!host.isDirty()) {
+    allowClose = true;
+    return true;
+  }
+  if (confirmInFlight) return false;
   confirmInFlight = true;
   try {
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -51,17 +58,26 @@ async function confirmCloseWhenDirty(quitAfter = false): Promise<void> {
       message: '未保存の変更があります',
       detail: '変更を保存してから終了しますか？',
     });
-    if (response === 2) return; // キャンセル: そのまま開いておく
+    if (response === 2) return false; // キャンセル: そのまま開いておく
     if (response === 0) {
       const r = await host.saveActiveForClose();
-      if (!r.ok) return; // 保存をキャンセル/失敗 → 終了しない
+      if (!r.ok) return false; // 保存をキャンセル/失敗 → 終了しない
     }
     allowClose = true;
-    if (quitAfter) app.quit();
-    else mainWindow.close();
+    return true;
   } finally {
     confirmInFlight = false;
   }
+}
+
+/**
+ * 未保存があれば終了前に確認ダイアログを出す。保存/破棄/キャンセルを処理する。
+ * @param quitAfter true ならウィンドウを閉じる代わりにアプリを終了する（quit 経路用）。
+ */
+async function confirmCloseWhenDirty(quitAfter = false): Promise<void> {
+  if (!(await confirmSaveBeforeExit())) return;
+  if (quitAfter) app.quit();
+  else mainWindow?.close();
 }
 
 function createWindow(): void {
@@ -227,6 +243,8 @@ app.whenReady().then(() => {
       canRedo: state.canRedo,
     };
     refreshMenu();
+    // SHOW モード中は更新ダイアログを保留している。抜けたらここで提示する。
+    if (menuState.mode !== 'show') flushPendingUpdatePrompt();
   });
   // renderer の UI 状態（タブ/パネル開閉）の変化でメニューを再構築。
   host.setUiStateListener((ui) => {
@@ -258,6 +276,14 @@ app.whenReady().then(() => {
 
   createWindow();
   refreshMenu();
+
+  // 自動アップデート（GitHub Releases）。パッケージ版のみ動作する。
+  initAutoUpdater({
+    getWindow: () => mainWindow,
+    // 公演中（SHOW モード）は割り込まない。EDIT に戻った時点で提示する。
+    canPrompt: () => menuState.mode !== 'show',
+    prepareQuit: confirmSaveBeforeExit,
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

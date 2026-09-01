@@ -94,6 +94,16 @@ export class EngineHost {
   private lastFrameSentAt = 0;
   private lastStateSentAt = 0;
 
+  /** engineState ブロードキャストの最短間隔（ms）。leading + trailing で間引く。 */
+  private static readonly STATE_BROADCAST_MIN_INTERVAL_MS = 50;
+  /** dirty 判定（フル JSON 直列化）の trailing デバウンス（ms）。 */
+  private static readonly DIRTY_CHECK_DEBOUNCE_MS = 300;
+  private lastStateBroadcastAt = 0;
+  private stateBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  /** スロットル中に控えた最新 state（trailing で 1 回だけ送る）。 */
+  private pendingState: EngineStateSnapshot | null = null;
+  private dirtyCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** engine state 変化を main（メニュー再構築）へ通知するリスナ。 */
   private engineStateListener: ((state: EngineStateSnapshot) => void) | null = null;
   /** renderer から同期された UI 状態（タブ・パネル開閉）を main へ通知するリスナ。 */
@@ -127,7 +137,7 @@ export class EngineHost {
     this.openDmxDriver = new OpenDmxDriver({
       onStatus: (status) => {
         this.engine.setOpenDmxStatus(status);
-        this.broadcast(Evt.engineState, this.engine.getState());
+        this.broadcastState(this.engine.getState());
       },
     });
 
@@ -140,16 +150,18 @@ export class EngineHost {
 
     this.engine.onFrame((frame) => this.forwardFrame(frame));
     this.engine.onState((state) => {
-      // 送信先 IP 等は Engine 側が真実。常に追従。
+      // 送信先 IP 等は Engine 側が真実。常に追従（ここは間引かない）。
       this.artnet = state.artnet;
       // ポートの開閉は Driver 側で冪等。設定変更に追従させるため毎回渡す。
       this.openDmxDriver.apply(state.openDmx);
-      this.broadcast(Evt.engineState, state);
+      // IPC は 512 要素の busking 配列を含むため、EDIT のフェーダー操作等で
+      // emitState が高頻度に来ても氾濫しないようスロットルする。
+      this.broadcastState(state);
       this.engineStateListener?.(state);
     });
     this.engine.onProject((project) => {
       this.broadcast(Evt.project, project);
-      this.recomputeDirty();
+      this.scheduleDirtyCheck();
     });
 
     // 起動直後の Project を「保存済み（クリーン）」の基準にする。
@@ -168,6 +180,20 @@ export class EngineHost {
 
   // ===== 未保存（dirty）状態の管理 =====
 
+  /**
+   * dirty 判定（フル JSON 直列化＋比較）を trailing デバウンスで予約する。
+   * フェーダードラッグ中は Project 通知が ~8Hz で来るため、毎回直列化すると
+   * Project が大きいほど main の負荷が上がる。表示が最大この時間だけ遅れても
+   * 実害はない（終了確認は isDirty() が同期的に確定させる）。
+   */
+  private scheduleDirtyCheck(): void {
+    if (this.dirtyCheckTimer !== null) return; // trailing 1 本で十分
+    this.dirtyCheckTimer = setTimeout(() => {
+      this.dirtyCheckTimer = null;
+      this.recomputeDirty();
+    }, EngineHost.DIRTY_CHECK_DEBOUNCE_MS);
+  }
+
   /** 現在の Project を最後の保存状態と比較し、変化があれば renderer へ通知する。 */
   private recomputeDirty(): void {
     const json = serializeProject(this.engine.getProject());
@@ -180,6 +206,11 @@ export class EngineHost {
 
   /** 現在の Project を「保存済み」基準に更新し、dirty=false にする。 */
   private markClean(): void {
+    // 保留中の判定は不要になる（この時点の Project が基準になる）。
+    if (this.dirtyCheckTimer !== null) {
+      clearTimeout(this.dirtyCheckTimer);
+      this.dirtyCheckTimer = null;
+    }
     this.lastSavedJson = serializeProject(this.engine.getProject());
     this.dirty = false;
     this.emitDirty();
@@ -197,8 +228,40 @@ export class EngineHost {
     }
   }
 
+  /**
+   * engineState を最短間隔つきで配信する（leading + trailing）。
+   * 間隔が空いていれば即時（モード切替や GO は体感遅延なし）、高頻度時は
+   * 最新スナップショットだけを控えて期限で 1 回送る（中間状態は落として良い）。
+   */
+  private broadcastState(state: EngineStateSnapshot): void {
+    const now = Date.now();
+    const elapsed = now - this.lastStateBroadcastAt;
+    if (elapsed >= EngineHost.STATE_BROADCAST_MIN_INTERVAL_MS) {
+      this.lastStateBroadcastAt = now;
+      this.broadcast(Evt.engineState, state);
+      return;
+    }
+    this.pendingState = state;
+    if (this.stateBroadcastTimer === null) {
+      this.stateBroadcastTimer = setTimeout(() => {
+        this.stateBroadcastTimer = null;
+        if (!this.pendingState) return;
+        const pending = this.pendingState;
+        this.pendingState = null;
+        this.lastStateBroadcastAt = Date.now();
+        this.broadcast(Evt.engineState, pending);
+      }, EngineHost.STATE_BROADCAST_MIN_INTERVAL_MS - elapsed);
+    }
+  }
+
   /** main プロセス（ウィンドウ終了処理）から参照する。 */
   isDirty(): boolean {
+    // デバウンス中の判定があれば同期的に確定させる（終了確認の取りこぼし防止）。
+    if (this.dirtyCheckTimer !== null) {
+      clearTimeout(this.dirtyCheckTimer);
+      this.dirtyCheckTimer = null;
+      this.recomputeDirty();
+    }
     return this.dirty;
   }
 
@@ -260,6 +323,15 @@ export class EngineHost {
     if (this.autosaveTimer !== null) {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
+    }
+    if (this.stateBroadcastTimer !== null) {
+      clearTimeout(this.stateBroadcastTimer);
+      this.stateBroadcastTimer = null;
+      this.pendingState = null;
+    }
+    if (this.dirtyCheckTimer !== null) {
+      clearTimeout(this.dirtyCheckTimer);
+      this.dirtyCheckTimer = null;
     }
     await this.openDmxDriver.stop();
     await this.remoteServer.close();
@@ -781,7 +853,7 @@ export class EngineHost {
       this.lastStateSentAt = now;
       // OpenDMX の実測 Hz はこの周期で拾う（毎フレーム配信すると IPC が溢れる）。
       this.engine.setOpenDmxStatus(this.openDmxDriver.getStatus());
-      this.broadcast(Evt.engineState, this.engine.getState());
+      this.broadcastState(this.engine.getState());
     }
   }
 }

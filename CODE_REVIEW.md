@@ -129,7 +129,12 @@
 - **終了時の `openDmxDriver.stop()` が待たれない**: `engineHost.stop()`（`:263`）で
   `void` 捨てされるため、アプリ終了時にポートの close が完了しない可能性がある。
 
-### パフォーマンス
+### パフォーマンス ✅対応済み（2026-09-01）
+
+対応内容: dirty 判定を 300ms の trailing デバウンスへ（`isDirty()` は保留分を同期確定するので
+終了確認は取りこぼさない）、engineState ブロードキャストを最短 50ms の leading+trailing
+スロットルへ（設定追従・メニュー通知は即時のまま）、メニュー再構築を関連フィールドが
+実際に変わったときのみに限定。※ Undo 履歴のフル JSON 保持は実害が薄いためメモのまま。
 
 - **dirty 判定が毎回フル JSON 直列化**: `recomputeDirty`（`engineHost.ts:172-179`）は
   Project 変更通知のたびに全体を `JSON.stringify` して文字列比較する。フェーダードラッグ中は

@@ -203,7 +203,17 @@ app.whenReady().then(() => {
   host.registerIpc();
 
   // engine state（モード/BLACKOUT/Undo・Redo 可否）の変化でメニューを再構築。
+  // emitState はフェーダー操作等でも高頻度に来るため、メニューに影響する
+  // フィールドが実際に変わったときだけ再構築する（ネイティブメニュー構築は安くない）。
   host.setEngineStateListener((state) => {
+    if (
+      state.mode === menuState.mode &&
+      state.blackout === menuState.blackout &&
+      state.canUndo === menuState.canUndo &&
+      state.canRedo === menuState.canRedo
+    ) {
+      return;
+    }
     menuState = {
       ...menuState,
       mode: state.mode,

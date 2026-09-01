@@ -321,12 +321,12 @@ export function TimelineView({ active }: { active: boolean }) {
                 onToggleMute={() => setMainProps({ muted: !mainMuted })}
                 onToggleSolo={() => setMainProps({ solo: !mainSolo })}
                 onAdd={() => activeShowId && void window.dmx.pickShowAudio(activeShowId)}
-                addDisabled={!loaded}
+                addDisabled={!loaded || !editable}
                 onDelete={() => {
                   if (activeShowId && window.confirm("メイン音声を削除しますか？"))
                     window.dmx.clearShowAudio(activeShowId);
                 }}
-                canDelete={!!filePath}
+                canDelete={editable && !!filePath}
                 devices={audioDevices}
                 deviceId={show?.audio?.outputDeviceId ?? ""}
                 onDevice={(id) => setMainProps({ outputDeviceId: id || null })}

@@ -159,7 +159,13 @@
 - `session.setDevicePermissionHandler(() => true)`（`index.ts:186`）は全デバイス種別を許可
   している。setSinkId 用途なら対象を絞れる。
 
-### 設計・一貫性
+### 設計・一貫性 ✅対応済み（2026-09-01）
+
+対応内容: `clearShowAudio` を他のオーサリング系と同じく editable ゲート + Undo 可能に。
+`setShowAudio` は本番中の再リンク用途のため意図的に非ゲートである旨をコメント化し、
+Undo には積む（フォルダ一括再リンクは 1 スナップショットに束ねる）。TimelineView の
+メイン音声の追加/削除ボタンも追加トラックと同じ editable ゲートに統一。
+「片側だけスプレッド」は B1 修正で解消し、他の同型箇所が無いことを確認済み。
 
 - **`setShowAudio` / `clearShowAudio` に editable ゲートも Undo もない**（`Engine.ts:1333-1366`）。
   SHOW モード中の再リンクを許すためなら意図的で良いが、`clearShowAudio`（音声解除）は

@@ -1345,10 +1345,17 @@ export class Engine {
     return show?.timeline?.points.find((p) => p.id === pointId) ?? null;
   }
 
-  /** Show に音声ファイル（絶対パス）を設定。音量/ミュート/ソロは保持する。 */
+  /**
+   * Show に音声ファイル（絶対パス）を設定。音量/ミュート/ソロは保持する。
+   * 本番中に欠損音声を差し替える再リンク（MissingFilesModal / フォルダ一括）にも
+   * 使うため、意図的に editable ゲートは掛けない。Undo には積む
+   * （フォルダ一括再リンクの連続呼び出しは 1 スナップショットに束ねる）。
+   */
   setShowAudio(showId: string, filePath: string): void {
     const show = this.project.shows.find((s) => s.id === showId);
     if (!show) return;
+    if (show.audio?.filePath === filePath) return; // 変更なし
+    this.pushUndoCoalesced(500);
     show.audio = { ...show.audio, filePath };
     this.notifyProject();
   }
@@ -1373,10 +1380,12 @@ export class Engine {
     this.notifyProject();
   }
 
-  /** Show の音声を解除。 */
+  /** Show の音声を解除。破壊的な編集なので他のオーサリング系と同じく EDIT のみ・Undo 可能。 */
   clearShowAudio(showId: string): void {
+    if (!this.editable) return;
     const show = this.project.shows.find((s) => s.id === showId);
-    if (!show) return;
+    if (!show?.audio) return;
+    this.pushUndo();
     delete show.audio;
     this.notifyProject();
   }

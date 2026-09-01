@@ -721,6 +721,46 @@ describe('Timeline auto-GO (§5.5, internal timecode)', () => {
     expect(engine.getProject().shows[0].audio).toBeUndefined();
   });
 
+  it('setShowAudio keeps mixer props and is undoable; SHOW モードでも再リンクできる', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.shows[0].audio = { filePath: '/old/song.mp3', volume: 0.5, muted: true, solo: false };
+    engine.loadProject(p);
+    engine.setMode('show'); // 本番中の欠損再リンクを想定（editable ゲートなし）
+
+    engine.setShowAudio('show1', '/new/song.mp3');
+    expect(engine.getProject().shows[0].audio).toMatchObject({
+      filePath: '/new/song.mp3',
+      volume: 0.5,
+      muted: true,
+    });
+
+    engine.setMode('edit');
+    engine.undo();
+    expect(engine.getProject().shows[0].audio?.filePath).toBe('/old/song.mp3');
+  });
+
+  it('clearShowAudio は SHOW モードでは無効・EDIT では Undo で復元できる', () => {
+    const { engine } = makeEngine();
+    const p = projectWithSequence([]);
+    p.shows[0].audio = { filePath: '/abs/song.mp3', volume: 0.8 };
+    engine.loadProject(p);
+
+    engine.setMode('show');
+    engine.clearShowAudio('show1'); // ブロックされる
+    expect(engine.getProject().shows[0].audio?.filePath).toBe('/abs/song.mp3');
+
+    engine.setMode('edit');
+    engine.clearShowAudio('show1');
+    expect(engine.getProject().shows[0].audio).toBeUndefined();
+
+    engine.undo();
+    expect(engine.getProject().shows[0].audio).toMatchObject({
+      filePath: '/abs/song.mp3',
+      volume: 0.8,
+    });
+  });
+
   it('seek backward does not re-fire', () => {
     const { engine } = makeEngine();
     const p = projectWithSequence([cueEntry(cue('c0', { 0: 10 }))]);

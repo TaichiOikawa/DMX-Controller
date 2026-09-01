@@ -1,0 +1,89 @@
+# タグ push でリリースをビルドし、GitHub Releases へ公開するワークフロー。
+#
+# 使い方:
+#   1. package.json の version を上げてコミットする
+#   2. `git tag v0.4.8 && git push origin main --tags`
+#   3. このワークフローが Windows 版をビルドし、GitHub Release を作成して
+#      インストーラ・ポータブル exe・latest.yml をアップロードする
+#
+# latest.yml がアップロードされることで、配布済みアプリの electron-updater が
+# 新バージョンを検出できるようになる（src/main/updater.ts）。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # 手動実行（タグを打たずにビルドだけ確認したい場合。publish はしない）。
+  workflow_dispatch:
+
+permissions:
+  # electron-builder が Release を作成・アップロードするために必要。
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # タグ名（v0.4.8）と package.json の version（0.4.8）のズレは
+      # 更新フィードが壊れる原因になるため、ここで落とす。
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::タグ $GITHUB_REF_NAME と package.json の version ($PKG) が一致しません"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Test
+        run: yarn test
+
+      - name: Build renderer / main
+        run: yarn build
+
+      # タグ push のときだけ publish する。workflow_dispatch ではビルド確認のみ。
+      - name: Build and publish (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: yarn electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build only (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: yarn electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmx-console-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error

@@ -47,7 +47,16 @@ fileAssociations:
     role: Editor
     mimeType: application/x-dmxproj
 
+# 自動更新の配信元（electron-updater が参照する app-update.yml はここから生成される）。
+# GitHub Actions の release ワークフローが `--publish always` でここへアップロードする。
+publish:
+  provider: github
+  owner: TaichiOikawa
+  repo: DMX-Controller
+
 # Windows: NSIS インストーラ + ポータブル exe（インストール不要で実行可能）。
+# 自動更新が効くのは NSIS 版のみ。ポータブル版は更新チェックをスキップする
+# （src/main/updater.ts の isPortable を参照）。
 win:
   target:
     - target: nsis

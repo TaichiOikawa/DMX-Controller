@@ -20,6 +20,7 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 import { Evt, type MenuAction } from '../shared/ipc';
+import { checkForUpdatesManually } from './updater';
 import type { EngineMode } from '../shared/types';
 
 /** メニューの動的状態（main 側が把握しているもの＋ renderer から同期した UI 状態）。 */
@@ -172,6 +173,11 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
     {
       label: 'ヘルプ',
       submenu: [
+        {
+          label: 'アップデートを確認…',
+          click: () => void checkForUpdatesManually(),
+        },
+        { type: 'separator' },
         {
           label: 'バージョン情報',
           click: () => {

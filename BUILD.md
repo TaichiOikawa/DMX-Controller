@@ -109,7 +109,68 @@ release/win-unpacked/resources/
 > `serialport` の prebuild は **N-API**（ABI 非依存）のため、Electron 向けの再ビルドは不要です
 > （`npmRebuild: false` のままで動作します）。Electron 42 / ABI 146 で確認済み。
 
-## 7. アプリアイコン（任意）
+## 7. リリースと自動アップデート
+
+配布済みアプリは **GitHub Releases を更新フィードとして自動アップデート**します
+（`electron-updater`、実装は `src/main/updater.ts`）。
+
+### リリース手順
+
+1. `package.json` の `version` を上げてコミットする
+2. **バージョンと同じ名前のタグ**を push する
+
+   ```sh
+   git tag v0.4.8
+   git push origin main --tags
+   ```
+
+3. GitHub Actions（`.github/workflows/release.yml`）が Windows ランナーで
+   typecheck / lint / test → ビルド → `electron-builder --win --publish always` を実行し、
+   GitHub Release を作成して以下をアップロードする
+
+   | ファイル                            | 用途                                   |
+   | ----------------------------------- | -------------------------------------- |
+   | `DMX Console Setup <version>.exe`   | NSIS インストーラ（自動更新の対象）    |
+   | `DMX Console <version>.exe`         | ポータブル版（自動更新の対象外）       |
+   | `latest.yml` / `*.blockmap`         | **更新フィード**。これが無いと更新されない |
+
+> タグ名（`v0.4.8`）と `package.json` の `version`（`0.4.8`）が食い違うと
+> 更新フィードが壊れるため、ワークフローの冒頭で一致を検証して落とします。
+
+タグを打たずに `workflow_dispatch`（Actions の「Run workflow」）で実行した場合は
+ビルドの確認のみを行い、Release への publish はしません。
+
+### 手元からリリースする場合
+
+`GH_TOKEN`（`repo` 権限の Personal Access Token）を環境変数に入れて実行します。
+通常は Actions に任せてください。
+
+```sh
+GH_TOKEN=ghp_xxx yarn release
+```
+
+### アプリ側の挙動
+
+| タイミング                     | 動作                                                       |
+| ------------------------------ | ---------------------------------------------------------- |
+| 起動時                         | 1 回だけチェックし、新版があればバックグラウンドでダウンロード |
+| ダウンロード完了               | 「今すぐ再起動して更新 / 後で」のダイアログ                |
+| 「今すぐ」                     | 未保存があれば保存確認を通してからインストーラを起動・再起動 |
+| 「後で」                       | 何もしない（次回チェック時に再提示。勝手にインストールしない） |
+| **SHOW モード中**              | ダイアログを**出さない**。EDIT に戻った時点で提示する      |
+| ヘルプ →「アップデートを確認…」 | 手動チェック。結果（最新／新版あり／失敗）を必ず表示する   |
+
+自動チェックの失敗（オフライン等）は通知しません。ログに警告を出すだけです。
+
+### 自動更新が動かない構成
+
+- **開発中**（`yarn dev` / `yarn run pack`）… `app.isPackaged` が false のためスキップ
+- **ポータブル版 exe** … electron-builder の portable target は差分更新に非対応。
+  メニューから確認するとリリースページを開く導線を出します
+- `yarn run pack`（`--dir`）の出力には `app-update.yml` が生成されないため、
+  更新の実挙動を確かめるには `yarn dist:win` の NSIS 版を使ってください
+
+## 8. アプリアイコン（任意）
 
 未設定の場合は Electron 既定アイコンが使われます（ビルドは成功し、警告のみ）。
 独自アイコンを使うには `build/` ディレクトリに以下を配置します。
@@ -122,7 +183,7 @@ release/win-unpacked/resources/
 
 `public/favicon.svg` を元に変換して配置すると統一できます。
 
-## 8. ファイル関連付け（.dmxproj）
+## 9. ファイル関連付け（.dmxproj）
 
 `electron-builder.yml` の `fileAssociations` で **`.dmxproj` をアプリに関連付け**しています。
 エクスプローラ等でプロジェクトファイルをダブルクリックすると、DMX Console が起動して
@@ -141,13 +202,13 @@ release/win-unpacked/resources/
 > 2 個目のプロセスは開くファイルのパスだけを先行インスタンスへ渡して終了するため、
 > Art-Net の UDP ポートや OpenDMX のシリアルポートを二重に掴むことはありません。
 
-## 9. クロスプラットフォーム注意
+## 10. クロスプラットフォーム注意
 
 - **Windows の .exe は Windows 上でのみ**確実にビルドできます。
 - macOS / Linux 向けは原則それぞれの OS（または CI）でビルドしてください。
 - コード署名は未設定です（社内/個人配布向け）。配布時に SmartScreen/Gatekeeper の警告が出ます。署名が必要な場合は証明書を用意し `electron-builder.yml` に追記してください。
 
-## 10. DMX 出力（Art-Net / OpenDMX）
+## 11. DMX 出力（Art-Net / OpenDMX）
 
 出力は **設定 → 接続** から設定します。2 系統は独立に ON/OFF でき、同時出力もできます
 （Art-Net でビジュアライザへ送りながら、OpenDMX で実機を鳴らす等）。
@@ -174,7 +235,7 @@ release/win-unpacked/resources/
 - 選択したポートは Project に保存されますが、**ポート名はマシン固有**です
   （別 PC では選び直しが必要）。
 
-## 11. トラブルシューティング
+## 12. トラブルシューティング
 
 - **初回パッケージ時に時間がかかる**: electron-builder が Electron バイナリをダウンロード・キャッシュします（2 回目以降は高速）。
 - **OpenDMX のポート一覧が空**: I/F が接続されていないか、FTDI ドライバが未導入です。

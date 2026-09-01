@@ -19,8 +19,10 @@ export default defineConfig({
           build: {
             rolldownOptions: {
               // serialport はネイティブモジュール（.node）なのでバンドルできない。
-              // 実行時に node_modules から解決させる（electron-builder が同梱する）。
-              external: ['serialport'],
+              // electron-updater は動的 require と app-update.yml の解決をランタイムに行うため、
+              // どちらもバンドルせず実行時に node_modules から解決させる
+              // （dependencies に置いてあるので electron-builder が同梱する）。
+              external: ['serialport', 'electron-updater'],
             },
           },
         },

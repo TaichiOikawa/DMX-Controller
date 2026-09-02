@@ -62,11 +62,7 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
-  # build/icon.ico があれば使用される。無い場合は Electron 既定アイコンになる。
-  icon: build/icon.ico
+  icon: public/DMX-Controller_icon.png
 
 nsis:
   oneClick: false
@@ -75,17 +71,3 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: DMX Console
-
-# macOS（ビルドする場合）。
-mac:
-  target:
-    - dmg
-  category: public.app-category.music
-  icon: build/icon.icns
-
-# Linux（ビルドする場合）。
-linux:
-  target:
-    - AppImage
-  category: AudioVideo
-  icon: build/icon.png

@@ -1,7 +1,7 @@
 {
   "name": "dmx-controller",
   "private": true,
-  "version": "0.4.7",
+  "version": "0.5.0",
   "description": "DMX/Art-Net 照明コントローラー",
   "author": "TaichiOikawa",
   "repository": {

@@ -33,7 +33,12 @@ import {
 import { RemoteServer } from './remoteServer';
 import { OpenDmxDriver, listSerialPorts } from './openDmx';
 import { AppSettingsStore } from './appSettingsStore';
-import { type ArtnetSettings, type OpenDmxSettings, type Show } from '../shared/types';
+import {
+  type ArtnetSettings,
+  type OpenDmxSettings,
+  type Show,
+  type StageLayout,
+} from '../shared/types';
 import {
   deserializeProject,
   deserializeShow,
@@ -390,6 +395,13 @@ export class EngineHost {
     // --- Undo / Redo ---
     ipcMain.on(Cmd.undo, () => this.engine.undo());
     ipcMain.on(Cmd.redo, () => this.engine.redo());
+    ipcMain.on(Cmd.beginStageLayoutEdit, () => this.engine.beginStageLayoutEdit());
+    ipcMain.on(Cmd.endStageLayoutEdit, () => this.engine.endStageLayoutEdit());
+    ipcMain.on(Cmd.setStageLayout, (_e, stageLayout: StageLayout) =>
+      this.engine.setStageLayout(stageLayout),
+    );
+    ipcMain.on(Cmd.stageLayoutUndo, () => this.engine.stageLayoutUndo());
+    ipcMain.on(Cmd.stageLayoutRedo, () => this.engine.stageLayoutRedo());
 
     // --- オーサリング ---
     ipcMain.on(Cmd.newShow, (_e, name?: string) => this.engine.newShow(name));

@@ -34,6 +34,7 @@ import {
   type Project,
   type SequenceEntry,
   type Show,
+  type StageLayout,
   type TimelinePoint,
   type AudioTrack,
   AUDIO_TRACK_COUNT,
@@ -58,7 +59,7 @@ import {
   type Position,
 } from './playback';
 import { pointsCrossed } from './timeline';
-import { deserializeProject, serializeProject } from '../shared/persistence';
+import { deserializeProject, normalizeStageLayout, serializeProject } from '../shared/persistence';
 import type {
   ActionPatch,
   AddCueOptions,
@@ -136,6 +137,10 @@ export class Engine {
   /** Undo / Redo 履歴（直列化した Project 文字列）。 */
   private undoStack: string[] = [];
   private redoStack: string[] = [];
+  /** ビジュアライザー編集中だけ生存する、Stage Layout専用履歴。 */
+  private visualizerEditing = false;
+  private stageLayoutUndoStack: StageLayout[] = [];
+  private stageLayoutRedoStack: StageLayout[] = [];
   /** 連続するフェーダー編集を1バーストに束ねるための直近スナップショット時刻。 */
   private lastCoalesceAt = -Infinity;
   private static readonly MAX_HISTORY = 100;
@@ -201,6 +206,9 @@ export class Engine {
     // 別ドキュメントを開いた／新規にしたら Undo 履歴はリセットする。
     this.undoStack = [];
     this.redoStack = [];
+    this.visualizerEditing = false;
+    this.stageLayoutUndoStack = [];
+    this.stageLayoutRedoStack = [];
     this.lastCoalesceAt = -Infinity;
     this.notifyProject();
     this.emitState();
@@ -254,7 +262,10 @@ export class Engine {
 
   /** 履歴から復元した Project を反映し、再生ランタイムを貼り直す。 */
   private restoreProject(json: string): void {
+    const stageLayout = structuredClone(this.project.stageLayout);
     this.project = deserializeProject(json);
+    // 本体Undo/RedoはStage Layout編集の文脈を巻き戻さない。
+    this.project.stageLayout = stageLayout;
     this.runtime.faderLive = this.project.faders.slice();
     // 出力設定は Project 外（アプリ設定）なので Undo / Redo の対象外。
     const showId = this.runtime.activeShowId;
@@ -269,6 +280,58 @@ export class Engine {
       }
     }
     this.lastCoalesceAt = -Infinity;
+    this.notifyProject();
+    this.emitState();
+  }
+
+  // ===== Stage Layout専用 Undo / Redo =====
+
+  beginStageLayoutEdit(): void {
+    if (!this.editable) return;
+    this.visualizerEditing = true;
+    this.stageLayoutUndoStack = [];
+    this.stageLayoutRedoStack = [];
+    this.emitState();
+  }
+
+  endStageLayoutEdit(): void {
+    this.visualizerEditing = false;
+    this.stageLayoutUndoStack = [];
+    this.stageLayoutRedoStack = [];
+    this.emitState();
+  }
+
+  /** UIで確定済みの1操作を受け取り、現在状態を専用Undoへ積んでから反映する。 */
+  setStageLayout(stageLayout: StageLayout): void {
+    if (!this.editable || !this.visualizerEditing) return;
+    const next = normalizeStageLayout(stageLayout);
+    if (JSON.stringify(next) === JSON.stringify(this.project.stageLayout)) return;
+    this.stageLayoutUndoStack.push(
+      structuredClone(this.project.stageLayout ?? normalizeStageLayout(undefined)),
+    );
+    if (this.stageLayoutUndoStack.length > Engine.MAX_HISTORY) this.stageLayoutUndoStack.shift();
+    this.stageLayoutRedoStack = [];
+    this.project.stageLayout = next;
+    this.notifyProject();
+    this.emitState();
+  }
+
+  stageLayoutUndo(): void {
+    if (!this.visualizerEditing || this.stageLayoutUndoStack.length === 0) return;
+    this.stageLayoutRedoStack.push(
+      structuredClone(this.project.stageLayout ?? normalizeStageLayout(undefined)),
+    );
+    this.project.stageLayout = this.stageLayoutUndoStack.pop();
+    this.notifyProject();
+    this.emitState();
+  }
+
+  stageLayoutRedo(): void {
+    if (!this.visualizerEditing || this.stageLayoutRedoStack.length === 0) return;
+    this.stageLayoutUndoStack.push(
+      structuredClone(this.project.stageLayout ?? normalizeStageLayout(undefined)),
+    );
+    this.project.stageLayout = this.stageLayoutRedoStack.pop();
     this.notifyProject();
     this.emitState();
   }
@@ -1593,6 +1656,9 @@ export class Engine {
       blackout: this.runtime.blackout,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
+      visualizerEditing: this.visualizerEditing,
+      canStageLayoutUndo: this.stageLayoutUndoStack.length > 0,
+      canStageLayoutRedo: this.stageLayoutRedoStack.length > 0,
       editingActionId: this.runtime.editingActionId,
       playback:
         show && this.activeShow

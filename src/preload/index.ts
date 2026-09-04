@@ -122,6 +122,21 @@ const api: DmxBridge = {
   redo() {
     ipcRenderer.send(Cmd.redo);
   },
+  beginStageLayoutEdit() {
+    ipcRenderer.send(Cmd.beginStageLayoutEdit);
+  },
+  endStageLayoutEdit() {
+    ipcRenderer.send(Cmd.endStageLayoutEdit);
+  },
+  setStageLayout(stageLayout) {
+    ipcRenderer.send(Cmd.setStageLayout, stageLayout);
+  },
+  stageLayoutUndo() {
+    ipcRenderer.send(Cmd.stageLayoutUndo);
+  },
+  stageLayoutRedo() {
+    ipcRenderer.send(Cmd.stageLayoutRedo);
+  },
 
   // オーサリング
   newShow(name) {

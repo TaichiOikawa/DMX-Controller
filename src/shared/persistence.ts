@@ -207,7 +207,7 @@ const VISUALIZER_PARAMETERS: VisualizerParameter[] = [
 ];
 
 /** v1 Project や不正な値を、安全な空の Stage Layout へ移行する。 */
-function normalizeStageLayout(raw: unknown): StageLayout {
+export function normalizeStageLayout(raw: unknown): StageLayout {
   const def = createDefaultStageLayout();
   if (!isObject(raw)) return def;
 

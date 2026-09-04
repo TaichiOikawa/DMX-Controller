@@ -21,6 +21,7 @@ import type {
   EngineMode,
   OpenDmxSettings,
   Project,
+  StageLayout,
   Show,
 } from './types';
 import type { VisualizerProfileLibrary } from './visualizerProfiles';
@@ -64,6 +65,11 @@ export const Cmd = {
   // --- Undo / Redo ---
   undo: 'cmd:undo',
   redo: 'cmd:redo',
+  beginStageLayoutEdit: 'cmd:beginStageLayoutEdit',
+  endStageLayoutEdit: 'cmd:endStageLayoutEdit',
+  setStageLayout: 'cmd:setStageLayout',
+  stageLayoutUndo: 'cmd:stageLayoutUndo',
+  stageLayoutRedo: 'cmd:stageLayoutRedo',
 
   // --- オーサリング（Show / マスター列 / GROUP / Cue 編集） ---
   newShow: 'cmd:newShow',
@@ -467,6 +473,12 @@ export interface EngineStateSnapshot {
   canUndo: boolean;
   /** Redo 可能か。 */
   canRedo: boolean;
+  /** Stage Layout専用の編集セッション中か。 */
+  visualizerEditing: boolean;
+  /** Stage Layout専用Undoが可能か。 */
+  canStageLayoutUndo: boolean;
+  /** Stage Layout専用Redoが可能か。 */
+  canStageLayoutRedo: boolean;
   /** EDIT モードで編集対象に選択中の Action id（未選択は null）。 */
   editingActionId: string | null;
   /** 読込中 Show の再生状態（未読込は null）。 */
@@ -520,6 +532,12 @@ export interface DmxBridge {
   holdFade(): void;
   undo(): void;
   redo(): void;
+  beginStageLayoutEdit(): void;
+  endStageLayoutEdit(): void;
+  /** 1回の確定操作としてStage Layout全体を置換する。 */
+  setStageLayout(stageLayout: StageLayout): void;
+  stageLayoutUndo(): void;
+  stageLayoutRedo(): void;
 
   // オーサリング
   newShow(name?: string): void;

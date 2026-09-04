@@ -5,7 +5,7 @@ import {
   Library,
   Plus,
   Redo2,
-  Settings2,
+  Settings,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -85,6 +85,7 @@ export function VisualizerApp() {
   const [createProfileId, setCreateProfileId] = useState('');
   const [createChannel, setCreateChannel] = useState('1');
   const [profileManagerOpen, setProfileManagerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const sceneRef = useRef<StageSceneHandle>(null);
   const webgl = useMemo(() => supportsWebGL(), []);
 
@@ -106,9 +107,14 @@ export function VisualizerApp() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || isTextInput(event.target)) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
-      if (key === 'z' && !event.shiftKey) {
+      if (key === ',') {
+        event.preventDefault();
+        setSettingsOpen(true);
+      } else if (isTextInput(event.target)) {
+        return;
+      } else if (key === 'z' && !event.shiftKey) {
         event.preventDefault();
         window.dmx.stageLayoutUndo();
       } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
@@ -244,13 +250,15 @@ export function VisualizerApp() {
               <Camera size={13} /> {preset}
             </ToolbarButton>
           ))}
+          <ToolbarButton onClick={() => setSettingsOpen(true)} title="設定（Ctrl+,）">
+            <Settings size={13} /> 設定
+          </ToolbarButton>
         </div>
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_300px]">
         <aside className="min-h-0 overflow-y-auto border-r border-slate-800 bg-slate-950/70 p-3">
-          <StageDimensions stage={stage} commit={commitStage} />
-          <h2 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
             3D Fixtures ({stage.fixtures.length}/170)
           </h2>
           <div className="space-y-1">
@@ -325,29 +333,73 @@ export function VisualizerApp() {
           }}
         />
       )}
+      <StageSettingsModal
+        open={settingsOpen}
+        stage={stage}
+        onClose={() => setSettingsOpen(false)}
+        onCommit={commitStage}
+      />
     </div>
   );
 }
 
-function StageDimensions({ stage, commit }: { stage: StageLayout; commit(stage: StageLayout): void }) {
+function StageSettingsModal({
+  open,
+  stage,
+  onClose,
+  onCommit,
+}: {
+  open: boolean;
+  stage: StageLayout;
+  onClose(): void;
+  onCommit(stage: StageLayout): void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
   return (
-    <section>
-      <h2 className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
-        <Settings2 size={13} /> Stage (m)
-      </h2>
-      <div className="grid grid-cols-3 gap-1">
-        {(['widthM', 'depthM', 'heightM'] as const).map((key) => (
-          <NumberField
-            key={key}
-            label={key === 'widthM' ? '幅' : key === 'depthM' ? '奥行' : '高さ'}
-            value={stage[key]}
-            min={0.1}
-            step={0.1}
-            onCommit={(value) => commit({ ...stage, [key]: value })}
-          />
-        ))}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="flex w-[28rem] max-w-[92vw] flex-col overflow-hidden rounded-xl bg-neutral-900 ring-1 ring-neutral-700 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
+          <h2 className="text-sm font-semibold text-sky-400">設定</h2>
+          <button
+            onClick={onClose}
+            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700"
+          >
+            閉じる
+          </button>
+        </div>
+        <div className="space-y-3 p-5">
+          <div>
+            <h3 className="text-xs font-semibold text-neutral-200">Stage Layout</h3>
+            <p className="mt-1 text-[11px] text-neutral-500">舞台の幅、奥行、高さをメートル単位で設定します。</p>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {(['widthM', 'depthM', 'heightM'] as const).map((key) => (
+              <NumberField
+                key={key}
+                label={key === 'widthM' ? '幅 (m)' : key === 'depthM' ? '奥行 (m)' : '高さ (m)'}
+                value={stage[key]}
+                min={0.1}
+                step={0.1}
+                onCommit={(value) => onCommit({ ...stage, [key]: value })}
+              />
+            ))}
+          </div>
+        </div>
       </div>
-    </section>
+    </div>
   );
 }
 

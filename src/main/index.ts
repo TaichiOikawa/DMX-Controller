@@ -11,6 +11,7 @@ import { buildAppMenu, defaultMenuState, type MenuState } from './menu';
 import { projectPathFromArgv } from './openFileArgs';
 import { Cmd, Evt } from '../shared/ipc';
 import { flushPendingUpdatePrompt, initAutoUpdater } from './updater';
+import { VisualizerProfileStore } from './visualizerProfileStore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +24,7 @@ let pickerWindow: BrowserWindow | null = null;
 /** 音量モニターの別ウィンドウ（未表示は null）。 */
 let monitorWindow: BrowserWindow | null = null;
 let host: EngineHost | null = null;
+let visualizerProfileStore: VisualizerProfileStore | null = null;
 /** 終了確認を通過した（または不要）ことを示すフラグ。再入防止。 */
 let allowClose = false;
 
@@ -277,6 +279,7 @@ app.whenReady().then(() => {
 
   host = new EngineHost();
   host.registerIpc();
+  visualizerProfileStore = new VisualizerProfileStore();
 
   // engine state（モード/BLACKOUT/Undo・Redo 可否）の変化でメニューを再構築。
   // emitState はフェーダー操作等でも高頻度に来るため、メニューに影響する
@@ -316,6 +319,10 @@ app.whenReady().then(() => {
   ipcMain.on(Cmd.openColorPicker, () => openColorPickerWindow());
   // 音量モニターを別ウィンドウで開く要求（renderer → main）。
   ipcMain.on(Cmd.openMonitor, () => openMonitorWindow());
+  ipcMain.handle(Cmd.getVisualizerProfileLibrary, () => visualizerProfileStore?.get());
+  ipcMain.handle(Cmd.setVisualizerProfileLibrary, (_event, library) =>
+    visualizerProfileStore?.set(library),
+  );
   // OS から渡された「開くべきファイル」を renderer が取り出す（取り出したら消える）。
   ipcMain.handle(Cmd.consumePendingOpenFile, () => {
     const p = pendingOpenPath;

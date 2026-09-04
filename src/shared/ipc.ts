@@ -23,6 +23,7 @@ import type {
   Project,
   Show,
 } from './types';
+import type { VisualizerProfileLibrary } from './visualizerProfiles';
 
 /** UI → Engine（コマンド）チャンネル名。 */
 export const Cmd = {
@@ -35,6 +36,8 @@ export const Cmd = {
   listSerialPorts: 'cmd:listSerialPorts',
   getEngineState: 'cmd:getEngineState',
   getProject: 'cmd:getProject',
+  getVisualizerProfileLibrary: 'cmd:getVisualizerProfileLibrary',
+  setVisualizerProfileLibrary: 'cmd:setVisualizerProfileLibrary',
   setMode: 'cmd:setMode',
   setMasterLevel: 'cmd:setMasterLevel',
   setBlackout: 'cmd:setBlackout',
@@ -484,6 +487,12 @@ export interface DmxBridge {
   listSerialPorts(): Promise<SerialPortInfo[]>;
   getEngineState(): Promise<EngineStateSnapshot>;
   getProject(): Promise<Project>;
+  /** 端末共通の3D Fixture Profileライブラリを取得する。 */
+  getVisualizerProfileLibrary(): Promise<VisualizerProfileLibrary>;
+  /** 端末共通ライブラリ全体を検証・保存し、保存結果を返す。 */
+  setVisualizerProfileLibrary(
+    library: VisualizerProfileLibrary,
+  ): Promise<VisualizerProfileLibrary>;
   setMode(mode: EngineMode): void;
   setMasterLevel(level: number): void;
   setBlackout(on: boolean): void;

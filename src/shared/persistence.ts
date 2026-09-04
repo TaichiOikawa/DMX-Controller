@@ -222,7 +222,7 @@ function normalizeStageLayout(raw: unknown): StageLayout {
   };
 }
 
-function normalizeVisualizerProfiles(raw: unknown): VisualizerFixtureProfile[] {
+export function normalizeVisualizerProfiles(raw: unknown): VisualizerFixtureProfile[] {
   if (!Array.isArray(raw)) return [];
   const out: VisualizerFixtureProfile[] = [];
   const ids = new Set<string>();

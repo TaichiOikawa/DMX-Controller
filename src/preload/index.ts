@@ -50,6 +50,16 @@ const api: DmxBridge = {
   getProject() {
     return ipcRenderer.invoke(Cmd.getProject) as Promise<Project>;
   },
+  getVisualizerProfileLibrary() {
+    return ipcRenderer.invoke(Cmd.getVisualizerProfileLibrary) as ReturnType<
+      DmxBridge['getVisualizerProfileLibrary']
+    >;
+  },
+  setVisualizerProfileLibrary(library) {
+    return ipcRenderer.invoke(Cmd.setVisualizerProfileLibrary, library) as ReturnType<
+      DmxBridge['setVisualizerProfileLibrary']
+    >;
+  },
   setMode(mode) {
     ipcRenderer.send(Cmd.setMode, mode);
   },

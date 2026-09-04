@@ -3,7 +3,7 @@
  * ページ切替タブでバンクを移動する。SHOW モードの busking 上書き中 ch を purple ハイライト。
  */
 
-import { ChevronDown, ChevronRight, Palette } from 'lucide-react';
+import { Box, ChevronDown, ChevronRight, Palette } from 'lucide-react';
 import { useEffect } from 'react';
 import { Fader } from './Fader';
 import { InlineText } from './InlineText';
@@ -84,6 +84,7 @@ export function FaderBank() {
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-1">
+          <VisualizerButton />
           <PickerButton />
           {showBusking && (
             <button
@@ -153,6 +154,7 @@ export function FaderBank() {
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          <VisualizerButton />
           <PickerButton />
           {released ? (
             <span className="text-[11px] text-neutral-500">直接出力（Show 未読込）</span>
@@ -203,6 +205,19 @@ export function FaderBank() {
         })}
       </div>
     </div>
+  );
+}
+
+/** 3D Fixture Visualizerを別ウィンドウで開くボタン。 */
+function VisualizerButton() {
+  return (
+    <button
+      onClick={() => window.dmx.openVisualizer()}
+      className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-cyan-300 hover:bg-neutral-700"
+      title="3D Fixture Visualizerを開く"
+    >
+      <Box size={13} /> 3D
+    </button>
   );
 }
 

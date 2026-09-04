@@ -87,6 +87,9 @@ const api: DmxBridge = {
   openColorPicker() {
     ipcRenderer.send(Cmd.openColorPicker);
   },
+  openVisualizer() {
+    ipcRenderer.send(Cmd.openVisualizer);
+  },
   openMonitor() {
     ipcRenderer.send(Cmd.openMonitor);
   },

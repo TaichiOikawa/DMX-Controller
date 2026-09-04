@@ -121,6 +121,12 @@ export function buildAppMenu(win: BrowserWindow | null, state: MenuState): void 
           click: dispatch('view:resetLayout'),
         },
         { type: 'separator' },
+        {
+          label: '3D Fixture Visualizer',
+          accelerator: 'CmdOrCtrl+Shift+V',
+          click: dispatch('view:visualizer'),
+        },
+        { type: 'separator' },
         { role: 'reload', label: '再読み込み' },
         { role: 'toggleDevTools', label: '開発者ツール' },
         { type: 'separator' },

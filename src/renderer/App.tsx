@@ -311,6 +311,9 @@ export default function App() {
         case 'view:resetLayout':
           st.resetPanelLayout();
           break;
+        case 'view:visualizer':
+          window.dmx.openVisualizer();
+          break;
         case 'show:go':
           window.dmx.go();
           break;

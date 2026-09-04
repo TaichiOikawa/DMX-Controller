@@ -23,6 +23,8 @@ let mainWindow: BrowserWindow | null = null;
 let pickerWindow: BrowserWindow | null = null;
 /** 音量モニターの別ウィンドウ（未表示は null）。 */
 let monitorWindow: BrowserWindow | null = null;
+/** 3D Fixture Visualizerの別ウィンドウ（単一インスタンス）。 */
+let visualizerWindow: BrowserWindow | null = null;
 let host: EngineHost | null = null;
 let visualizerProfileStore: VisualizerProfileStore | null = null;
 /** 終了確認を通過した（または不要）ことを示すフラグ。再入防止。 */
@@ -151,6 +153,7 @@ function createWindow(): void {
     // メインを閉じたら付随するサブウィンドウも閉じる。
     pickerWindow?.close();
     monitorWindow?.close();
+    visualizerWindow?.close();
     mainWindow = null;
   });
 }
@@ -233,6 +236,44 @@ function openMonitorWindow(): void {
   monitorWindow.on('closed', () => {
     host?.removeClient(wc);
     monitorWindow = null;
+  });
+}
+
+/** 3D Fixture Visualizerを独立ウィンドウで開く（既存なら前面化）。 */
+function openVisualizerWindow(): void {
+  if (visualizerWindow) {
+    if (visualizerWindow.isMinimized()) visualizerWindow.restore();
+    visualizerWindow.focus();
+    return;
+  }
+
+  visualizerWindow = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 960,
+    minHeight: 600,
+    backgroundColor: '#080b12',
+    title: '3D Fixture Visualizer',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  visualizerWindow.setMenu(null);
+
+  if (VITE_DEV_SERVER_URL) {
+    visualizerWindow.loadURL(`${VITE_DEV_SERVER_URL}#visualizer`);
+  } else {
+    visualizerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'visualizer' });
+  }
+
+  const wc = visualizerWindow.webContents;
+  wc.on('did-finish-load', () => host?.addClient(wc));
+  visualizerWindow.on('closed', () => {
+    host?.removeClient(wc);
+    visualizerWindow = null;
   });
 }
 
@@ -319,6 +360,7 @@ app.whenReady().then(() => {
   ipcMain.on(Cmd.openColorPicker, () => openColorPickerWindow());
   // 音量モニターを別ウィンドウで開く要求（renderer → main）。
   ipcMain.on(Cmd.openMonitor, () => openMonitorWindow());
+  ipcMain.on(Cmd.openVisualizer, () => openVisualizerWindow());
   ipcMain.handle(Cmd.getVisualizerProfileLibrary, () => visualizerProfileStore?.get());
   ipcMain.handle(Cmd.setVisualizerProfileLibrary, (_event, library) =>
     visualizerProfileStore?.set(library),

@@ -49,6 +49,8 @@ export const Cmd = {
   deleteFixture: 'cmd:deleteFixture',
   /** RGB カラーピッカーを別ウィンドウで開く（main がウィンドウを生成）。 */
   openColorPicker: 'cmd:openColorPicker',
+  /** 3D Fixture Visualizerを別ウィンドウで開く。 */
+  openVisualizer: 'cmd:openVisualizer',
   openMonitor: 'cmd:openMonitor',
   /** renderer 専用 UI 状態（タブ・パネル開閉）を main へ同期し、メニューのチェック反映に使う。 */
   uiState: 'cmd:uiState',
@@ -206,6 +208,7 @@ export type MenuAction =
   | 'view:toggleSidebar'
   | 'view:toggleFaders'
   | 'view:resetLayout'
+  | 'view:visualizer'
   // ショー
   | 'show:go'
   | 'show:goBack'
@@ -518,6 +521,8 @@ export interface DmxBridge {
   deleteFixture(id: string): void;
   /** RGB カラーピッカーを別ウィンドウで開く（既に開いていれば前面化）。 */
   openColorPicker(): void;
+  /** 3D Fixture Visualizerを別ウィンドウで開く（既に開いていれば前面化）。 */
+  openVisualizer(): void;
   /** renderer の UI 状態（タブ・パネル開閉）を main へ通知する。 */
   notifyUiState(state: UiState): void;
 

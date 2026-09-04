@@ -453,3 +453,167 @@ describe('normalizeTimeline points (壊れた GO ポイントの防御)', () => 
     expect(p.shows[0].timeline?.points[0].id).toBeTruthy();
   });
 });
+
+describe('Stage Layout persistence', () => {
+  it('migrates a v1 Project to an empty default Stage Layout without deriving RGB Fixtures', () => {
+    const p = migrateProject({
+      version: 1,
+      fixtures: [{ id: 'rgb-1', name: 'Legacy RGB', r: 0, g: 1, b: 2 }],
+    });
+
+    expect(p.version).toBe(2);
+    expect(p.fixtures).toEqual([{ id: 'rgb-1', name: 'Legacy RGB', r: 0, g: 1, b: 2 }]);
+    expect(p.stageLayout).toEqual({
+      widthM: 10,
+      depthM: 8,
+      heightM: 5,
+      profiles: [],
+      fixtures: [],
+    });
+  });
+
+  it('round-trips valid Project profiles and 3D Fixtures', () => {
+    const p = createDefaultProject();
+    p.stageLayout = {
+      widthM: 12,
+      depthM: 9,
+      heightM: 6,
+      profiles: [
+        {
+          id: 'moving-9ch',
+          name: 'RGB Moving Head 9ch',
+          bindings: {
+            pan: { resolution: '16bit', coarseOffset: 0, fineOffset: 1 },
+            tilt: { resolution: '16bit', coarseOffset: 2, fineOffset: 3 },
+            dimmer: { resolution: '8bit', coarseOffset: 4 },
+            red: { resolution: '8bit', coarseOffset: 5 },
+            green: { resolution: '8bit', coarseOffset: 6 },
+            blue: { resolution: '8bit', coarseOffset: 7 },
+            zoom: { resolution: '8bit', coarseOffset: 8 },
+          },
+          panRangeDeg: { min: -270, max: 270 },
+          tiltRangeDeg: { min: -135, max: 135 },
+          zoomRangeDeg: { min: 5, max: 45 },
+          defaultStaticParameters: {
+            dimmer: 1,
+            red: 1,
+            green: 1,
+            blue: 1,
+            pan: 0,
+            tilt: 0,
+            zoom: 25,
+          },
+        },
+      ],
+      fixtures: [
+        {
+          id: 'head-1',
+          name: 'RGB Moving Head 9ch #1',
+          profileId: 'moving-9ch',
+          startChannel: 503,
+          positionM: { x: 1, y: 4.5, z: 2 },
+          mountRotationDeg: { x: 0, y: 90, z: 0 },
+          staticParameters: {
+            dimmer: 0.8,
+            red: 1,
+            green: 0.5,
+            blue: 0,
+            pan: 20,
+            tilt: -30,
+            zoom: 30,
+          },
+        },
+      ],
+    };
+
+    expect(deserializeProject(serializeProject(p)).stageLayout).toEqual(p.stageLayout);
+  });
+
+  it('normalizes dimensions, profile references, offsets, channel bounds, and static values', () => {
+    const p = migrateProject({
+      stageLayout: {
+        widthM: -1,
+        depthM: Number.POSITIVE_INFINITY,
+        heightM: 4,
+        profiles: [
+          {
+            id: 'profile-1',
+            name: '  Test Profile  ',
+            bindings: {
+              dimmer: { resolution: '8bit', coarseOffset: 0 },
+              pan: { resolution: '16bit', coarseOffset: 4, fineOffset: 5 },
+              red: { resolution: '8bit', coarseOffset: -1 },
+              unknown: { resolution: '8bit', coarseOffset: 1 },
+            },
+            panRangeDeg: { min: 270, max: -270 },
+            tiltRangeDeg: { min: -90, max: 90 },
+            zoomRangeDeg: { min: 10, max: 40 },
+            defaultStaticParameters: { dimmer: 2, red: -1, pan: 999, zoom: 0 },
+          },
+        ],
+        fixtures: [
+          {
+            id: 'valid',
+            name: ' Head ',
+            profileId: 'profile-1',
+            startChannel: 506,
+            positionM: { x: 1, y: 'bad', z: 3 },
+            mountRotationDeg: null,
+            staticParameters: { dimmer: -1, blue: 0.25, pan: -999, zoom: 99 },
+          },
+          { id: 'overflow', profileId: 'profile-1', startChannel: 507 },
+          { id: 'missing-profile', profileId: 'unknown' },
+        ],
+      },
+    });
+
+    expect(p.stageLayout?.widthM).toBe(10);
+    expect(p.stageLayout?.depthM).toBe(8);
+    expect(p.stageLayout?.heightM).toBe(4);
+    expect(p.stageLayout?.profiles[0]).toMatchObject({
+      name: 'Test Profile',
+      bindings: {
+        dimmer: { resolution: '8bit', coarseOffset: 0 },
+        pan: { resolution: '16bit', coarseOffset: 4, fineOffset: 5 },
+      },
+      defaultStaticParameters: { dimmer: 1, red: 0, pan: 270, zoom: 10 },
+    });
+    expect(p.stageLayout?.fixtures).toHaveLength(1);
+    expect(p.stageLayout?.fixtures[0]).toEqual({
+      id: 'valid',
+      name: 'Head',
+      profileId: 'profile-1',
+      startChannel: 506,
+      positionM: { x: 1, y: 0, z: 3 },
+      mountRotationDeg: { x: 0, y: 0, z: 0 },
+      staticParameters: {
+        dimmer: 0,
+        red: 0,
+        green: 1,
+        blue: 0.25,
+        pan: -270,
+        tilt: 0,
+        zoom: 40,
+      },
+    });
+  });
+
+  it('allows multiple 3D Fixtures to share a profile and starting channel', () => {
+    const stageLayout = {
+      profiles: [
+        {
+          id: 'dimmer',
+          name: 'Dimmer 1ch',
+          bindings: { dimmer: { resolution: '8bit', coarseOffset: 0 } },
+        },
+      ],
+      fixtures: [
+        { id: 'a', name: 'A', profileId: 'dimmer', startChannel: 0 },
+        { id: 'b', name: 'B', profileId: 'dimmer', startChannel: 0 },
+      ],
+    };
+
+    const p = migrateProject({ stageLayout });
+    expect(p.stageLayout?.fixtures.map((fixture) => fixture.startChannel)).toEqual([0, 0]);
+  });
+});

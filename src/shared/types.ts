@@ -38,6 +38,76 @@ export interface Project {
   folders?: Folder[];
   /** RGB フィクスチャ定義（任意）。3ch を 1 色として束ねカラーピッカー入力に使う。 */
   fixtures?: RgbFixture[];
+  /** 3Dビジュアライザー専用の舞台・灯体データ。既存 RGB Fixture とは独立する。 */
+  stageLayout?: StageLayout;
+}
+
+// ===== 3D Fixture Visualizer =====
+
+export interface Vector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export type VisualizerParameter =
+  | 'dimmer'
+  | 'red'
+  | 'green'
+  | 'blue'
+  | 'pan'
+  | 'tilt'
+  | 'zoom';
+
+export type DmxParameterBinding =
+  | { resolution: '8bit'; coarseOffset: number }
+  | { resolution: '16bit'; coarseOffset: number; fineOffset: number };
+
+/** DMX未割当時にも保持される、3D灯体固有のパラメータ値。 */
+export interface StaticFixtureParameters {
+  /** 0..1 */
+  dimmer: number;
+  /** 0..1 */
+  red: number;
+  /** 0..1 */
+  green: number;
+  /** 0..1 */
+  blue: number;
+  /** degree */
+  pan: number;
+  /** degree */
+  tilt: number;
+  /** ビームの全開き角 (degree) */
+  zoom: number;
+}
+
+export interface VisualizerFixtureProfile {
+  id: string;
+  name: string;
+  bindings: Partial<Record<VisualizerParameter, DmxParameterBinding>>;
+  panRangeDeg: { min: number; max: number };
+  tiltRangeDeg: { min: number; max: number };
+  zoomRangeDeg: { min: number; max: number };
+  defaultStaticParameters: StaticFixtureParameters;
+}
+
+export interface VisualizerFixture {
+  id: string;
+  name: string;
+  profileId: string;
+  /** 保存時は0-based。未指定なら全パラメータを静的値から評価する。 */
+  startChannel?: number;
+  positionM: Vector3;
+  mountRotationDeg: Vector3;
+  staticParameters: StaticFixtureParameters;
+}
+
+export interface StageLayout {
+  widthM: number;
+  depthM: number;
+  heightM: number;
+  profiles: VisualizerFixtureProfile[];
+  fixtures: VisualizerFixture[];
 }
 
 // ===== RGB フィクスチャ（R/G/B 3ch を 1 色として束ねる定義） =====
@@ -376,7 +446,31 @@ export function defaultOpenDmxSettings(): OpenDmxSettings {
 }
 
 /** 現在の永続化フォーマットのバージョン。 */
-export const PROJECT_VERSION = 1;
+export const PROJECT_VERSION = 2;
+
+/** 3D灯体の静的パラメータ既定値。 */
+export function createDefaultStaticFixtureParameters(): StaticFixtureParameters {
+  return {
+    dimmer: 1,
+    red: 1,
+    green: 1,
+    blue: 1,
+    pan: 0,
+    tilt: 0,
+    zoom: 25,
+  };
+}
+
+/** 初期舞台（10m x 8m x 5m）。プロファイルと灯体は空で開始する。 */
+export function createDefaultStageLayout(): StageLayout {
+  return {
+    widthM: 10,
+    depthM: 8,
+    heightM: 5,
+    profiles: [],
+    fixtures: [],
+  };
+}
 
 /** 新規 Project の初期値。 */
 export function createDefaultProject(): Project {
@@ -390,6 +484,7 @@ export function createDefaultProject(): Project {
     faders: new Array(UNIVERSE_SIZE).fill(0),
     actions: [],
     shows: [],
+    stageLayout: createDefaultStageLayout(),
   };
 }
 

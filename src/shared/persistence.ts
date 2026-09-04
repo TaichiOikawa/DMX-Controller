@@ -9,6 +9,8 @@ import {
   PROJECT_VERSION,
   UNIVERSE_SIZE,
   createDefaultProject,
+  createDefaultStageLayout,
+  createDefaultStaticFixtureParameters,
   type ActionButton,
   type ActionStep,
   type ArtnetSettings,
@@ -18,6 +20,13 @@ import {
   type Group,
   type Project,
   type RgbFixture,
+  type DmxParameterBinding,
+  type StageLayout,
+  type StaticFixtureParameters,
+  type Vector3,
+  type VisualizerFixture,
+  type VisualizerFixtureProfile,
+  type VisualizerParameter,
   type SequenceEntry,
   type Setlist,
   type SetlistEntry,
@@ -183,7 +192,185 @@ export function migrateProject(raw: unknown): Project {
   if (bankLabels) project.bankLabels = bankLabels;
   const fixtures = normalizeFixtures(raw.fixtures);
   if (fixtures) project.fixtures = fixtures;
+  project.stageLayout = normalizeStageLayout(raw.stageLayout);
   return project;
+}
+
+const VISUALIZER_PARAMETERS: VisualizerParameter[] = [
+  'dimmer',
+  'red',
+  'green',
+  'blue',
+  'pan',
+  'tilt',
+  'zoom',
+];
+
+/** v1 Project や不正な値を、安全な空の Stage Layout へ移行する。 */
+function normalizeStageLayout(raw: unknown): StageLayout {
+  const def = createDefaultStageLayout();
+  if (!isObject(raw)) return def;
+
+  const profiles = normalizeVisualizerProfiles(raw.profiles);
+  const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+  return {
+    widthM: positiveNumber(raw.widthM, def.widthM),
+    depthM: positiveNumber(raw.depthM, def.depthM),
+    heightM: positiveNumber(raw.heightM, def.heightM),
+    profiles,
+    fixtures: normalizeVisualizerFixtures(raw.fixtures, profilesById),
+  };
+}
+
+function normalizeVisualizerProfiles(raw: unknown): VisualizerFixtureProfile[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VisualizerFixtureProfile[] = [];
+  const ids = new Set<string>();
+  for (const item of raw) {
+    if (!isObject(item)) continue;
+    const id = str(item.id, fallbackId()).trim() || fallbackId();
+    if (ids.has(id)) continue;
+    ids.add(id);
+    const panRangeDeg = normalizeRange(item.panRangeDeg, -270, 270);
+    const tiltRangeDeg = normalizeRange(item.tiltRangeDeg, -135, 135);
+    const zoomRangeDeg = normalizeRange(item.zoomRangeDeg, 5, 45);
+    out.push({
+      id,
+      name: str(item.name, '3D Fixture Profile').trim() || '3D Fixture Profile',
+      bindings: normalizeBindings(item.bindings),
+      panRangeDeg,
+      tiltRangeDeg,
+      zoomRangeDeg,
+      defaultStaticParameters: normalizeStaticParameters(
+        item.defaultStaticParameters,
+        panRangeDeg,
+        tiltRangeDeg,
+        zoomRangeDeg,
+      ),
+    });
+  }
+  return out;
+}
+
+function normalizeBindings(raw: unknown): Partial<Record<VisualizerParameter, DmxParameterBinding>> {
+  if (!isObject(raw)) return {};
+  const out: Partial<Record<VisualizerParameter, DmxParameterBinding>> = {};
+  for (const parameter of VISUALIZER_PARAMETERS) {
+    const binding = raw[parameter];
+    if (!isObject(binding)) continue;
+    const coarseOffset = offsetOrNull(binding.coarseOffset);
+    if (coarseOffset === null) continue;
+    if (binding.resolution === '8bit') {
+      out[parameter] = { resolution: '8bit', coarseOffset };
+    } else if (binding.resolution === '16bit') {
+      const fineOffset = offsetOrNull(binding.fineOffset);
+      if (fineOffset !== null) out[parameter] = { resolution: '16bit', coarseOffset, fineOffset };
+    }
+  }
+  return out;
+}
+
+function normalizeVisualizerFixtures(
+  raw: unknown,
+  profilesById: Map<string, VisualizerFixtureProfile>,
+): VisualizerFixture[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VisualizerFixture[] = [];
+  const ids = new Set<string>();
+  for (const item of raw) {
+    if (!isObject(item) || typeof item.profileId !== 'string') continue;
+    const profile = profilesById.get(item.profileId);
+    if (!profile) continue;
+    const id = str(item.id, fallbackId()).trim() || fallbackId();
+    if (ids.has(id)) continue;
+    const startChannel = optionalStartChannel(item.startChannel, profile);
+    // startChannel が明示されているのに不正なら、誤ったCHを静的灯体として救済しない。
+    if (item.startChannel !== undefined && startChannel === undefined) continue;
+    const fixture: VisualizerFixture = {
+      id,
+      name: str(item.name, profile.name).trim() || profile.name,
+      profileId: profile.id,
+      positionM: normalizeVector3(item.positionM),
+      mountRotationDeg: normalizeVector3(item.mountRotationDeg),
+      staticParameters: normalizeStaticParameters(
+        item.staticParameters,
+        profile.panRangeDeg,
+        profile.tiltRangeDeg,
+        profile.zoomRangeDeg,
+        profile.defaultStaticParameters,
+      ),
+    };
+    if (startChannel !== undefined) fixture.startChannel = startChannel;
+    ids.add(id);
+    out.push(fixture);
+  }
+  return out;
+}
+
+function optionalStartChannel(
+  raw: unknown,
+  profile: VisualizerFixtureProfile,
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const start = channelOrNull(raw);
+  if (start === null) return undefined;
+  let maxOffset = -1;
+  for (const binding of Object.values(profile.bindings)) {
+    maxOffset = Math.max(
+      maxOffset,
+      binding.coarseOffset,
+      binding.resolution === '16bit' ? binding.fineOffset : -1,
+    );
+  }
+  return start + maxOffset < UNIVERSE_SIZE ? start : undefined;
+}
+
+function normalizeVector3(raw: unknown): Vector3 {
+  if (!isObject(raw)) return { x: 0, y: 0, z: 0 };
+  return { x: num(raw.x, 0), y: num(raw.y, 0), z: num(raw.z, 0) };
+}
+
+function normalizeRange(raw: unknown, defaultMin: number, defaultMax: number) {
+  if (!isObject(raw)) return { min: defaultMin, max: defaultMax };
+  return { min: num(raw.min, defaultMin), max: num(raw.max, defaultMax) };
+}
+
+function normalizeStaticParameters(
+  raw: unknown,
+  panRange: { min: number; max: number },
+  tiltRange: { min: number; max: number },
+  zoomRange: { min: number; max: number },
+  fallback = createDefaultStaticFixtureParameters(),
+): StaticFixtureParameters {
+  const value = isObject(raw) ? raw : {};
+  return {
+    dimmer: clampNumber(num(value.dimmer, fallback.dimmer), 0, 1),
+    red: clampNumber(num(value.red, fallback.red), 0, 1),
+    green: clampNumber(num(value.green, fallback.green), 0, 1),
+    blue: clampNumber(num(value.blue, fallback.blue), 0, 1),
+    pan: clampToRange(num(value.pan, fallback.pan), panRange),
+    tilt: clampToRange(num(value.tilt, fallback.tilt), tiltRange),
+    zoom: clampToRange(num(value.zoom, fallback.zoom), zoomRange),
+  };
+}
+
+function positiveNumber(raw: unknown, fallback: number): number {
+  const value = num(raw, fallback);
+  return value > 0 ? value : fallback;
+}
+
+function offsetOrNull(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && raw < UNIVERSE_SIZE
+    ? raw
+    : null;
+}
+
+function clampToRange(value: number, range: { min: number; max: number }): number {
+  return clampNumber(value, Math.min(range.min, range.max), Math.max(range.min, range.max));
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 /** RGB フィクスチャ配列を正規化する。r/g/b が範囲内の要素のみ採用、空なら undefined。 */

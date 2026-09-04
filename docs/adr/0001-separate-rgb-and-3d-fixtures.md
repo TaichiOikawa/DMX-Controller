@@ -1,0 +1,3 @@
+# RGB Fixtureと3D Fixtureを分離する
+
+RGB Fixtureはカラーピッカー用の3チャンネル束として既にProjectへ保存されている一方、3D Fixtureは位置、姿勢、物理範囲、8bit/16bitを含む任意のDMXパラメータ構成を必要とする。既存RGB Fixtureを3D表示へ拡張または参照する案は両者のライフサイクルを結合し、名称変更やチャンネル変更が意図せず別機能へ波及するため採用せず、3D Fixtureは再利用可能な3D Fixture ProfileとDMX Parameter Bindingを持つ独立モデルとしてStage Layoutへ保存する。

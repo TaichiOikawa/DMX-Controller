@@ -368,7 +368,7 @@ function StageSettingsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="flex w-[28rem] max-w-[92vw] flex-col overflow-hidden rounded-xl bg-neutral-900 ring-1 ring-neutral-700 shadow-2xl"
+        className="flex h-[34rem] max-h-[88vh] w-[48rem] max-w-[92vw] flex-col overflow-hidden rounded-xl bg-neutral-900 ring-1 ring-neutral-700 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
@@ -380,22 +380,35 @@ function StageSettingsModal({
             閉じる
           </button>
         </div>
-        <div className="space-y-3 p-5">
-          <div>
-            <h3 className="text-xs font-semibold text-neutral-200">Stage Layout</h3>
-            <p className="mt-1 text-[11px] text-neutral-500">舞台の幅、奥行、高さをメートル単位で設定します。</p>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {(['widthM', 'depthM', 'heightM'] as const).map((key) => (
-              <NumberField
-                key={key}
-                label={key === 'widthM' ? '幅 (m)' : key === 'depthM' ? '奥行 (m)' : '高さ (m)'}
-                value={stage[key]}
-                min={0.1}
-                step={0.1}
-                onCommit={(value) => onCommit({ ...stage, [key]: value })}
-              />
-            ))}
+        <div className="flex min-h-0 flex-1">
+          <nav className="w-40 shrink-0 space-y-1 border-r border-neutral-800 bg-neutral-950/40 p-2">
+            <button className="flex w-full items-center gap-2 rounded bg-neutral-800 px-2.5 py-1.5 text-left text-xs font-semibold text-sky-300">
+              <Box size={13} className="shrink-0" />
+              配置
+            </button>
+          </nav>
+
+          <div className="min-w-0 flex-1 overflow-y-auto p-5">
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-xs font-semibold text-neutral-200">Stage Layout</h3>
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  舞台の幅、奥行、高さをメートル単位で設定します。
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {(['widthM', 'depthM', 'heightM'] as const).map((key) => (
+                  <NumberField
+                    key={key}
+                    label={key === 'widthM' ? '幅 (m)' : key === 'depthM' ? '奥行 (m)' : '高さ (m)'}
+                    value={stage[key]}
+                    min={0.1}
+                    step={0.1}
+                    onCommit={(value) => onCommit({ ...stage, [key]: value })}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

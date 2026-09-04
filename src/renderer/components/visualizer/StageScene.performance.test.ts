@@ -42,7 +42,6 @@ describe('3D Visualizer instance update performance', () => {
           profile,
           outputFrame,
           index,
-          false,
           stage,
           body,
           beam,

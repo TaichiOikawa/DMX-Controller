@@ -9,7 +9,7 @@ import {
   type InstancedMesh,
 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import type { StageLayout } from '../../../shared/types';
+import type { StageLayout, VisualizerFixture } from '../../../shared/types';
 import { updateVisualizerInstances } from './sceneInstances';
 
 const CAMERA_STORAGE_KEY = 'dmx.visualizer.camera';
@@ -89,6 +89,10 @@ function InstancedFixtureLayer({
     [stage.profiles],
   );
   const fixtures = useMemo(() => stage.fixtures.slice(0, MAX_FIXTURES), [stage.fixtures]);
+  const selectedFixture = useMemo(
+    () => fixtures.find((fixture) => fixture.id === selectedFixtureId) ?? null,
+    [fixtures, selectedFixtureId],
+  );
   const matrix = useMemo(() => new Matrix4(), []);
   const color = useMemo(() => new Color(), []);
 
@@ -102,7 +106,6 @@ function InstancedFixtureLayer({
         profile,
         outputFrame,
         index,
-        fixture.id === selectedFixtureId,
         stage,
         bodyRef.current!,
         beamRef.current!,
@@ -140,17 +143,56 @@ function InstancedFixtureLayer({
         }}
       >
         <boxGeometry args={[0.42, 0.28, 0.52]} />
-        <meshStandardMaterial vertexColors roughness={0.45} metalness={0.35} />
+        <meshStandardMaterial color="#697386" roughness={0.45} metalness={0.35} />
       </instancedMesh>
       <instancedMesh ref={beamRef} args={[undefined, undefined, MAX_FIXTURES]}>
         <coneGeometry args={[1, 1, 18, 1, true]} />
-        <meshBasicMaterial vertexColors transparent opacity={0.17} depthWrite={false} />
+        <meshBasicMaterial transparent opacity={0.17} depthWrite={false} />
       </instancedMesh>
       <instancedMesh ref={markerRef} args={[undefined, undefined, MAX_FIXTURES]}>
         <circleGeometry args={[1, 24]} />
-        <meshBasicMaterial vertexColors transparent opacity={0.65} depthWrite={false} />
+        <meshBasicMaterial transparent opacity={0.65} depthWrite={false} />
       </instancedMesh>
+      {selectedFixture && (
+        <SelectedFixtureHighlight fixture={selectedFixture} onSelectFixture={onSelectFixture} />
+      )}
     </group>
+  );
+}
+
+function SelectedFixtureHighlight({
+  fixture,
+  onSelectFixture,
+}: {
+  fixture: VisualizerFixture;
+  onSelectFixture(id: string): void;
+}) {
+  const toRadians = Math.PI / 180;
+
+  return (
+    <mesh
+      position={[fixture.positionM.x, fixture.positionM.y, fixture.positionM.z]}
+      rotation={[
+        fixture.mountRotationDeg.x * toRadians,
+        fixture.mountRotationDeg.y * toRadians,
+        fixture.mountRotationDeg.z * toRadians,
+      ]}
+      renderOrder={10}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelectFixture(fixture.id);
+      }}
+    >
+      <boxGeometry args={[0.54, 0.4, 0.64]} />
+      <meshBasicMaterial
+        color="#38bdf8"
+        wireframe
+        transparent
+        opacity={0.95}
+        depthTest={false}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 

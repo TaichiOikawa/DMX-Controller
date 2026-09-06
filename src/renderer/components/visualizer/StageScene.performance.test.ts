@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 import type { StageLayout, VisualizerFixture } from '../../../shared/types';
 import { createDefaultVisualizerProfileLibrary } from '../../../shared/visualizerProfiles';
 import { updateVisualizerInstances } from './sceneInstances';
+import { createStageSurfaces } from './stageGeometry';
 
 const FIXTURE_COUNT = 170;
 const FRAME_BUDGET_MS = 1000 / 30;
 
 describe('3D Visualizer instance update performance', () => {
-  it('updates 170 fixture, beam, and marker instances within a 30fps CPU frame budget', () => {
+  it.each([0, 64])('updates 170 fixtures with %s obstacles within a 30fps CPU frame budget', obstacleCount => {
     const profile = createDefaultVisualizerProfileLibrary().profiles[3];
     const fixtures: VisualizerFixture[] = Array.from({ length: FIXTURE_COUNT }, (_, index) => ({
       id: `fixture-${index}`,
@@ -25,19 +26,22 @@ describe('3D Visualizer instance update performance', () => {
       heightM: 5,
       profiles: [profile],
       fixtures,
+      obstacles: Array.from({ length: obstacleCount }, (_, i) => ({ id: `box-${i}`, name: 'box', positionM: { x: (i % 8) - 4, y: 0.5, z: Math.floor(i / 8) }, sizeM: { x: 0.5, y: 1, z: 0.5 } })),
     };
+    const surfaces = createStageSurfaces(stage);
     const geometry = new BoxGeometry(1, 1, 1);
     const material = new MeshBasicMaterial();
     const body = new InstancedMesh(geometry, material, FIXTURE_COUNT);
     const beam = new InstancedMesh(geometry, material, FIXTURE_COUNT);
-    const marker = new InstancedMesh(geometry, material, FIXTURE_COUNT);
+    const marker = new InstancedMesh(geometry, material, FIXTURE_COUNT * surfaces.length);
     const outputFrame = Array<number>(512).fill(192);
     const matrix = new Matrix4();
     const color = new Color();
 
     const updateAll = () => {
+      let markerOffset = 0;
       fixtures.forEach((fixture, index) => {
-        updateVisualizerInstances(
+        markerOffset += updateVisualizerInstances(
           fixture,
           profile,
           outputFrame,
@@ -48,6 +52,10 @@ describe('3D Visualizer instance update performance', () => {
           marker,
           matrix,
           color,
+          0,
+          surfaces,
+          undefined,
+          markerOffset,
         );
       });
     };

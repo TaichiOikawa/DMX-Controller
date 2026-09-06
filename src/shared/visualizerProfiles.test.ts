@@ -32,7 +32,12 @@ describe('3D Fixture Profile library serialization', () => {
     );
     expect(library.version).toBe(1);
     expect(library.profiles).toHaveLength(1);
-    expect(library.profiles[0]).toMatchObject({ id: 'valid', name: 'Test', bindings: {} });
+    expect(library.profiles[0]).toMatchObject({
+      id: 'valid',
+      name: 'Test',
+      bindings: {},
+      strobeSettings: { startValue: 1, maxFrequencyHz: 20 },
+    });
   });
 
   it('copies a profile with a fresh id and independent nested values', () => {
@@ -44,7 +49,9 @@ describe('3D Fixture Profile library serialization', () => {
 
     copy.bindings.pan = { resolution: '8bit', coarseOffset: 10 };
     copy.panRangeDeg.min = -180;
+    copy.strobeSettings.startValue = 11;
     expect(source.bindings.pan).toEqual({ resolution: '16bit', coarseOffset: 0, fineOffset: 1 });
     expect(source.panRangeDeg.min).toBe(-270);
+    expect(source.strobeSettings.startValue).toBe(1);
   });
 });

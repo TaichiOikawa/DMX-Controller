@@ -1,6 +1,7 @@
 /** Stage Layoutの不変更新。UI操作を1つの確定済み履歴単位へ変換する。 */
 
 import {
+  createDefaultStrobeSettings,
   createDefaultStaticFixtureParameters,
   genId,
   type StageLayout,
@@ -8,6 +9,7 @@ import {
   type VisualizerFixtureProfile,
 } from './types';
 import { isVisualizerStartChannelValid } from './visualizer';
+import { normalizeFixtureGroups } from './fixtureGroups';
 
 export function addVisualizerFixture(
   stage: StageLayout,
@@ -42,7 +44,9 @@ export function duplicateVisualizerFixture(stage: StageLayout, fixtureId: string
 
 export function deleteVisualizerFixture(stage: StageLayout, fixtureId: string): StageLayout {
   const fixtures = stage.fixtures.filter((item) => item.id !== fixtureId);
-  return fixtures.length === stage.fixtures.length ? stage : { ...stage, fixtures };
+  return fixtures.length === stage.fixtures.length ? stage : { ...stage, fixtures,
+    ...(stage.groups ? { groups: normalizeFixtureGroups(stage.groups, fixtures.map(fixture => fixture.id)) } : {}),
+  };
 }
 
 export function profileUsageCount(stage: StageLayout, profileId: string): number {
@@ -63,6 +67,7 @@ export function addProjectVisualizerProfile(
         panRangeDeg: { min: -270, max: 270 },
         tiltRangeDeg: { min: -135, max: 135 },
         zoomRangeDeg: { min: 5, max: 45 },
+        strobeSettings: createDefaultStrobeSettings(),
         defaultStaticParameters: createDefaultStaticFixtureParameters(),
       };
   profile.id = genId();

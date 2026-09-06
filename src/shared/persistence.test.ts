@@ -494,11 +494,13 @@ describe('Stage Layout persistence', () => {
           panRangeDeg: { min: -270, max: 270 },
           tiltRangeDeg: { min: -135, max: 135 },
           zoomRangeDeg: { min: 5, max: 45 },
+          strobeSettings: { startValue: 11, maxFrequencyHz: 25 },
           defaultStaticParameters: {
             dimmer: 1,
             red: 1,
             green: 1,
             blue: 1,
+            strobe: 0,
             pan: 0,
             tilt: 0,
             zoom: 25,
@@ -518,6 +520,7 @@ describe('Stage Layout persistence', () => {
             red: 1,
             green: 0.5,
             blue: 0,
+            strobe: 0.6,
             pan: 20,
             tilt: -30,
             zoom: 30,
@@ -548,7 +551,8 @@ describe('Stage Layout persistence', () => {
             panRangeDeg: { min: 270, max: -270 },
             tiltRangeDeg: { min: -90, max: 90 },
             zoomRangeDeg: { min: 10, max: 40 },
-            defaultStaticParameters: { dimmer: 2, red: -1, pan: 999, zoom: 0 },
+            strobeSettings: { startValue: 300.4, maxFrequencyHz: 0 },
+            defaultStaticParameters: { dimmer: 2, red: -1, strobe: 2, pan: 999, zoom: 0 },
           },
         ],
         fixtures: [
@@ -559,7 +563,7 @@ describe('Stage Layout persistence', () => {
             startChannel: 506,
             positionM: { x: 1, y: 'bad', z: 3 },
             mountRotationDeg: null,
-            staticParameters: { dimmer: -1, blue: 0.25, pan: -999, zoom: 99 },
+            staticParameters: { dimmer: -1, blue: 0.25, strobe: -1, pan: -999, zoom: 99 },
           },
           { id: 'overflow', profileId: 'profile-1', startChannel: 507 },
           { id: 'missing-profile', profileId: 'unknown' },
@@ -576,9 +580,11 @@ describe('Stage Layout persistence', () => {
         dimmer: { resolution: '8bit', coarseOffset: 0 },
         pan: { resolution: '16bit', coarseOffset: 4, fineOffset: 5 },
       },
-      defaultStaticParameters: { dimmer: 1, red: 0, pan: 270, zoom: 10 },
+      strobeSettings: { startValue: 255, maxFrequencyHz: 1 },
+      defaultStaticParameters: { dimmer: 1, red: 0, strobe: 1, pan: 270, zoom: 10 },
     });
-    expect(p.stageLayout?.fixtures).toHaveLength(1);
+    expect(p.stageLayout?.fixtures).toHaveLength(2);
+    expect(p.stageLayout?.fixtures[1]).toMatchObject({ id: 'missing-profile', profileId: 'unknown' });
     expect(p.stageLayout?.fixtures[0]).toEqual({
       id: 'valid',
       name: 'Head',
@@ -591,6 +597,7 @@ describe('Stage Layout persistence', () => {
         red: 0,
         green: 1,
         blue: 0.25,
+        strobe: 0,
         pan: -270,
         tilt: 0,
         zoom: 40,

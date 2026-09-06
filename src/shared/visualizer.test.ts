@@ -41,6 +41,7 @@ describe('3D Fixture parameter evaluation', () => {
         red: 0.2,
         green: 0.4,
         blue: 0.6,
+        strobe: 0.25,
         pan: 12,
         tilt: 13,
         zoom: 14,
@@ -58,7 +59,37 @@ describe('3D Fixture parameter evaluation', () => {
     expect(state.parameters.red).toBe(1);
     expect(state.parameters.green).toBeCloseTo(128 / 255);
     expect(state.parameters.blue).toBe(0);
+    expect(state.parameters.strobe).toBe(0.25);
     expect(state.parameters.zoom).toBe(45);
+  });
+
+  it('keeps values below the Strobe start value steady and uses the configured max frequency', () => {
+    const profile = structuredClone(createInitialVisualizerProfiles()[0]);
+    profile.bindings.strobe = { resolution: '8bit', coarseOffset: 1 };
+    profile.strobeSettings = { startValue: 11, maxFrequencyHz: 10 };
+    const fixture: VisualizerFixture = {
+      id: 'strobe',
+      name: 'Strobe',
+      profileId: profile.id,
+      startChannel: 0,
+      positionM: { x: 0, y: 2, z: 0 },
+      mountRotationDeg: { x: 0, y: 0, z: 0 },
+      staticParameters: createDefaultStaticFixtureParameters(),
+    };
+    const frame = [255, 10];
+
+    expect(evaluateVisualizerFixture(profile, fixture, frame, 0).intensity).toBe(1);
+    expect(evaluateVisualizerFixture(profile, fixture, frame, 600).intensity).toBe(1);
+    expect(evaluateVisualizerFixture(profile, fixture, frame).parameters.strobe).toBe(0);
+
+    frame[1] = 11;
+    expect(evaluateVisualizerFixture(profile, fixture, frame, 600).intensity).toBe(0);
+    expect(evaluateVisualizerFixture(profile, fixture, frame).parameters.strobe).toBeGreaterThan(0);
+
+    frame[1] = 255;
+    expect(evaluateVisualizerFixture(profile, fixture, frame, 60).intensity).toBe(0);
+    expect(evaluateVisualizerFixture(profile, fixture, frame, 110).intensity).toBe(1);
+    expect(evaluateVisualizerFixture(profile, fixture, frame).parameters.strobe).toBe(1);
   });
 
   it('supports reversed physical ranges and falls back to static values when no start channel exists', () => {

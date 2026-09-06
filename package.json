@@ -16,6 +16,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:visualizer-browser": "vite --config vite.visualizer-test.config.ts --host 127.0.0.1",
     "lint": "eslint .",
     "preview": "vite preview",
     "pack": "yarn build && electron-builder --dir",

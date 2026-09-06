@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultStaticFixtureParameters, type StageLayout } from '../../../shared/types';
 import { createInitialVisualizerProfiles } from '../../../shared/visualizer';
 import { updateVisualizerInstances } from './sceneInstances';
+import { createStageSurfaces } from './stageGeometry';
 
 describe('3D Fixture instance colors', () => {
   it('keeps the housing neutral while rendering final DMX RGB on the beam and marker', () => {
@@ -28,7 +29,7 @@ describe('3D Fixture instance colors', () => {
     const lightMaterial = new MeshBasicMaterial();
     const body = new InstancedMesh(geometry, bodyMaterial, 1);
     const beam = new InstancedMesh(geometry, lightMaterial, 1);
-    const marker = new InstancedMesh(geometry, lightMaterial, 1);
+    const marker = new InstancedMesh(geometry, lightMaterial, createStageSurfaces(stage).length);
 
     updateVisualizerInstances(
       fixture,

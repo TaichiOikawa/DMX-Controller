@@ -5,11 +5,13 @@
  * 不正・欠落フィールドはデフォルト値で補完し、読込で落ちないようにする。
  */
 
+import { normalizeFixtureGroups } from './fixtureGroups';
 import {
   PROJECT_VERSION,
   UNIVERSE_SIZE,
   createDefaultProject,
   createDefaultStageLayout,
+  createDefaultStrobeSettings,
   createDefaultStaticFixtureParameters,
   type ActionButton,
   type ActionStep,
@@ -201,6 +203,7 @@ const VISUALIZER_PARAMETERS: VisualizerParameter[] = [
   'red',
   'green',
   'blue',
+  'strobe',
   'pan',
   'tilt',
   'zoom',
@@ -213,13 +216,32 @@ export function normalizeStageLayout(raw: unknown): StageLayout {
 
   const profiles = normalizeVisualizerProfiles(raw.profiles);
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const fixtures = normalizeVisualizerFixtures(raw.fixtures, profilesById);
   return {
     widthM: positiveNumber(raw.widthM, def.widthM),
     depthM: positiveNumber(raw.depthM, def.depthM),
     heightM: positiveNumber(raw.heightM, def.heightM),
     profiles,
-    fixtures: normalizeVisualizerFixtures(raw.fixtures, profilesById),
+    fixtures,
+    ...(Array.isArray(raw.groups) ? { groups: normalizeFixtureGroups(raw.groups, fixtures.map(fixture => fixture.id)) } : {}),
+    ...(Array.isArray(raw.obstacles) ? { obstacles: normalizeStageObstacles(raw.obstacles) } : {}),
   };
+}
+
+function normalizeStageObstacles(raw: unknown[]): NonNullable<StageLayout['obstacles']> {
+  const result: NonNullable<StageLayout['obstacles']> = [];
+  const ids = new Set<string>();
+  for (const item of raw) {
+    if (!isObject(item) || !isObject(item.sizeM)) continue;
+    const size = item.sizeM;
+    if (![size.x, size.y, size.z].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0.01 && value <= 1000)) continue;
+    const id = str(item.id, fallbackId()).trim() || fallbackId();
+    if (ids.has(id)) continue;
+    ids.add(id);
+    result.push({ id, name: str(item.name, '遮蔽物').trim() || '遮蔽物', positionM: normalizeVector3(item.positionM), sizeM: normalizeVector3(size) });
+    if (result.length >= 64) break;
+  }
+  return result;
 }
 
 export function normalizeVisualizerProfiles(raw: unknown): VisualizerFixtureProfile[] {
@@ -241,6 +263,7 @@ export function normalizeVisualizerProfiles(raw: unknown): VisualizerFixtureProf
       panRangeDeg,
       tiltRangeDeg,
       zoomRangeDeg,
+      strobeSettings: normalizeStrobeSettings(item.strobeSettings),
       defaultStaticParameters: normalizeStaticParameters(
         item.defaultStaticParameters,
         panRangeDeg,
@@ -279,8 +302,8 @@ function normalizeVisualizerFixtures(
   const ids = new Set<string>();
   for (const item of raw) {
     if (!isObject(item) || typeof item.profileId !== 'string') continue;
-    const profile = profilesById.get(item.profileId);
-    if (!profile) continue;
+    // Preserve orphaned fixtures for an explicit UI warning and profile repair.
+    const profile = profilesById.get(item.profileId) ?? normalizeVisualizerProfiles([{ id: item.profileId, name: 'Profile未設定' }])[0];
     const id = str(item.id, fallbackId()).trim() || fallbackId();
     if (ids.has(id)) continue;
     const startChannel = optionalStartChannel(item.startChannel, profile);
@@ -335,6 +358,15 @@ function normalizeRange(raw: unknown, defaultMin: number, defaultMax: number) {
   return { min: num(raw.min, defaultMin), max: num(raw.max, defaultMax) };
 }
 
+function normalizeStrobeSettings(raw: unknown) {
+  const defaults = createDefaultStrobeSettings();
+  const value = isObject(raw) ? raw : {};
+  return {
+    startValue: clampNumber(Math.round(num(value.startValue, defaults.startValue)), 0, 255),
+    maxFrequencyHz: Math.max(1, num(value.maxFrequencyHz, defaults.maxFrequencyHz)),
+  };
+}
+
 function normalizeStaticParameters(
   raw: unknown,
   panRange: { min: number; max: number },
@@ -348,6 +380,7 @@ function normalizeStaticParameters(
     red: clampNumber(num(value.red, fallback.red), 0, 1),
     green: clampNumber(num(value.green, fallback.green), 0, 1),
     blue: clampNumber(num(value.blue, fallback.blue), 0, 1),
+    strobe: clampNumber(num(value.strobe, fallback.strobe), 0, 1),
     pan: clampToRange(num(value.pan, fallback.pan), panRange),
     tilt: clampToRange(num(value.tilt, fallback.tilt), tiltRange),
     zoom: clampToRange(num(value.zoom, fallback.zoom), zoomRange),

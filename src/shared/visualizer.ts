@@ -2,6 +2,7 @@
 
 import {
   UNIVERSE_SIZE,
+  createDefaultStrobeSettings,
   createDefaultStaticFixtureParameters,
   type DmxParameterBinding,
   type StaticFixtureParameters,
@@ -61,6 +62,7 @@ export function evaluateVisualizerFixture(
   profile: VisualizerFixtureProfile,
   fixture: VisualizerFixture,
   outputFrame: readonly number[],
+  timeMs = 0,
 ): VisualizerDisplayState {
   const parameters = { ...fixture.staticParameters };
   for (const parameter of VISUALIZER_PARAMETERS) {
@@ -74,9 +76,14 @@ export function evaluateVisualizerFixture(
   }
 
   const maxColor = Math.max(parameters.red, parameters.green, parameters.blue);
+  const strobeGate = evaluateStrobeGate(
+    parameters.strobe,
+    timeMs,
+    profile.strobeSettings.maxFrequencyHz,
+  );
   return {
     parameters,
-    intensity: parameters.dimmer * maxColor,
+    intensity: parameters.dimmer * maxColor * strobeGate,
     color:
       maxColor === 0
         ? { red: 0, green: 0, blue: 0 }
@@ -94,6 +101,7 @@ export function createInitialVisualizerProfiles(): VisualizerFixtureProfile[] {
     panRangeDeg: { min: -270, max: 270 },
     tiltRangeDeg: { min: -135, max: 135 },
     zoomRangeDeg: { min: 5, max: 45 },
+    strobeSettings: createDefaultStrobeSettings(),
     defaultStaticParameters: createDefaultStaticFixtureParameters(),
   };
   return [
@@ -146,10 +154,24 @@ const VISUALIZER_PARAMETERS: VisualizerParameter[] = [
   'red',
   'green',
   'blue',
+  'strobe',
   'pan',
   'tilt',
   'zoom',
 ];
+
+/** 0は連続点灯、0より大きい値は1Hz〜指定上限・デューティ比50%の点滅として評価する。 */
+export function evaluateStrobeGate(
+  strobe: number,
+  timeMs: number,
+  maxFrequencyHz = 20,
+): 0 | 1 {
+  if (strobe <= 0) return 1;
+  const maximumHz = Number.isFinite(maxFrequencyHz) ? Math.max(1, maxFrequencyHz) : 20;
+  const frequencyHz = 1 + Math.min(1, strobe) * (maximumHz - 1);
+  const phase = Math.floor((Math.max(0, timeMs) / 1000) * frequencyHz * 2);
+  return phase % 2 === 0 ? 1 : 0;
+}
 
 function toParameterValue(
   parameter: VisualizerParameter,
@@ -159,6 +181,12 @@ function toParameterValue(
   if (parameter === 'pan') return lerp(profile.panRangeDeg, normalized);
   if (parameter === 'tilt') return lerp(profile.tiltRangeDeg, normalized);
   if (parameter === 'zoom') return lerp(profile.zoomRangeDeg, normalized);
+  if (parameter === 'strobe') {
+    const start = Math.min(255, Math.max(0, profile.strobeSettings.startValue)) / 255;
+    if (normalized < start) return 0;
+    if (start >= 1) return Number.EPSILON;
+    return Math.max(Number.EPSILON, (normalized - start) / (1 - start));
+  }
   return normalized;
 }
 

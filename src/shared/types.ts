@@ -55,6 +55,7 @@ export type VisualizerParameter =
   | 'red'
   | 'green'
   | 'blue'
+  | 'strobe'
   | 'pan'
   | 'tilt'
   | 'zoom';
@@ -73,12 +74,21 @@ export interface StaticFixtureParameters {
   green: number;
   /** 0..1 */
   blue: number;
+  /** 0..1。0は連続点灯、1は最高速。 */
+  strobe: number;
   /** degree */
   pan: number;
   /** degree */
   tilt: number;
   /** ビームの全開き角 (degree) */
   zoom: number;
+}
+
+export interface StrobeSettings {
+  /** ストロボを開始するDMX値 (0..255)。この値未満は常時点灯。 */
+  startValue: number;
+  /** ストロボ最大周波数 (Hz)。 */
+  maxFrequencyHz: number;
 }
 
 export interface VisualizerFixtureProfile {
@@ -88,6 +98,7 @@ export interface VisualizerFixtureProfile {
   panRangeDeg: { min: number; max: number };
   tiltRangeDeg: { min: number; max: number };
   zoomRangeDeg: { min: number; max: number };
+  strobeSettings: StrobeSettings;
   defaultStaticParameters: StaticFixtureParameters;
 }
 
@@ -102,12 +113,28 @@ export interface VisualizerFixture {
   staticParameters: StaticFixtureParameters;
 }
 
+/** Axis-aligned solid scenery. Thin boxes represent walls and opaque curtains. */
+export interface StageObstacle {
+  id: string;
+  name: string;
+  positionM: Vector3;
+  sizeM: Vector3;
+}
+
+export interface FixtureGroup {
+  id: string;
+  name: string;
+  fixtureIds: string[];
+}
+
 export interface StageLayout {
   widthM: number;
   depthM: number;
   heightM: number;
   profiles: VisualizerFixtureProfile[];
   fixtures: VisualizerFixture[];
+  obstacles?: StageObstacle[];
+  groups?: FixtureGroup[];
 }
 
 // ===== RGB フィクスチャ（R/G/B 3ch を 1 色として束ねる定義） =====
@@ -455,9 +482,18 @@ export function createDefaultStaticFixtureParameters(): StaticFixtureParameters 
     red: 1,
     green: 1,
     blue: 1,
+    strobe: 0,
     pan: 0,
     tilt: 0,
     zoom: 25,
+  };
+}
+
+/** 3D灯体プロファイルのストロボ既定値。DMX 0は常時点灯、1から点滅する。 */
+export function createDefaultStrobeSettings(): StrobeSettings {
+  return {
+    startValue: 1,
+    maxFrequencyHz: 20,
   };
 }
 

@@ -16,6 +16,9 @@
 import http from 'node:http';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import type { StageLayout } from '../shared/types';
 import type { RemoteCommand, RemoteInfo, RemoteState } from '../shared/ipc';
 import { REMOTE_CLIENT_HTML } from './remoteClient';
 import { DEFAULT_REMOTE_PORT, type RemoteSettings } from '../shared/appSettings';
@@ -54,6 +57,37 @@ function localUrls(port: number): string[] {
 }
 
 export class RemoteServer {
+  private readonly rendererRoot: URL;
+
+  constructor(rendererRoot = new URL('../dist/', import.meta.url)) {
+    this.rendererRoot = rendererRoot;
+  }
+
+  private readonly previewClients = new Set<http.ServerResponse>();
+  private previewStage: StageLayout | null = null;
+  private previewFrame: readonly number[] = [];
+
+  updatePreviewStage(stage: StageLayout): void {
+    if (this.previewStage === stage) return;
+    this.previewStage = stage;
+    this.sendPreview('stage', stage);
+  }
+
+  updatePreviewFrame(frame: readonly number[]): void {
+    this.previewFrame = frame.slice();
+    this.sendPreview('frame', frame);
+  }
+
+  private sendPreview(event: string, data: unknown): void {
+    if (!this.previewClients.size) return;
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of this.previewClients) {
+      // A slow client reconnects and receives the latest snapshot instead of buffering frames.
+      if (res.writableLength > 256 * 1024) { res.destroy(); this.previewClients.delete(res); continue; }
+      res.write(payload);
+    }
+  }
+
   private server: http.Server | null = null;
   private port = DEFAULT_REMOTE_PORT;
   private pin = genPin();
@@ -152,6 +186,8 @@ export class RemoteServer {
         }
       }
       this.sseClients.clear();
+      for (const res of this.previewClients) res.end();
+      this.previewClients.clear();
       this.tokens.clear();
       this.enabled = false;
       const srv = this.server;
@@ -188,6 +224,7 @@ export class RemoteServer {
   private startSseHeartbeat(): void {
     if (this.sseHeartbeatTimer !== null) return;
     this.sseHeartbeatTimer = setInterval(() => {
+      for (const res of this.previewClients) res.write(': ping\n\n');
       for (const res of this.sseClients) {
         try {
           res.write(': ping\n\n');
@@ -254,6 +291,31 @@ export class RemoteServer {
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
+
+    // Only built renderer assets are public; project and output data require PIN authentication.
+    if (req.method === 'GET' && (path === '/visualizer' || /^\/assets\/[a-zA-Z0-9_.-]+\.(js|css)$/.test(path))) {
+      const relative = path === '/visualizer' ? 'remote-visualizer.html' : path.slice(1);
+      const file = fileURLToPath(new URL(relative, this.rendererRoot));
+      void fs.readFile(file).then(content => {
+        res.writeHead(200, { 'Content-Type': path === '/visualizer' ? 'text/html; charset=utf-8' : path.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        res.end(content);
+      }).catch(() => {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('3D プレビューが見つかりません。アプリをビルドしてください。');
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/api/visualizer/events') {
+      if (!this.authed(req, url)) { res.writeHead(401).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write('retry: 3000\n\n');
+      if (this.previewStage) res.write(`event: stage\ndata: ${JSON.stringify(this.previewStage)}\n\n`);
+      res.write(`event: frame\ndata: ${JSON.stringify(this.previewFrame)}\n\n`);
+      this.previewClients.add(res);
+      req.on('close', () => this.previewClients.delete(res));
+      return;
+    }
 
     // 操作ページ（/ = 全操作、/actions = Action 専用ビュー。同一 HTML をパスで切替）
     if (req.method === 'GET' && (path === '/' || path === '/index.html' || path === '/actions')) {

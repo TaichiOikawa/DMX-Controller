@@ -7,6 +7,11 @@ import electron from 'vite-plugin-electron/simple'
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rolldownOptions: {
+      input: { main: 'index.html', remoteVisualizer: 'remote-visualizer.html' },
+    },
+  },
   plugins: [
     react(),
     babel({ presets: [reactCompilerPreset()] }),

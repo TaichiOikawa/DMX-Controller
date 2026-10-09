@@ -1,13 +1,52 @@
 import { Euler, Quaternion, Vector3, type Camera } from 'three';
 import type { StageLayout, VisualizerFixture, VisualizerParameter } from '../../../shared/types';
+import { duplicateVisualizerFixture } from '../../../shared/visualizerEditing';
+import { isVisualizerStartChannelValid } from '../../../shared/visualizer';
 
-export function setSelectedFixtureParameter(stage: StageLayout, ids: readonly string[], parameter: VisualizerParameter, value: number): StageLayout {
+/** Validate the entire selection before applying a patch, so invalid ranges never partially update it. */
+export function patchSelectedFixtureDmx(stage: StageLayout, ids: readonly string[], patch: { profileId: string } | { startChannel: number | undefined }): StageLayout | null {
+  let changed = false;
+  let valid = true;
+  const fixtures = stage.fixtures.map(fixture => {
+    if (!ids.includes(fixture.id)) return fixture;
+    const next = { ...fixture, ...patch };
+    const profile = stage.profiles.find(item => item.id === next.profileId);
+    if (!profile || (next.startChannel !== undefined && next.startChannel > 511) || !isVisualizerStartChannelValid(next.startChannel, profile)) valid = false;
+    if (next.profileId === fixture.profileId && next.startChannel === fixture.startChannel) return fixture;
+    changed = true;
+    return next;
+  });
+  return !valid ? null : changed ? { ...stage, fixtures } : stage;
+}
+
+export function duplicateSelectedFixtures(stage: StageLayout, ids: readonly string[]): StageLayout {
+  const selected = stage.fixtures.filter(fixture => ids.includes(fixture.id));
+  if (!selected.length || stage.fixtures.length + selected.length > 170 || selected.some(fixture => !stage.profiles.some(profile => profile.id === fixture.profileId))) return stage;
+  return selected.reduce((next, fixture) => duplicateVisualizerFixture(next, fixture.id), stage);
+}
+
+export function editSelectedFixtureVector(stage: StageLayout, ids: readonly string[], field: 'positionM' | 'mountRotationDeg', axis: 'x' | 'y' | 'z', value: number, delta?: number): StageLayout {
+  if (!Number.isFinite(value) || (delta !== undefined && !Number.isFinite(delta))) return stage;
+  let changed = false;
+  const fixtures = stage.fixtures.map(fixture => {
+    if (!ids.includes(fixture.id)) return fixture;
+    const next = delta === undefined ? value : Number((fixture[field][axis] + delta).toFixed(6));
+    if (next === fixture[field][axis]) return fixture;
+    changed = true;
+    return { ...fixture, [field]: { ...fixture[field], [axis]: next } };
+  });
+  return changed ? { ...stage, fixtures } : stage;
+}
+
+export function setSelectedFixtureParameter(stage: StageLayout, ids: readonly string[], parameter: VisualizerParameter, value: number, delta?: number): StageLayout {
   if (!Number.isFinite(value)) return stage;
   let changed = false;
   const fixtures = stage.fixtures.map(fixture => {
-    if (!ids.includes(fixture.id) || fixture.staticParameters[parameter] === value) return fixture;
+    if (!ids.includes(fixture.id)) return fixture;
+    const next = delta === undefined ? value : Number((fixture.staticParameters[parameter] + delta).toFixed(6));
+    if (fixture.staticParameters[parameter] === next) return fixture;
     changed = true;
-    return { ...fixture, staticParameters: { ...fixture.staticParameters, [parameter]: value } };
+    return { ...fixture, staticParameters: { ...fixture.staticParameters, [parameter]: next } };
   });
   return changed ? { ...stage, fixtures } : stage;
 }

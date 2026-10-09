@@ -38,13 +38,16 @@ import { bindTransformHandlePriority } from './transformHandlePriority';
 import { BoxSelection } from './BoxSelection';
 import { transformSelectedFixtures } from './multiSelection';
 import { fixtureDropPosition } from './fixtureDrop';
+import { AxisNavigation, type AxisView } from './AxisNavigation';
+import { FIXTURE_MODEL_SCALE } from './fixtureDimensions';
+import { RENDER_QUALITY, type RenderQuality } from './renderQuality';
 
 const CAMERA_STORAGE_KEY = 'dmx.visualizer.camera';
 const MAX_FIXTURES = 170;
 export const FIXTURE_MOVE_SNAP_M = 0.5;
 export const FIXTURE_ROTATE_SNAP_DEG = 15;
 
-export type CameraPreset = 'front' | 'top' | 'perspective' | 'fit';
+export type CameraPreset = 'front' | 'top' | 'perspective' | 'fit' | AxisView;
 export type FixtureTransform = Pick<VisualizerFixture, 'positionM' | 'mountRotationDeg'>;
 
 export interface StageSceneHandle {
@@ -60,6 +63,7 @@ interface StageSceneProps {
   onSelectFixtures?(ids: string[]): void;
   onSelectFixture(id: string | null): void;
   workLight?: boolean;
+  quality?: RenderQuality;
   showGrid?: boolean;
   snapEnabled?: boolean;
   transformMode?: 'translate' | 'rotate';
@@ -99,7 +103,7 @@ export const StageScene = forwardRef<StageSceneHandle, StageSceneProps>(function
       onCreated={({ camera, gl }) => { dropView.current = { camera, canvas: gl.domElement }; }}
       frameloop="demand"
       camera={{ position: [10, 8, 12], fov: 45, near: 0.05, far: 200 }}
-      dpr={[1, 1.75]}
+      dpr={RENDER_QUALITY[props.quality ?? 'low'].dpr}
       gl={{ antialias: true, alpha: false, localClippingEnabled: true }}
       onPointerMissed={() => { if (!manipulating.current && !handlePriority.current && !boxPriority.current) props.onSelectFixture(null); }}
     >
@@ -209,11 +213,12 @@ function InstancedFixtureLayer({
   selectedFixtureIds,
   onSelectFixture,
   workLight = true,
+  quality = 'low',
 }: StageSceneProps) {
   const bodyRef = useRef<InstancedMesh>(null);
   const headRef = useRef<InstancedMesh>(null);
   const lensRef = useRef<InstancedMesh>(null);
-  const geometry = useMemo(() => createFixtureGeometry(), []);
+  const geometry = useMemo(() => createFixtureGeometry(RENDER_QUALITY[quality].geometryDetail), [quality]);
   useEffect(() => () => {
     geometry.body.dispose();
     geometry.head.dispose();
@@ -224,8 +229,8 @@ function InstancedFixtureLayer({
   const invalidate = useThree((state) => state.invalidate);
   const surfaces = useMemo(() => createStageSurfaces(stage), [stage]);
   const occluders = useMemo(() => createProjectionOccluders(surfaces.length / 6), [surfaces.length]);
-  const projectionShader = useMemo(() => createProjectionShader(occluders), [occluders]);
-  const beamShader = useMemo(() => createBeamShader(occluders), [occluders]);
+  const projectionShader = useMemo(() => createProjectionShader(occluders, quality), [occluders, quality]);
+  const beamShader = useMemo(() => createBeamShader(occluders, quality), [occluders, quality]);
   useLayoutEffect(() => {
     for (let i = 0; i < occluders.projectionBoxMin.value.length; i++) {
       occluders.projectionBoxMin.value[i].copy(surfaces[i * 6].min);
@@ -336,15 +341,15 @@ function InstancedFixtureLayer({
         <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
       <instancedMesh ref={beamRef} frustumCulled={false} args={[undefined, undefined, MAX_FIXTURES]}>
-        <coneGeometry args={[1, 1, 64, 1, true]} />
-        <meshBasicMaterial key={`beam-${surfaces.length}`} transparent opacity={0.12} depthWrite={false}
+        <coneGeometry args={[1, 1, RENDER_QUALITY[quality].beamSegments, 1, true]} />
+        <meshBasicMaterial key={`beam-${surfaces.length}-${quality}`} transparent opacity={0.12} depthWrite={false}
           blending={AdditiveBlending} side={DoubleSide} toneMapped={false}
-          onBeforeCompile={beamShader} customProgramCacheKey={() => `beam-scattering-${surfaces.length}`} />
+          onBeforeCompile={beamShader} customProgramCacheKey={() => `beam-scattering-${surfaces.length}-${quality}`} />
       </instancedMesh>
       <instancedMesh key={surfaces.length} ref={markerRef} frustumCulled={false} args={[undefined, undefined, MAX_FIXTURES * surfaces.length]}>
         <planeGeometry args={[2, 2]} />
-        <meshBasicMaterial key={`projection-${surfaces.length}`} transparent opacity={0.65} depthWrite={false} blending={AdditiveBlending} toneMapped={false}
-          onBeforeCompile={projectionShader} customProgramCacheKey={() => `surface-projection-${surfaces.length}`} />
+        <meshBasicMaterial key={`projection-${surfaces.length}-${quality}`} transparent opacity={0.65} depthWrite={false} blending={AdditiveBlending} toneMapped={false}
+          onBeforeCompile={projectionShader} customProgramCacheKey={() => `surface-projection-${surfaces.length}-${quality}`} />
       </instancedMesh>
       {selectedFixtures.map(fixture => <SelectedFixtureHighlight key={fixture.id} fixture={fixture} onSelectFixture={onSelectFixture} />)}
     </group>
@@ -360,7 +365,8 @@ function SelectedFixtureHighlight({
 }) {
   const toRadians = Math.PI / 180;
   const outline = useMemo(() => {
-    const bounds = new BoxGeometry(0.76, 1, 0.76).translate(0, 0.16, 0);
+    const bounds = new BoxGeometry(0.76, 1, 0.76).translate(0, 0.16, 0)
+      .scale(FIXTURE_MODEL_SCALE, FIXTURE_MODEL_SCALE, FIXTURE_MODEL_SCALE);
     const edges = new EdgesGeometry(bounds);
     bounds.dispose();
     return edges;
@@ -404,7 +410,13 @@ function CameraController({
   const activePreset = useRef<CameraPreset | null>(null);
   const applyPreset = useCallback((preset: CameraPreset) => {
     if (!(camera instanceof PerspectiveCamera)) return;
-    const direction = preset === 'front' ? new ThreeVector3(0, -0.05, 1)
+    const axisDirections: Record<AxisView, [number, number, number]> = {
+      '+X': [-1, 0, 0], '-X': [1, 0, 0],
+      '+Y': [0, -1, 0], '-Y': [0, 1, 0],
+      '+Z': [0, 0, -1], '-Z': [0, 0, 1],
+    };
+    const direction = preset in axisDirections ? new ThreeVector3(...axisDirections[preset as AxisView])
+      : preset === 'front' ? new ThreeVector3(0, -0.05, 1)
       : preset === 'top' ? new ThreeVector3(0, -1, 0)
       : new ThreeVector3(-1, -0.75, 1);
     const fit = fitCamera(stageBounds(stage), direction, camera.fov, size.width / Math.max(1, size.height));
@@ -444,6 +456,11 @@ function CameraController({
   }, [applyPreset]);
 
   return (
+    <>
+    <AxisNavigation onSelect={view => {
+      activePreset.current = view;
+      applyPreset(view);
+    }} />
     <OrbitControls
       ref={controls}
       makeDefault
@@ -466,6 +483,7 @@ function CameraController({
         }
       }}
     />
+    </>
   );
 }
 

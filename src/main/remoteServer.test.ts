@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { RemoteServer } from './remoteServer';
+import { createDefaultStageLayout } from '../shared/types';
 
 let server: RemoteServer | null = null;
 
@@ -28,6 +29,29 @@ function auth(base: string, pin: string): Promise<Response> {
 }
 
 describe('RemoteServer 認証', () => {
+  it('3D プレビューは認証後に初期状態と更新を受信し、再接続時にも最新状態を受信する', async () => {
+    const { base, pin } = await startServer();
+    expect((await fetch(`${base}/api/visualizer/events`)).status).toBe(401);
+    const { token } = await (await auth(base, pin)).json() as { token: string };
+    const stage = createDefaultStageLayout();
+    server!.updatePreviewStage(stage);
+    server!.updatePreviewFrame([10, 20, 30]);
+    const response = await fetch(`${base}/api/visualizer/events?token=${token}`);
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = '';
+    while (!received.includes('event: frame')) received += decoder.decode((await reader.read()).value);
+    expect(received).toContain(`event: stage\ndata: ${JSON.stringify(stage)}`);
+    expect(received).toContain('event: frame\ndata: [10,20,30]');
+    server!.updatePreviewFrame([0, 0, 0]);
+    expect(decoder.decode((await reader.read()).value)).toContain('event: frame\ndata: [0,0,0]');
+    await reader.cancel();
+    const reconnect = await fetch(`${base}/api/visualizer/events?token=${token}`);
+    const nextReader = reconnect.body!.getReader();
+    expect(decoder.decode((await nextReader.read()).value)).toContain('event: frame\ndata: [0,0,0]');
+    await nextReader.cancel();
+  });
+
   it('正しい PIN でトークンを発行し、そのトークンで ping が 200 になる', async () => {
     const { base, pin } = await startServer();
     const res = await auth(base, pin);

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { createNumberScrub } from './numberScrub';
+import { NumberGestureContext } from './NumberGestureContext';
 
 interface NumberFieldProps {
   label?: string;
   value: number | '';
-  onCommit(value: number | ''): void;
+  onCommit(value: number | '', edit?: { delta: number }): void;
   min?: number;
   max?: number;
   step?: number;
@@ -20,13 +21,15 @@ export function NumberField({ label, value, onCommit, min, max, step = 1, allowE
   const [draft, setDraft] = useState(String(value));
   const [observedValue, setObservedValue] = useState(value);
   const [scrubbing, setScrubbing] = useState(false);
-  const gesture = useRef<{ pointerId: number; scrub: ReturnType<typeof createNumberScrub> } | null>(null);
+  const transaction = useContext(NumberGestureContext);
+  const gesture = useRef<{ pointerId: number; last: number; started: boolean; finish?: () => void; scrub: ReturnType<typeof createNumberScrub> } | null>(null);
+  const skipBlurCommit = useRef(false);
   // Keep the input mounted and preserve intermediate text such as "1.".
   if (value !== observedValue) {
     setObservedValue(value);
     if ((draft.trim() === '' ? '' : Number(draft)) !== value) setDraft(String(value));
   }
-  useEffect(() => () => gesture.current?.scrub.stop(), []);
+  useEffect(() => () => { gesture.current?.scrub.stop(); gesture.current?.finish?.(); }, []);
   const clamp = (number: number) => Math.max(min ?? -Infinity, Math.min(max ?? Infinity, number));
   const apply = (text: string, finish = false) => {
     if (text.trim() === '') {
@@ -47,14 +50,15 @@ export function NumberField({ label, value, onCommit, min, max, step = 1, allowE
     if (!current) return;
     current.scrub.stop();
     gesture.current = null;
+    if (current.started) { skipBlurCommit.current = true; setDraft(String(value)); current.finish?.(); }
     setScrubbing(false);
     if (element.hasPointerCapture(current.pointerId)) element.releasePointerCapture(current.pointerId);
   };
   const input = <input type="number" value={draft} placeholder={placeholder} min={min} max={max} step={step} disabled={disabled}
     title={immediate ? '長押しして左右にドラッグで値を変更（Shiftで微調整）' : undefined}
     style={{ cursor: scrubbing ? 'ew-resize' : undefined, userSelect: scrubbing ? 'none' : undefined, touchAction: immediate ? 'pan-y' : undefined }}
-    onChange={event => { setDraft(event.target.value); if (immediate && !event.target.validity.badInput) apply(event.target.value); }}
-    onBlur={event => { stopGesture(event.currentTarget); apply(event.currentTarget.value, true); }}
+    onChange={event => { skipBlurCommit.current = false; setDraft(event.target.value); if (immediate && !event.target.validity.badInput) apply(event.target.value); }}
+    onBlur={event => { stopGesture(event.currentTarget); if (!skipBlurCommit.current) apply(event.currentTarget.value, true); skipBlurCommit.current = false; }}
     onKeyDown={event => {
       if (event.key === 'Enter') event.currentTarget.blur();
       if (event.key === 'Escape') { stopGesture(event.currentTarget); setDraft(String(value)); }
@@ -65,10 +69,13 @@ export function NumberField({ label, value, onCommit, min, max, step = 1, allowE
       const element = event.currentTarget;
       const pointerId = event.pointerId;
       const number = draft.trim() === '' ? (scrubValue ?? Number(value)) : Number(draft);
-      const current = { pointerId, scrub: createNumberScrub({
+      const initial = Number.isFinite(number) ? clamp(number) : 0;
+      const current = { pointerId, last: initial, started: false, finish: transaction?.finish, scrub: createNumberScrub({
         x: event.clientX, value: Number.isFinite(number) ? clamp(number) : 0, step, min, max, integer,
         onActivate: () => {
           if (gesture.current !== current || !element.isConnected) return;
+          current.started = true;
+          transaction?.begin();
           element.setPointerCapture(pointerId);
           setScrubbing(true);
         },
@@ -82,7 +89,9 @@ export function NumberField({ label, value, onCommit, min, max, step = 1, allowE
       if (next === null) return;
       event.preventDefault();
       setDraft(String(next));
-      if (next !== value) onCommit(next);
+      const delta = Number((next - current.last).toFixed(6));
+      current.last = next;
+      if (delta !== 0) onCommit(next, { delta });
     }}
     onPointerUp={event => stopGesture(event.currentTarget)}
     onPointerCancel={event => stopGesture(event.currentTarget)}

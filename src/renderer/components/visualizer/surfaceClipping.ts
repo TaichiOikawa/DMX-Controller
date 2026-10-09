@@ -1,5 +1,7 @@
 import { InstancedBufferAttribute, Vector3, type InstancedMesh, type MeshBasicMaterial } from 'three';
 import type { StageSurface } from './stageGeometry';
+import type { RenderQuality } from './renderQuality';
+import { FIXTURE_EMITTER_RADIUS_M } from './fixtureDimensions';
 
 export function setSurfaceBounds(mesh: InstancedMesh, index: number, surface?: StageSurface) {
   for (const key of ['min', 'max'] as const) {
@@ -57,7 +59,7 @@ export function projectionOcclusionGLSL(count: number) {
 }
 
 /** Cone clipping works for ellipses and grazing rays; ray/box tests preserve shadows. */
-export function createProjectionShader(occluders: ReturnType<typeof createProjectionOccluders>): MeshBasicMaterial['onBeforeCompile'] {
+export function createProjectionShader(occluders: ReturnType<typeof createProjectionOccluders>, quality: RenderQuality = 'low'): MeshBasicMaterial['onBeforeCompile'] {
   return (shader, renderer) => {
     clipToSurface(shader, renderer);
     Object.assign(shader.uniforms, occluders);
@@ -67,13 +69,16 @@ export function createProjectionShader(occluders: ReturnType<typeof createProjec
       attribute vec4 coneDirection;
       varying vec4 vConeOrigin;
       varying vec4 vConeDirection;
+      varying vec3 vReceiverNormal;
     `).replace('#include <project_vertex>', `#include <project_vertex>
       vConeOrigin = coneOrigin;
       vConeDirection = coneDirection;
+      vReceiverNormal = normalize(mat3(modelMatrix * instanceMatrix) * vec3(0.0, 0.0, 1.0));
     `);
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>
       varying vec4 vConeOrigin;
       varying vec4 vConeDirection;
+      varying vec3 vReceiverNormal;
       ${projectionOcclusionGLSL(count)}
     `).replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
       vec3 fromLight = vSurfaceWorld - vConeOrigin.xyz;
@@ -81,9 +86,37 @@ export function createProjectionShader(occluders: ReturnType<typeof createProjec
       if (lightDistance < 0.00001 || lightDistance > 30.0) discard;
       vec3 lightRay = fromLight / lightDistance;
       if (dot(lightRay, vConeDirection.xyz) < vConeDirection.w) discard;
-      for (int box = 0; box < ${count}; box++) {
+      ${quality === 'low' ? `for (int box = 0; box < ${count}; box++) {
         if (blocksProjection(vConeOrigin.xyz, lightRay, lightDistance, projectionBoxMin[box], projectionBoxMax[box])) discard;
+      }` : `
+      // A finite emitter produces a penumbra that grows away from an obstacle.
+      vec3 axis = normalize(vConeDirection.xyz);
+      vec3 tangent = normalize(cross(axis, abs(axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+      vec3 bitangent = cross(axis, tangent);
+      float visibility = 0.0;
+      const int samples = ${quality === 'high' ? 9 : 5};
+      for (int sampleIndex = 0; sampleIndex < samples; sampleIndex++) {
+        float angle = float(sampleIndex) * 2.39996323;
+        float radius = ${FIXTURE_EMITTER_RADIUS_M} * sqrt(float(sampleIndex) / float(samples - 1));
+        vec3 origin = vConeOrigin.xyz + radius * (cos(angle) * tangent + sin(angle) * bitangent);
+        vec3 sampleVector = vSurfaceWorld - origin;
+        float sampleDistance = length(sampleVector);
+        vec3 sampleRay = sampleVector / max(sampleDistance, 0.00001);
+        float unblocked = 1.0;
+        for (int box = 0; box < ${count}; box++) {
+          if (blocksProjection(origin, sampleRay, sampleDistance, projectionBoxMin[box], projectionBoxMax[box])) { unblocked = 0.0; break; }
+        }
+        visibility += unblocked / float(samples);
       }
+      // Angular falloff follows the optical axis, including oblique wall hits.
+      float radialSquared = clamp((1.0 - dot(lightRay, axis)) / max(1.0 - vConeDirection.w, 0.000001), 0.0, 1.0);
+      float feather = 1.0 - smoothstep(${quality === 'high' ? '0.35' : '0.55'}, 1.0, radialSquared);
+      float core = exp(-radialSquared * ${quality === 'high' ? '3.5' : '2.0'});
+      float distribution = ${quality === 'high' ? '(0.8 * core + 0.2 * exp(-radialSquared * 0.8))' : 'core'} * feather;
+      float incidence = max(dot(normalize(vReceiverNormal), -lightRay), 0.0);
+      float attenuation = 1.0 / (1.0 + 0.035 * lightDistance * lightDistance);
+      diffuseColor.a *= visibility * distribution * incidence * attenuation;
+      `}
     `);
   };
 }

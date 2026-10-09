@@ -457,6 +457,10 @@ function RemoteSection({ open }: { open: boolean }) {
                 Action 専用ページ:{' '}
                 <span className="font-mono text-sky-300">{info.urls[0]}/actions</span>
               </div>
+              <div className="text-[10px] text-neutral-500">
+                3D プレビュー専用ページ:{' '}
+                <span className="font-mono text-sky-300">{info.urls[0]}/visualizer</span>
+              </div>
             </div>
           </div>
         )

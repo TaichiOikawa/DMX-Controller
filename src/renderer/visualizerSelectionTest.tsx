@@ -33,7 +33,11 @@ const emptyEngineState = {
   canStageLayoutUndo: false,
   canStageLayoutRedo: false,
 } as EngineStateSnapshot;
-const unsubscribe = () => {};
+const undoStages: StageLayout[] = [];
+const redoStages: StageLayout[] = [];
+const stateListeners = new Set<(state: EngineStateSnapshot) => void>();
+const testEngineState = () => ({ ...emptyEngineState, canStageLayoutUndo: undoStages.length > 0, canStageLayoutRedo: redoStages.length > 0 });
+const publishHistory = () => { for (const listener of stateListeners) listener(testEngineState()); };
 const outputFrame = new Array(512).fill(0);
 outputFrame[0] = 255;
 outputFrame[1] = 10;
@@ -48,20 +52,40 @@ function setTestStrobeDmxValue(value: number) {
 const dmxMock = {
   beginStageLayoutEdit() {},
   endStageLayoutEdit() {},
-  getEngineState: async () => emptyEngineState,
+  getEngineState: async () => testEngineState(),
   getProject: async () => project,
   getVisualizerProfileLibrary: async () => library,
-  onEngineState: () => unsubscribe,
+  onEngineState: listener => { stateListeners.add(listener); return () => stateListeners.delete(listener); },
   onOutputFrame: (listener) => {
     outputListeners.add(listener);
     queueMicrotask(() => listener(outputFrame.slice()));
     return () => outputListeners.delete(listener);
   },
   onProject: listener => { projectListeners.add(listener); return () => projectListeners.delete(listener); },
-  setStageLayout(next) { project.stageLayout = next; },
+  setStageLayout(next) {
+    if (JSON.stringify(project.stageLayout) === JSON.stringify(next)) return;
+    undoStages.push(structuredClone(project.stageLayout!));
+    redoStages.length = 0;
+    project.stageLayout = structuredClone(next);
+    publishHistory();
+  },
   setVisualizerProfileLibrary: async (next) => next,
-  stageLayoutRedo() {},
-  stageLayoutUndo() {},
+  stageLayoutRedo() {
+    const next = redoStages.pop();
+    if (!next) return;
+    undoStages.push(structuredClone(project.stageLayout!));
+    project.stageLayout = next;
+    for (const listener of projectListeners) listener({ ...project });
+    publishHistory();
+  },
+  stageLayoutUndo() {
+    const next = undoStages.pop();
+    if (!next) return;
+    redoStages.push(structuredClone(project.stageLayout!));
+    project.stageLayout = next;
+    for (const listener of projectListeners) listener({ ...project });
+    publishHistory();
+  },
 } satisfies Pick<
   DmxBridge,
   | 'beginStageLayoutEdit'

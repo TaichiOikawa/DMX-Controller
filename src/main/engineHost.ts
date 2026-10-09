@@ -40,14 +40,15 @@ import {
   type StageLayout,
 } from '../shared/types';
 import {
-  deserializeProject,
   deserializeShow,
   extractLegacyOutputSettings,
   serializeLyrics,
   serializeProject,
   serializeShow,
 } from '../shared/persistence';
-import { resolveProjectAudioPaths, toPortableProject } from './projectPaths';
+import { toPortableProject } from './projectPaths';
+import { loadProjectFile } from './projectFileLoader';
+import { createDefaultStageLayout } from '../shared/types';
 
 /** Art-Net の標準 UDP ポート。 */
 const ARTNET_PORT = 6454;
@@ -165,12 +166,14 @@ export class EngineHost {
       this.engineStateListener?.(state);
     });
     this.engine.onProject((project) => {
+      this.remoteServer.updatePreviewStage(project.stageLayout ?? createDefaultStageLayout());
       this.broadcast(Evt.project, project);
       this.scheduleDirtyCheck();
     });
 
     // 起動直後の Project を「保存済み（クリーン）」の基準にする。
     this.lastSavedJson = serializeProject(this.engine.getProject());
+    this.remoteServer.updatePreviewStage(this.engine.getProject().stageLayout ?? createDefaultStageLayout());
 
     // リモート（スマホ等）からのコマンドは主ウィンドウ renderer のみへ渡す
     // （既存の GO / セットリスト / トランスポート ロジックをそのまま再利用させる）。
@@ -624,18 +627,26 @@ export class EngineHost {
   }
 
   /**
-   * パス指定で Project を読み込む（ダイアログを出さない）。
+   * パス指定で Project を読み込む（旧形式の場合は変換を通知する）。
    * 「開く」ダイアログ経由と、ファイル関連付け（.dmxproj のダブルクリック）経由の共通処理。
    */
   async loadProjectFromPath(
     filePath: string,
   ): Promise<SaveLoadResult & { missingFiles?: MissingFile[] }> {
     try {
-      const text = await fs.readFile(filePath, 'utf-8');
-      this.adoptLegacyOutputSettings(text);
-      const project = deserializeProject(text);
-      // 相対パスで保存された音声を絶対パスへ戻す（以降のメモリ処理は絶対パス前提）。
-      resolveProjectAudioPaths(project, path.dirname(filePath));
+      const loaded = await loadProjectFile(filePath, async () => {
+        await dialog.showMessageBox({
+          type: 'info',
+          title: '旧バージョンのプロジェクト',
+          message: 'このファイルは旧バージョンの形式です。',
+          detail: '同じフォルダーに新しいバージョンのファイルを別名で作成し、そのファイルを開きます。元のファイルは変更せずに残します。同名ファイルがある場合は連番を付けます。',
+          buttons: ['新しいファイルを作成して開く'],
+          noLink: true,
+        });
+      });
+      const { project } = loaded;
+      filePath = loaded.filePath;
+      this.adoptLegacyOutputSettings(loaded.originalText);
       this.engine.loadProject(project);
       this.currentFilePath = filePath;
       this.markClean();
@@ -873,6 +884,7 @@ export class EngineHost {
     this.lastFrameSentAt = now;
     // frame は Engine が再利用するバッファなので、送る前にコピーする。
     this.broadcast(Evt.outputFrame, frame.slice());
+    this.remoteServer.updatePreviewFrame(frame);
 
     if (now - this.lastStateSentAt >= STATE_FORWARD_INTERVAL_MS) {
       this.lastStateSentAt = now;

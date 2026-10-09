@@ -131,6 +131,7 @@ export const REMOTE_CLIENT_HTML = /* html */ `<!DOCTYPE html>
       <span id="conn" class="dot"></span>
       <span id="showName" class="show">—</span>
       <a id="viewLink" class="view-link" href="/actions">⚡ Action専用</a>
+      <a class="view-link" href="/visualizer">3D プレビュー</a>
       <button id="toShow" class="to-show hidden" data-act="modeShow">▶ SHOW へ</button>
       <span id="mode" class="badge edit">EDIT</span>
     </header>

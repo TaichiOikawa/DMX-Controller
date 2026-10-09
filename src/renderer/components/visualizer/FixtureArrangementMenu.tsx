@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { ArrangementAxis, ArrangementMode } from './multiSelection';
 
-export function FixtureArrangementMenu({ x, y, count, onClose, onArrange, onGroup, grouped }: {
+export function FixtureArrangementMenu({ x, y, count, onClose, onArrange, onGroup, grouped, onDuplicate, canDuplicate }: {
   x: number; y: number; count: number;
   onClose(): void;
   onArrange(axis: ArrangementAxis, mode: ArrangementMode): void;
   onGroup(): void;
   grouped: boolean;
+  onDuplicate(): void;
+  canDuplicate: boolean;
 }) {
   const menu = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -39,6 +41,10 @@ export function FixtureArrangementMenu({ x, y, count, onClose, onArrange, onGrou
       items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
     }}>
     <p className="px-3 py-2 text-slate-400">{count}台を選択中</p>
+    <button role="menuitem" type="button" disabled={!canDuplicate}
+      className="block w-full rounded px-3 py-2 text-left hover:bg-cyan-800 focus:bg-cyan-800 disabled:opacity-40"
+      onClick={() => { onDuplicate(); onClose(); }}>複製</button>
+    {count > 1 && <>
     <button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left hover:bg-cyan-800 focus:bg-cyan-800 focus:outline-none"
       onClick={() => { onGroup(); onClose(); }}>{grouped ? 'グループ解除' : 'グループ化'}</button>
     {(['align', 'distribute'] as const).map(mode => <div key={mode} className="border-t border-slate-700 py-1">
@@ -50,5 +56,6 @@ export function FixtureArrangementMenu({ x, y, count, onClose, onArrange, onGrou
         {axis.toUpperCase()}{mode === 'align' ? '整列' : '均等配置'}
       </button>)}
     </div>)}
+    </>}
   </div>;
 }

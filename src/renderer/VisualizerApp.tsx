@@ -53,8 +53,14 @@ import {
   type StageSceneHandle,
 } from './components/visualizer/StageScene';
 import { NumberField } from './components/visualizer/NumberField';
+import { loadRenderQuality, normalizeRenderQuality, saveRenderQuality, type RenderQuality } from './components/visualizer/renderQuality';
+import { NumberGestureContext } from './components/visualizer/NumberGestureContext';
+import { createStageGesture } from './components/visualizer/stageGesture';
+import { duplicateSelectedFixtures, editSelectedFixtureVector, patchSelectedFixtureDmx } from './components/visualizer/multiSelection';
+import { ProfileContextMenu } from './components/visualizer/ProfileContextMenu';
 import { arrangeSelectedFixtures, selectFixtureFromList, setSelectedFixtureParameter, transformSelectedFixtures } from './components/visualizer/multiSelection';
 import { FixtureArrangementMenu } from './components/visualizer/FixtureArrangementMenu';
+import { FixtureHierarchy } from './components/visualizer/FixtureHierarchy';
 import { expandFixtureGroups, groupFixtures, ungroupFixtures } from '../shared/fixtureGroups';
 
 const PARAMETERS: VisualizerParameter[] = [
@@ -86,6 +92,10 @@ const EMPTY_ENGINE_STATE: Pick<
 
 export function VisualizerApp() {
   const [project, setProject] = useState<Project | null>(null);
+  const [numericGesture] = useState(() => createStageGesture(
+    next => setProject(current => current ? { ...current, stageLayout: next } : current),
+    next => window.dmx.setStageLayout(next),
+  ));
   const [outputFrame, setOutputFrame] = useState<number[]>(() =>
     new Array(UNIVERSE_SIZE).fill(0),
   );
@@ -105,6 +115,11 @@ export function VisualizerApp() {
   const profileDragType = 'application/x-dmx-project-profile';
   const [profileManagerOpen, setProfileManagerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [quality, setQuality] = useState(loadRenderQuality);
+  const changeQuality = (next: RenderQuality) => {
+    setQuality(next);
+    saveRenderQuality(next);
+  };
   const [workLight, setWorkLight] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(false);
@@ -149,6 +164,7 @@ export function VisualizerApp() {
   }, []);
 
   const stage = project?.stageLayout ?? createDefaultStageLayout();
+  const numberGesture = useMemo(() => ({ begin: () => numericGesture.begin(stage), finish: numericGesture.finish }), [numericGesture, stage]);
   const selectedFixture =
     stage.fixtures.find((fixture) => fixture.id === selectedFixtureId) ?? null;
   const selectedFixtures = stage.fixtures.filter(fixture => selectedFixtureIds.includes(fixture.id));
@@ -162,10 +178,9 @@ export function VisualizerApp() {
   const commitStage = useCallback(
     (next: StageLayout) => {
       if (next === stage) return;
-      setProject((current) => (current ? { ...current, stageLayout: next } : current));
-      window.dmx.setStageLayout(next);
+      numericGesture.update(next);
     },
-    [stage],
+    [stage, numericGesture],
   );
 
   const mutateFixture = (id: string, mutate: (fixture: VisualizerFixture) => void) => {
@@ -182,6 +197,20 @@ export function VisualizerApp() {
   };
 
   const toggleGroup = () => commitStage(selectedGroup ? ungroupFixtures(stage, selectedGroup.id) : groupFixtures(stage, selectedFixtureIds));
+  const patchSelectedDmx = (patch: { profileId: string } | { startChannel: number | undefined }) => {
+    const next = patchSelectedFixtureDmx(stage, selectedFixtureIds, patch);
+    if (!next) {
+      window.alert('変更できません。選択中の全灯体に有効なProfileを割り当て、使用範囲がCH512以内になるよう設定してください。');
+      return;
+    }
+    commitStage(next);
+  };
+  const duplicateFixtures = () => {
+    const next = duplicateSelectedFixtures(stage, selectedFixtureIds);
+    if (next === stage) return;
+    commitStage(next);
+    selectFixtures(next.fixtures.slice(stage.fixtures.length).map(fixture => fixture.id));
+  };
 
   const addFixture = (profileId: string, position?: VisualizerFixture['positionM']) => {
     if (stage.fixtures.length >= 170) {
@@ -229,6 +258,7 @@ export function VisualizerApp() {
       : null;
 
   return (
+    <NumberGestureContext.Provider value={numberGesture}>
     <div className="flex h-screen min-h-0 flex-col bg-[#080b12] text-neutral-100">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950/90 px-3 py-2">
         <div className="mr-2 flex items-center gap-2 font-semibold text-cyan-300">
@@ -281,7 +311,7 @@ export function VisualizerApp() {
         onPointerDownCapture={event => {
           if (event.button === 2 && selectedFixtureIds.length > 1) event.stopPropagation();
         }}
-        onContextMenuCapture={event => {
+        onContextMenu={event => {
           if (selectedFixtureIds.length < 2) return;
           event.preventDefault();
           event.stopPropagation();
@@ -298,7 +328,6 @@ export function VisualizerApp() {
               {stage.profiles.map(profile => (
                 <button key={profile.id} draggable={stage.fixtures.length < 170}
                   title={`${profile.name}：ドラッグして灯体を追加`}
-                  onClick={() => addFixture(profile.id)}
                   onDragStart={event => {
                     event.dataTransfer.setData(profileDragType, profile.id);
                     event.dataTransfer.effectAllowed = 'copy';
@@ -313,6 +342,10 @@ export function VisualizerApp() {
             </div>
           </section>
           <section aria-label="3D FIXTURES一覧"
+            onContextMenu={event => {
+              event.preventDefault(); event.stopPropagation();
+              if (selectedFixtureIds.length) setArrangementMenu({ x: event.clientX, y: event.clientY });
+            }}
             onDragOver={event => dragOver(event, 'fixtures')} onDragLeave={dragLeave} onDrop={event => dropProfile(event, 'fixtures')}
             className={`min-h-0 overflow-y-auto p-3 ${dropTarget === 'fixtures' ? 'bg-cyan-950 ring-2 ring-inset ring-cyan-400' : draggedProfileId ? 'bg-cyan-950/30' : ''}`}>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -320,41 +353,18 @@ export function VisualizerApp() {
           </h2>
           {draggedProfileId && <p className="mb-2 text-xs text-cyan-300">ここにドロップして灯体を追加</p>}
           <div className="space-y-1">
-            {!!stage.groups?.length && <div className="mb-3 space-y-1 border-b border-slate-700 pb-3">
-              <h3 className="text-xs text-slate-400">グループ</h3>
-              {stage.groups.map(group => <button key={group.id} type="button"
-                aria-pressed={group.fixtureIds.every(id => selectedFixtureIds.includes(id))}
-                onClick={event => {
-                  const allSelected = group.fixtureIds.every(id => selectedFixtureIds.includes(id));
-                  selectFixtures(event.ctrlKey || event.metaKey
-                    ? allSelected ? selectedFixtureIds.filter(id => !group.fixtureIds.includes(id)) : [...new Set([...selectedFixtureIds, ...group.fixtureIds])]
-                    : group.fixtureIds);
-                }}
-                className={`block w-full truncate rounded px-2 py-1.5 text-left text-xs ${group.fixtureIds.every(id => selectedFixtureIds.includes(id)) ? 'bg-cyan-800 text-white' : 'bg-slate-800 text-cyan-200 hover:bg-slate-700'}`}>
-                {group.name}（{group.fixtureIds.length}台）
-              </button>)}
-            </div>}
-            {stage.fixtures.map((fixture) => (
-              <button
-                key={fixture.id}
-                aria-pressed={selectedFixtureIds.includes(fixture.id)}
-                onClick={event => {
-                  const next = selectFixtureFromList(stage.fixtures.map(item => item.id), selectedFixtureIds, selectionAnchor.current, fixture.id,
-                    { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
-                  selectionAnchor.current = next.anchor;
-                  setSelectedFixtureIds(next.ids);
-                }}
-                className={`w-full truncate rounded px-2 py-1.5 text-left text-xs ${
-                  selectedFixtureIds.includes(fixture.id)
-                    ? 'bg-cyan-700 text-white'
-                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                <span className="block truncate">{fixture.name}</span>
-                {stage.groups?.filter(group => group.fixtureIds.includes(fixture.id)).map(group => <span key={group.id} className="block truncate text-[10px] opacity-70">{group.name}</span>)}
-                {!stage.profiles.some(profile => profile.id === fixture.profileId) && <span className="block text-amber-300">⚠ Profile不明</span>}
-              </button>
-            ))}
+            <FixtureHierarchy stage={stage} selectedIds={selectedFixtureIds} onSelect={selectFixtures}
+              onSelectFixture={(id, visibleIds, event) => {
+                const next = selectFixtureFromList(visibleIds, selectedFixtureIds, selectionAnchor.current, id,
+                  { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
+                selectionAnchor.current = next.anchor;
+                setSelectedFixtureIds(next.ids);
+              }}
+              onContextMenu={(event, ids) => {
+                event.preventDefault(); event.stopPropagation();
+                selectFixtures(ids);
+                setArrangementMenu({ x: event.clientX, y: event.clientY });
+              }} />
             {stage.fixtures.length === 0 && (
               <p className="rounded border border-dashed border-slate-700 p-3 text-center text-xs text-slate-500">
                 上のProfilesからここへドラッグして灯体を追加してください。
@@ -371,6 +381,7 @@ export function VisualizerApp() {
           </div>}
           {webgl ? (
             <StageScene
+              quality={quality}
               ref={sceneRef}
               stage={stage}
               outputFrame={outputFrame}
@@ -389,9 +400,6 @@ export function VisualizerApp() {
               WebGLを利用できないため3D表示を開始できません。Profile Managerと数値編集は利用できます。
             </div>
           )}
-          {webgl && <div className="absolute bottom-3 left-3 rounded border border-slate-700 bg-slate-950/90 p-2 text-xs">
-            <span className="text-slate-400">Shift＋ドラッグで範囲選択 · 灯体の中心を囲む</span>
-          </div>}
           {selectedFixture && selectedProfile && webgl && (
             <div className="absolute left-3 top-3 rounded-lg border border-slate-700 bg-slate-950/90 p-2 shadow-lg">
               <div className="flex gap-1" role="group" aria-label="フィクスチャの操作">
@@ -417,6 +425,25 @@ export function VisualizerApp() {
               <p className="text-slate-400">操作ハンドルでまとめて移動・回転できます。回転の中心は先頭の灯体です。一覧ではCtrl＋クリックで追加・解除、Shift＋クリックで範囲選択できます。</p>
               <ul className="space-y-1">{stage.fixtures.filter(fixture => selectedFixtureIds.includes(fixture.id)).map(fixture => <li key={fixture.id}>{fixture.name}</li>)}</ul>
               <ToolbarButton onClick={() => setSelectedFixtureId(null)}>選択解除</ToolbarButton>
+              <section className="space-y-2" key={`dmx:${selectedFixtureIds.join(',')}`}>
+                <h3 className="font-semibold text-slate-300">DMX（一括編集）</h3>
+                <label className="block text-slate-400">Profile
+                  <select value={selectedFixtures.every(fixture => fixture.profileId === selectedFixture?.profileId) ? selectedFixture?.profileId : ''}
+                    onChange={event => patchSelectedDmx({ profileId: event.target.value })}
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100">
+                    <option value="" disabled>混在</option>
+                    {selectedFixture && !stage.profiles.some(profile => profile.id === selectedFixture.profileId) && <option value={selectedFixture.profileId} disabled>参照先なし</option>}
+                    {stage.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                  </select>
+                </label>
+                <NumberField immediate integer label="開始CH（空欄=静的）" min={1} max={512} allowEmpty
+                  value={selectedFixtures.every(fixture => fixture.startChannel === selectedFixture?.startChannel) && selectedFixture?.startChannel !== undefined ? selectedFixture.startChannel + 1 : ''}
+                  placeholder={selectedFixtures.some(fixture => fixture.startChannel !== selectedFixture?.startChannel) ? '混在' : '静的'}
+                  scrubValue={(selectedFixture?.startChannel ?? 0) + 1}
+                  onCommit={value => patchSelectedDmx({ startChannel: value === '' ? undefined : value - 1 })} />
+                <ToolbarButton onClick={() => patchSelectedDmx({ startChannel: undefined })}>全灯体を静的にする</ToolbarButton>
+                <p className="text-[10px] text-slate-400">選択した全灯体に同じProfile・開始CHを設定します。値が異なる場合は「混在」と表示します。</p>
+              </section>
               <ToolbarButton onClick={toggleGroup}>{selectedGroup ? 'グループ解除' : 'グループ化'}</ToolbarButton>
               {selectedGroup && <label className="block text-slate-400">グループ名
                 <input key={selectedGroup.id} value={selectedGroup.name}
@@ -424,6 +451,19 @@ export function VisualizerApp() {
                   className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100" />
               </label>}
               <p className="text-[10px] text-slate-400">グループは一覧または3D上の灯体をクリックしてまとめて選択できます。個別編集は下の灯体一覧から選択します。</p>
+              {(['positionM', 'mountRotationDeg'] as const).map(field => <section key={field}>
+                <h3 className="mb-2 font-semibold text-slate-300">{field === 'positionM' ? '位置 (m)' : '設置回転 (deg)'}</h3>
+                <div className="grid grid-cols-3 gap-1">
+                  {(['x', 'y', 'z'] as const).map(axis => {
+                    const first = selectedFixture?.[field][axis] ?? 0;
+                    const mixed = selectedFixtures.some(fixture => fixture[field][axis] !== first);
+                    return <NumberField key={`${field}:${axis}:${selectedFixtureIds.join(',')}`} immediate label={axis.toUpperCase()}
+                      value={mixed ? '' : first} placeholder={mixed ? '混在' : undefined} scrubValue={first} step={field === 'positionM' ? 0.1 : 1}
+                      onCommit={(value, edit) => { if (value !== '') commitStage(editSelectedFixtureVector(stage, selectedFixtureIds, field, axis, value, edit?.delta)); }} />;
+                  })}
+                </div>
+              </section>)}
+              <p className="text-[10px] text-slate-400">直接入力は全灯体に同じ値を設定。長押しドラッグは各灯体の値に同じ差分を加えます。</p>
               <section key={selectedFixtureIds.join(',')}>
                 <h3 className="mb-2 font-semibold text-slate-300">静的パラメータ（一括編集）</h3>
                 <p className="mb-2 text-[10px] text-slate-400">変更した項目を選択中の全灯体に即時反映します。混在する値の長押し操作は先頭の灯体の値から開始します。</p>
@@ -434,7 +474,7 @@ export function VisualizerApp() {
                     return <NumberField immediate key={parameter} label={PARAMETER_LABELS[parameter]}
                       value={mixed ? '' : first} placeholder={mixed ? '混在' : undefined} scrubValue={first}
                       step={parameter === 'dimmer' || ['red', 'green', 'blue'].includes(parameter) ? 0.01 : 1}
-                      onCommit={value => { if (value !== '') commitStage(setSelectedFixtureParameter(stage, selectedFixtureIds, parameter, value)); }} />;
+                      onCommit={(value, edit) => { if (value !== '') commitStage(setSelectedFixtureParameter(stage, selectedFixtureIds, parameter, value, edit?.delta)); }} />;
                   })}
                 </div>
                 <p className="mt-2 text-[10px] text-slate-500">長押し＋左右ドラッグで変更 · Shiftで微調整。DMXが割り当てられた項目は受信値が優先されます。</p>
@@ -479,8 +519,9 @@ export function VisualizerApp() {
         </aside>
       </main>
 
-      {arrangementMenu && selectedFixtureIds.length > 1 && <FixtureArrangementMenu
+      {arrangementMenu && selectedFixtureIds.length > 0 && <FixtureArrangementMenu
         {...arrangementMenu} count={selectedFixtureIds.length} onClose={closeArrangementMenu}
+        onDuplicate={duplicateFixtures} canDuplicate={stage.fixtures.length + selectedFixtures.length <= 170 && selectedFixtures.every(fixture => stage.profiles.some(profile => profile.id === fixture.profileId))}
         onGroup={toggleGroup} grouped={!!selectedGroup}
         onArrange={(axis, mode) => commitStage(arrangeSelectedFixtures(stage, selectedFixtureIds, axis, mode))}
       />}
@@ -493,21 +534,28 @@ export function VisualizerApp() {
         />
       )}
       <StageSettingsModal
+        quality={quality}
+        onQualityChange={changeQuality}
         open={settingsOpen}
         stage={stage}
         onClose={() => setSettingsOpen(false)}
         onCommit={commitStage}
       />
     </div>
+    </NumberGestureContext.Provider>
   );
 }
 
 function StageSettingsModal({
+  quality,
+  onQualityChange,
   open,
   stage,
   onClose,
   onCommit,
 }: {
+  quality: RenderQuality;
+  onQualityChange(quality: RenderQuality): void;
   open: boolean;
   stage: StageLayout;
   onClose(): void;
@@ -543,12 +591,28 @@ function StageSettingsModal({
           <nav className="w-40 shrink-0 space-y-1 border-r border-neutral-800 bg-neutral-950/40 p-2">
             <button className="flex w-full items-center gap-2 rounded bg-neutral-800 px-2.5 py-1.5 text-left text-xs font-semibold text-sky-300">
               <Box size={13} className="shrink-0" />
-              配置
+              表示・配置
             </button>
           </nav>
 
           <div className="min-w-0 flex-1 overflow-y-auto p-5">
             <div className="space-y-3">
+              <div className="space-y-2 border-b border-neutral-700 pb-4">
+                <label className="block text-xs font-semibold text-neutral-200">
+                  映像品質
+                  <select aria-label="映像品質" value={quality}
+                    onChange={event => onQualityChange(normalizeRenderQuality(event.target.value))}
+                    className="mt-2 block w-full rounded bg-neutral-800 px-3 py-2 text-xs">
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                  </select>
+                </label>
+                <p className="text-[11px] text-neutral-400">
+                  {quality === 'low' ? '従来の画質。描画負荷を抑えます。' : quality === 'medium' ? '滑らかな輪郭に加え、照射の濃淡・距離減衰・柔らかな影と空気中の散乱を表現します。' : '高解像度で光の中心から周辺への拡散を細かく表現し、影のサンプル数を増やします。GPU負荷が高くなります。'}
+                  変更は即時反映され、この端末に保存されます。
+                </p>
+              </div>
               <div>
                 <h3 className="text-xs font-semibold text-neutral-200">Stage Layout</h3>
                 <p className="mt-1 text-[11px] text-neutral-500">
@@ -634,7 +698,6 @@ function FixtureInspector({
         <label className="block text-slate-400">名前<input value={fixture.name}
           onChange={event => onMutate(f => { f.name = event.target.value; })}
           className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100" /></label>
-        <p className="text-[10px] text-slate-500">数値は即時反映 · 長押し＋左右ドラッグで変更 · Shiftで微調整</p>
         <label className="block text-slate-400">
           Profile
           <select
@@ -712,6 +775,8 @@ function ProfileManager({
   onCommitStage(stage: StageLayout): void;
 }) {
   type Action = (stage: StageLayout) => void;
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [templates] = useState(createInitialVisualizerProfiles);
   const [creation, setCreation] = useState<{ templateId: string; name: string } | null>(null);
   const [draft, setDraft] = useState<VisualizerFixtureProfile | null>(() =>
@@ -822,6 +887,10 @@ function ProfileManager({
                 {stage.profiles.map(profile => (
                   <button
                     key={profile.id}
+                    onContextMenu={event => {
+                      event.preventDefault(); event.stopPropagation();
+                      setContextMenu({ x: event.clientX, y: event.clientY, id: profile.id });
+                    }}
                     onClick={() => {
                       if (draft?.id === profile.id) return;
                       request(current => select(current.profiles.find(item => item.id === profile.id) ?? null));
@@ -839,6 +908,16 @@ function ProfileManager({
             </aside>
           </div>
         </fieldset>
+        {contextMenu && <ProfileContextMenu {...contextMenu} onClose={closeContextMenu} onDuplicate={() => {
+          const id = contextMenu.id;
+          request(current => {
+            const profile = current.profiles.find(item => item.id === id);
+            if (!profile) return;
+            const next = addProjectVisualizerProfile(current, profile, uniqueName(profile.name, current.profiles));
+            onCommitStage(next);
+            select(next.profiles.at(-1) ?? null);
+          });
+        }} />}
         {creation && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 p-4">
             <div role="dialog" aria-modal="true" aria-labelledby="profile-create-title" className="w-full max-w-md rounded-xl border border-slate-600 bg-slate-900 p-5 shadow-xl">

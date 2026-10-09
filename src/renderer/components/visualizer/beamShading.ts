@@ -1,8 +1,10 @@
 import type { MeshBasicMaterial } from 'three';
 import { type createProjectionOccluders, projectionOcclusionGLSL } from './surfaceClipping';
+import type { RenderQuality } from './renderQuality';
+import { FIXTURE_BEAM_START_M, FIXTURE_BEAM_FADE_END_M } from './fixtureDimensions';
 
 /** Clip each beam fragment along its own light ray, rather than a centre-ray cap. */
-export function createBeamShader(occluders: ReturnType<typeof createProjectionOccluders>): MeshBasicMaterial['onBeforeCompile'] {
+export function createBeamShader(occluders: ReturnType<typeof createProjectionOccluders>, quality: RenderQuality = 'low'): MeshBasicMaterial['onBeforeCompile'] {
   return shader => {
     Object.assign(shader.uniforms, occluders);
     const count = occluders.projectionBoxMin.value.length;
@@ -24,7 +26,7 @@ export function createBeamShader(occluders: ReturnType<typeof createProjectionOc
     `).replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
       vec3 fromLight = vBeamWorld - vBeamOrigin;
       float beamDistance = length(fromLight);
-      if (beamDistance < 0.24 || beamDistance > 30.0) discard;
+      if (beamDistance < ${FIXTURE_BEAM_START_M} || beamDistance > 30.0) discard;
       vec3 lightRay = fromLight / beamDistance;
       for (int box = 0; box < ${count}; box++) {
         if (blocksProjection(vBeamOrigin, lightRay, beamDistance, projectionBoxMin[box], projectionBoxMax[box])) discard;
@@ -35,7 +37,12 @@ export function createBeamShader(occluders: ReturnType<typeof createProjectionOc
       vec3 viewRay = normalize(cameraPosition - vBeamWorld);
       float edgeFade = pow(abs(dot(radial, viewRay)), 0.7);
       float distanceFade = exp(-beamDistance * 0.055) * (1.0 - smoothstep(24.0, 30.0, beamDistance));
-      diffuseColor.a *= edgeFade * distanceFade * smoothstep(0.24, 0.4, beamDistance);
+      diffuseColor.a *= edgeFade * distanceFade * smoothstep(${FIXTURE_BEAM_START_M}, ${FIXTURE_BEAM_FADE_END_M}, beamDistance);
+      ${quality === 'low' ? '' : `
+      // View-dependent forward scattering in haze, with a smooth beam silhouette.
+      float forwardScatter = pow(max(dot(lightRay, viewRay), 0.0), ${quality === 'high' ? '4.0' : '2.0'});
+      diffuseColor.a *= (0.65 + 1.4 * forwardScatter) * smoothstep(0.0, 0.45, abs(dot(radial, viewRay)));
+      `}
       #include <opaque_fragment>
     `);
   };

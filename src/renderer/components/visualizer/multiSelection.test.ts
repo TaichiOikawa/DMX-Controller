@@ -2,10 +2,59 @@ import { PerspectiveCamera } from 'three';
 import { describe, expect, it } from 'vitest';
 import { createDefaultStageLayout, createDefaultStaticFixtureParameters, type VisualizerFixture } from '../../../shared/types';
 import { arrangeSelectedFixtures, fixturesInRectangle, selectFixtureFromList, setSelectedFixtureParameter, transformSelectedFixtures } from './multiSelection';
+import { duplicateSelectedFixtures, editSelectedFixtureVector, patchSelectedFixtureDmx } from './multiSelection';
+import { createInitialVisualizerProfiles } from '../../../shared/visualizer';
 
 const fixture = (id: string, x: number, z = 0): VisualizerFixture => ({ id, name: id, profileId: 'profile', positionM: { x, y: 0, z }, mountRotationDeg: { x: 0, y: 0, z: 0 }, staticParameters: createDefaultStaticFixtureParameters() });
 
+describe('bulk fixture DMX editing', () => {
+  const profiles = createInitialVisualizerProfiles().slice(0, 2).map((profile, index) => ({ ...profile, id: `p${index}`, bindings: { dimmer: { resolution: '8bit' as const, coarseOffset: index * 9 } } }));
+  const stage = { ...createDefaultStageLayout(), profiles, fixtures: [
+    { ...fixture('a', 1), profileId: 'p0', startChannel: 0 },
+    { ...fixture('b', 2), profileId: 'p1', startChannel: 20 },
+    { ...fixture('c', 3), profileId: 'p0', startChannel: 511 },
+  ] };
+  it('changes mixed profiles and channels only on selected fixtures, preserving other properties', () => {
+    const result = patchSelectedFixtureDmx(stage, ['a', 'b'], { profileId: 'p1' })!;
+    expect(result.fixtures[0]).toEqual({ ...stage.fixtures[0], profileId: 'p1' });
+    expect(result.fixtures[1]).toBe(stage.fixtures[1]);
+    expect(result.fixtures[2]).toBe(stage.fixtures[2]);
+    const patched = patchSelectedFixtureDmx(result, ['a', 'b'], { startChannel: 502 })!;
+    expect(patched.fixtures.map(item => item.startChannel)).toEqual([502, 502, 511]);
+    expect(stage.fixtures[0].startChannel).toBe(0);
+    expect(patchSelectedFixtureDmx(patched, ['a', 'b'], { startChannel: 502 })).toBe(patched);
+    expect(patchSelectedFixtureDmx(patched, ['a', 'b'], { startChannel: undefined })!.fixtures.map(item => item.startChannel)).toEqual([undefined, undefined, 511]);
+  });
+  it('rejects the whole edit if any selected fixture would be invalid', () => {
+    expect(patchSelectedFixtureDmx(stage, ['a', 'c'], { profileId: 'p1' })).toBeNull();
+    expect(patchSelectedFixtureDmx(stage, ['a', 'b'], { profileId: 'missing' })).toBeNull();
+    for (const startChannel of [-1, 503, 512, 1.5, NaN]) {
+      expect(patchSelectedFixtureDmx(stage, ['a', 'b'], { startChannel })).toBeNull();
+    }
+    expect(stage.fixtures.map(item => item.startChannel)).toEqual([0, 20, 511]);
+  });
+});
+
 describe('range selection', () => {
+  it.each(['positionM', 'mountRotationDeg'] as const)('sets absolute %s values and applies relative increments without flattening differences', field => {
+    const stage = { ...createDefaultStageLayout(), fixtures: [fixture('a', 0), fixture('b', 0), fixture('c', 0)].map((item, i) => ({ ...item, [field]: { x: i * 2, y: 7, z: 8 } })) };
+    const relative = editSelectedFixtureVector(stage, ['a', 'b'], field, 'x', 0.1, 0.1);
+    expect(relative.fixtures.map(item => item[field].x)).toEqual([0.1, 2.1, 4]);
+    const absolute = editSelectedFixtureVector(relative, ['a', 'b'], field, 'x', 5);
+    expect(absolute.fixtures.map(item => item[field])).toEqual([{ x: 5, y: 7, z: 8 }, { x: 5, y: 7, z: 8 }, { x: 4, y: 7, z: 8 }]);
+    expect(stage.fixtures[1][field].x).toBe(2);
+  });
+  it('duplicates each selected fixture once, with independent IDs and settings, and rejects exceeding the limit', () => {
+    const base = { ...createDefaultStageLayout(), profiles: createInitialVisualizerProfiles() };
+    const stage = { ...base, fixtures: [fixture('a', 1), fixture('b', 3), fixture('c', 5)].map(item => ({ ...item, profileId: base.profiles[0].id })) };
+    const result = duplicateSelectedFixtures(stage, ['a', 'b', 'a']);
+    expect(result.fixtures).toHaveLength(5);
+    expect(new Set(result.fixtures.map(item => item.id)).size).toBe(5);
+    expect(result.fixtures.slice(3).map(item => item.positionM.x)).toEqual([1.5, 3.5]);
+    expect(result.fixtures[3].staticParameters).not.toBe(stage.fixtures[0].staticParameters);
+    const full = { ...stage, fixtures: Array.from({ length: 169 }, (_, i) => ({ ...stage.fixtures[0], id: String(i) })) };
+    expect(duplicateSelectedFixtures(full, ['0', '1'])).toBe(full);
+  });
   it('updates only the chosen parameter on selected fixtures, preserving mixed unrelated values', () => {
     const a = fixture('a', 1);
     const b = { ...fixture('b', 3), profileId: 'other-profile', staticParameters: { ...a.staticParameters, dimmer: 0.3, pan: 90 } };
